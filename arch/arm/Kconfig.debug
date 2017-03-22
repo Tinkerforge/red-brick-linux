@@ -1028,6 +1028,15 @@ choice
 		  Say Y here if you want kernel low-level debugging support
 		  on Allwinner A31/A23 based platforms on the R_UART.
 
+	config DEBUG_RED_BRICK_UART3
+		bool "Kernel debugging via Tinkerforge RED Brick's UART3"
+		depends on ARCH_SUNXI && RED_BRICK
+		select DEBUG_UART_8250
+		select EARLY_PRINTK
+		help
+		  Say Y here if you want kernel low-level debugging support
+		  for Tinkerforge RED Brick on the UART3.
+
 	config DEBUG_SIRFPRIMA2_UART1
 		bool "Kernel low-level debugging messages via SiRFprimaII UART1"
 		depends on ARCH_PRIMA2
@@ -1450,6 +1459,7 @@ config DEBUG_UART_PHYS
 	default 0x01c20000 if DEBUG_DAVINCI_DMx_UART0
 	default 0x01c28000 if DEBUG_SUNXI_UART0
 	default 0x01c28400 if DEBUG_SUNXI_UART1
+	default 0x01c28c00 if DEBUG_RED_BRICK_UART3
 	default 0x01d0c000 if DEBUG_DAVINCI_DA8XX_UART1
 	default 0x01d0d000 if DEBUG_DAVINCI_DA8XX_UART2
 	default 0x01f02800 if DEBUG_SUNXI_R_UART
@@ -1577,6 +1587,7 @@ config DEBUG_UART_VIRT
 	default 0xf1600000 if DEBUG_INTEGRATOR
 	default 0xf1c28000 if DEBUG_SUNXI_UART0
 	default 0xf1c28400 if DEBUG_SUNXI_UART1
+	default 0xf1c28c00 if DEBUG_RED_BRICK_UART3
 	default 0xf1f02800 if DEBUG_SUNXI_R_UART
 	default 0xf31004c0 if DEBUG_MESON_UARTAO
 	default 0xf4090000 if DEBUG_LPC32XX
@@ -1707,7 +1718,7 @@ config DEBUG_UNCOMPRESS
 	  When this option is set, the selected DEBUG_LL output method
 	  will be re-used for normal decompressor output on multiplatform
 	  kernels.
-	  
+
 
 config UNCOMPRESS_INCLUDE
 	string

@@ -806,7 +806,8 @@ dtb-$(CONFIG_MACH_SUN5I) += \
 	sun5i-a13-utoo-p66.dtb \
 	sun5i-gr8-chip-pro.dtb \
 	sun5i-gr8-evb.dtb \
-	sun5i-r8-chip.dtb
+	sun5i-r8-chip.dtb \
+	red-brick.dtb
 dtb-$(CONFIG_MACH_SUN6I) += \
 	sun6i-a31-app4-evb1.dtb \
 	sun6i-a31-colombus.dtb \
