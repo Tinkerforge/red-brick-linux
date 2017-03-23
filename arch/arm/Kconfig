@@ -308,7 +308,7 @@ source "kernel/Kconfig.freezer"
 menu "System Type"
 
 config RED_BRICK
-	bool "Tinkerforge RED Brick Support"
+	bool "Tinkerforge RED Brick"
 	default n
 	help
 	  Select if the kernel is being compiled for Tinkerforge RED Brick.

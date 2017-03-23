@@ -54,6 +54,7 @@
 	compatible = "olimex,a10s-olinuxino-micro", "allwinner,sun5i-a10s";
 
 	aliases {
+		spi0 = &spi0;
 		serial0 = &uart0;
 		serial1 = &uart2;
 		serial2 = &uart3;
@@ -247,11 +248,18 @@
 	status = "okay";
 };
 
-&spi2 {
+&spi0 {
 	pinctrl-names = "default";
-	pinctrl-0 = <&spi2_pins_b>,
-		    <&spi2_cs0_pins_b>;
+	pinctrl-0 = <&spi0_pins_a>;
 	status = "okay";
+
+	spi0_0 {
+		compatible = "rohm,dh2228fv";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <0>;
+		spi-max-frequency = <8000000>;
+	};
 };
 
 &uart0 {

@@ -115,14 +115,9 @@
 		drive-strength = <30>;
 	};
 
-	spi2_pins_b: spi2@1 {
-		pins = "PB12", "PB13", "PB14";
-		function = "spi2";
-	};
-
-	spi2_cs0_pins_b: spi2_cs0@1 {
-		pins = "PB11";
-		function = "spi2";
+	spi0_pins_a: spi0@0 {
+		pins = "PC0", "PC1", "PC2", "PC3";
+		function = "spi0";
 	};
 };
 

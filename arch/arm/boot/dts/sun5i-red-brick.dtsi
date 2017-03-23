@@ -482,16 +482,6 @@
 				function = "nand0";
 			};
 
-			spi2_pins_a: spi2@0 {
-				pins = "PE1", "PE2", "PE3";
-				function = "spi2";
-			};
-
-			spi2_cs0_pins_a: spi2-cs0@0 {
-				pins = "PE0";
-				function = "spi2";
-			};
-
 			uart1_pins_a: uart1@0 {
 				pins = "PE10", "PE11";
 				function = "uart1";
