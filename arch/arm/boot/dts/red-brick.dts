@@ -88,17 +88,6 @@
 	status = "okay";
 };
 
-&emac {
-	pinctrl-names = "default";
-	pinctrl-0 = <&emac_pins_b>;
-	phy = <&phy1>;
-	status = "okay";
-};
-
-&emac_sram {
-	status = "okay";
-};
-
 &i2c0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&i2c0_pins_a>;
@@ -168,14 +157,6 @@
 		linux,code = <KEY_HOMEPAGE>;
 		channel = <0>;
 		voltage = <987387>;
-	};
-};
-
-&mdio {
-	status = "okay";
-
-	phy1: ethernet-phy@1 {
-		reg = <1>;
 	};
 };
 
