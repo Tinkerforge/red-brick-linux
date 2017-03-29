@@ -72,14 +72,14 @@
 		running {
 			label = "red-brick:led:running";
       linux,default-trigger = "heartbeat";
-			gpios = <&pio 2 5 GPIO_ACTIVE_LOW>;
-			default-state = "on";
+			gpios = <&pio 2 5 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
 		};
 
 		error {
 			label = "red-brick:led:error";
-			gpios = <&pio 2 6 GPIO_ACTIVE_LOW>;
-			default-state = "on";
+			gpios = <&pio 2 6 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
 		};
 	};
 };
