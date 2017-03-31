@@ -55,6 +55,7 @@
 
 	aliases {
 		spi0 = &spi0;
+		spi1 = &spi1;
 		serial0 = &uart0;
 		serial1 = &uart2;
 		serial2 = &uart3;
@@ -169,16 +170,6 @@
 	status = "okay";
 };
 
-&mmc1 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&mmc1_pins_a>, <&mmc1_cd_pin_olinuxino_micro>;
-	vmmc-supply = <&reg_vcc3v3>;
-	bus-width = <4>;
-	cd-gpios = <&pio 6 13 GPIO_ACTIVE_HIGH>; /* PG13 */
-	cd-inverted;
-	status = "okay";
-};
-
 &ohci0 {
 	status = "okay";
 };
@@ -188,18 +179,6 @@
 };
 
 &pio {
-	mmc0_cd_pin_olinuxino_micro: mmc0_cd_pin@0 {
-		pins = "PG1";
-		function = "gpio_in";
-		bias-pull-up;
-	};
-
-	mmc1_cd_pin_olinuxino_micro: mmc1_cd_pin@0 {
-		pins = "PG13";
-		function = "gpio_in";
-		bias-pull-up;
-	};
-
 	led_pins_red_brick: led_pins@0 {
 		pins = "PC5", "PC6";
 		function = "gpio_out";
@@ -210,17 +189,6 @@
 		pins = "PB10";
 		function = "gpio_out";
 	};
-
-	usb0_id_detect_pin: usb0_id_detect_pin@0 {
-		pins = "PG12";
-		function = "gpio_in";
-		bias-pull-up;
-	};
-};
-
-&reg_usb0_vbus {
-	gpio = <&pio 6 11 GPIO_ACTIVE_HIGH>; /* PG11 */
-	status = "okay";
 };
 
 &reg_usb1_vbus {
@@ -241,6 +209,12 @@
 		reg = <0>;
 		spi-max-frequency = <8000000>;
 	};
+};
+
+&spi1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi1_pins_a>;
+	status = "okay";
 };
 
 &uart0 {
@@ -266,15 +240,8 @@
 	status = "okay";
 };
 
-&usb0_vbus_pin_a {
-	pins = "PG11";
-};
-
 &usbphy {
 	pinctrl-names = "default";
-	pinctrl-0 = <&usb0_id_detect_pin>;
-	usb0_id_det-gpio = <&pio 6 12 GPIO_ACTIVE_HIGH>; /* PG12 */
-	usb0_vbus-supply = <&reg_usb0_vbus>;
 	usb1_vbus-supply = <&reg_usb1_vbus>;
 	status = "okay";
 };
