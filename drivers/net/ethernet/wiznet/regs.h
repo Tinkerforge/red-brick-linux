@@ -100,16 +100,16 @@
 #define SOCK_PPPOE			0x5F		// pppoe socket
 
 /* IP PROTOCOL */
-#define IPPROTO_IP		0           /* Dummy for IP */
-#define IPPROTO_ICMP	1           /* Control message protocol */
-#define IPPROTO_IGMP	2           /* Internet group management protocol */
+//#define IPPROTO_IP		0           /* Dummy for IP */
+//#define IPPROTO_ICMP	1           /* Control message protocol */
+//#define IPPROTO_IGMP	2           /* Internet group management protocol */
 #define IPPROTO_GGP		3           /* Gateway^2 (deprecated) */
-#define IPPROTO_TCP		6           /* TCP */
-#define IPPROTO_PUP		12          /* PUP */
-#define IPPROTO_UDP		17          /* UDP */
-#define IPPROTO_IDP		22          /* XNS idp */
+//#define IPPROTO_TCP		6           /* TCP */
+//#define IPPROTO_PUP		12          /* PUP */
+//#define IPPROTO_UDP		17          /* UDP */
+//#define IPPROTO_IDP		22          /* XNS idp */
 #define IPPROTO_ND		77          /* UNOFFICIAL net disk protocol */
-#define IPPROTO_RAW		255         /* Raw IP packet */
+//#define IPPROTO_RAW		255         /* Raw IP packet */
 
 /* 
  * socket registers.
