@@ -83,4 +83,11 @@ config WIZNET_W5100_SPI
 	  To compile this driver as a module, choose M here: the module
 	  will be called w5100-spi.
 
+config WIZNET_RED_BRICK_ETHERNET
+	tristate "Tinkerforge ethernet extension support for RED Brick"
+	depends on RED_BRICK && SPI
+	---help---
+	  If you wish to compile for a RED Brick and want to
+	  use an Ethernet Extension then you should answer Y to this.
+
 endif # NET_VENDOR_WIZNET
