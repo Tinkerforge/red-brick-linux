@@ -121,7 +121,7 @@
 	};
 
 	spi1_pins_a: spi1@0 {
-		pins = PG10", "PG11", "PG12";
+		pins = "PG10", "PG11", "PG12";
 		function = "spi1";
 	};
 };
