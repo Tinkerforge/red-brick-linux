@@ -203,7 +203,14 @@
 	status = "okay";
 
 	spi0_0 {
-		compatible = "rohm,dh2228fv";
+		/*
+		 * Defining a compatible string like this currently will report generate a
+		 * warning during kernel boot.
+		 *
+		 * This happens if the "compatible" string isn't found in the kernel source
+		 * which handles it. This is nothing critical.
+		 */
+		compatible = "spidev";
 		#address-cells = <1>;
 		#size-cells = <0>;
 		reg = <0>;
@@ -215,6 +222,21 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&spi1_pins_a>;
 	status = "okay";
+
+	spi1_0 {
+		/*
+		 * Defining a compatible string like this currently will report generate a
+		 * warning during kernel boot.
+		 *
+		 * This happens if the "compatible" string isn't found in the kernel source
+		 * which handles it. This is nothing critical.
+		 */
+		compatible = "w5x00";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <0>;
+		spi-max-frequency = <8000000>;
+	};
 };
 
 &uart0 {

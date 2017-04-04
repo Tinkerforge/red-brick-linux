@@ -2039,6 +2039,7 @@ module_exit(wiz_module_exit);
 
 MODULE_AUTHOR("WIZnet");
 MODULE_AUTHOR("Olaf Lüke <olaf@tinkerforge.com>");
+MODULE_AUTHOR("Ishraq Ibne Ashraf <ishraq@tinkerforge.com>");
 MODULE_DESCRIPTION("Support for WIZnet w5x00-based MACRAW Mode.");
 MODULE_SUPPORTED_DEVICE("WIZnet W5X00 Chip");
 MODULE_LICENSE("GPL");
