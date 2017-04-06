@@ -48,6 +48,8 @@
 
 #include <dt-bindings/dma/sun4i-a10.h>
 
+#include <dt-bindings/pinctrl/sun4i-a10.h>
+
 / {
 	interrupt-parent = <&intc>;
 
@@ -116,13 +118,17 @@
 	};
 
 	spi0_pins_a: spi0@0 {
-		pins = "PC0", "PC1", "PC2";
-		function = "spi0";
+		allwinner,pins = "PC0", "PC1", "PC2, "PC3";
+		allwinner,function = "spi0";
+		allwinner,drive = <SUN4I_PINCTRL_10_MA>;
+		allwinner,pull = <SUN4I_PINCTRL_PULL_DOWN>;
 	};
 
 	spi1_pins_a: spi1@0 {
-		pins = "PG10", "PG11", "PG12";
-		function = "spi1";
+		allwinner,pins = "PG9", "PG10", "PG11", "PG12", "PG13";
+		allwinner,function = "spi1";
+		allwinner,drive = <SUN4I_PINCTRL_10_MA>;
+		allwinner,pull = <SUN4I_PINCTRL_NO_PULL>;
 	};
 };
 
