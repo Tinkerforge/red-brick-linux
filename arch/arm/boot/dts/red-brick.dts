@@ -203,14 +203,7 @@
 	status = "okay";
 
 	spi0_0 {
-		/*
-		 * Defining a compatible string like this currently will report generate a
-		 * warning during kernel boot.
-		 *
-		 * This happens if the "compatible" string isn't found in the kernel source
-		 * which handles it. This is nothing critical.
-		 */
-		compatible = "spidev";
+		compatible = "rohm,dh2228fv";
 		#address-cells = <1>;
 		#size-cells = <0>;
 		reg = <0>;
@@ -224,13 +217,6 @@
 	status = "okay";
 
 	spi1_0 {
-		/*
-		 * Defining a compatible string like this currently will report generate a
-		 * warning during kernel boot.
-		 *
-		 * This happens if the "compatible" string isn't found in the kernel source
-		 * which handles it. This is nothing critical.
-		 */
 		compatible = "w5x00";
 		#address-cells = <1>;
 		#size-cells = <0>;
