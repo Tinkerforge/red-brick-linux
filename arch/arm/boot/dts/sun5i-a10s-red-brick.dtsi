@@ -128,7 +128,7 @@
 		allwinner,pins = "PG9", "PG10", "PG11", "PG12", "PG13";
 		allwinner,function = "spi1";
 		allwinner,drive = <SUN4I_PINCTRL_10_MA>;
-		allwinner,pull = <SUN4I_PINCTRL_NO_PULL>;
+		allwinner,pull = <SUN4I_PINCTRL_PULL_DOWN>;
 	};
 };
 
