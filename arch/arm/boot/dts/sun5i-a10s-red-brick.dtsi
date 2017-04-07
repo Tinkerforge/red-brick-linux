@@ -118,7 +118,7 @@
 	};
 
 	spi0_pins_a: spi0@0 {
-		allwinner,pins = "PC0", "PC1", "PC2, "PC3";
+		allwinner,pins = "PC0", "PC1", "PC2", "PC3";
 		allwinner,function = "spi0";
 		allwinner,drive = <SUN4I_PINCTRL_10_MA>;
 		allwinner,pull = <SUN4I_PINCTRL_PULL_DOWN>;
