@@ -328,6 +328,13 @@ fi
 (cd $srctree; find arch/*/include include scripts -type f) >> "$objtree/debian/hdrsrcfiles"
 (cd $srctree; find arch/$SRCARCH -name module.lds -o -name Kbuild.platforms -o -name Platform) >> "$objtree/debian/hdrsrcfiles"
 (cd $srctree; find $(find arch/$SRCARCH -name include -o -name scripts -type d) -type f) >> "$objtree/debian/hdrsrcfiles"
+(cd $srctree; find arch/arm/tools/syscalltbl.sh -type f) >> "$objtree/debian/hdrsrcfiles"
+(cd $srctree; find arch/arm/tools/syscall.tbl -type f) >> "$objtree/debian/hdrsrcfiles"
+(cd $srctree; find arch/arm/tools/syscallhdr.sh -type f) >> "$objtree/debian/hdrsrcfiles"
+(cd $srctree; find arch/arm/tools/syscallnr.sh -type f) >> "$objtree/debian/hdrsrcfiles"
+(cd $srctree; find arch/arm/tools/gen-mach-types -type f) >> "$objtree/debian/hdrsrcfiles"
+(cd $srctree; find arch/arm/tools/mach-types -type f) >> "$objtree/debian/hdrsrcfiles"
+(cd $srctree; find tools/include -type f) >> "$objtree/debian/hdrsrcfiles"
 if grep -q '^CONFIG_STACK_VALIDATION=y' $KCONFIG_CONFIG ; then
 	(cd $objtree; find tools/objtool -type f -executable) >> "$objtree/debian/hdrobjfiles"
 fi
@@ -353,6 +360,22 @@ Description: Linux kernel headers for $KERNELRELEASE on \${kernel:debarch}
  .
  This is useful for people who need to build external modules
 EOF
+
+mkdir -p $kernel_headers_dir/DEBIAN/
+
+cat <<EOF > $kernel_headers_dir/DEBIAN/postinst
+#!/bin/sh
+
+set -e
+
+cd /usr/src/$sourcename
+make modules_prepare
+make scripts
+
+exit 0
+EOF
+
+chmod 755 $kernel_headers_dir/DEBIAN/postinst
 
 # Do we have firmware? Move it out of the way and build it into a package.
 if [ -e "$tmpdir/lib/firmware" ]; then
