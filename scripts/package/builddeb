@@ -368,7 +368,7 @@ cat <<EOF > $kernel_headers_dir/DEBIAN/postinst
 
 set -e
 
-cd /usr/src/$sourcename
+cd /usr/src/$kernel_headers_packagename
 make modules_prepare
 make scripts
 
