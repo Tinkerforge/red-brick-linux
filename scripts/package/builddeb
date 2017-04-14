@@ -285,7 +285,7 @@ build_depends="bc, kmod, cpio "
 cat <<EOF > debian/control
 Source: $sourcename
 Section: kernel
-Priority: optional
+Priority: required
 Maintainer: $maintainer
 Build-Depends: $build_depends
 Standards-Version: 3.8.4
