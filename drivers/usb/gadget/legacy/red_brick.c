@@ -14,36 +14,41 @@
  * GNU General Public License for more details.
  */
 
+#include <linux/fs.h>
+#include <linux/tty.h>
+#include <asm/uaccess.h>
+#include <linux/string.h>
 #include <linux/kernel.h>
 #include <linux/device.h>
 #include <linux/module.h>
-#include <linux/tty.h>
 #include <linux/tty_flip.h>
+#include <linux/byteorder/generic.h>
 
 #include "f_brick.h"
 #include "u_serial.h"
 
 USB_GADGET_COMPOSITE_OPTIONS();
 
-#define LONG_NAME "RED Brick"
-
 #define VENDOR_ID  0x16D0
 #define PRODUCT_ID 0x09E5
-
-// String IDs are assigned dynamically.
-#define STRING_DESCRIPTION_IDX USB_GADGET_FIRST_AVAIL_IDX
+#define BASE58_MAX_LENGTH 8
+#define LONG_NAME "RED Brick"
 
 // Function prototypes.
-static int gs_bind(struct usb_composite_dev *cdev);
-static int gs_unbind(struct usb_composite_dev *cdev);
+static int red_brick_bind(struct usb_composite_dev *cdev);
+static int red_brick_unbind(struct usb_composite_dev *cdev);
 
 static unsigned n_ports = 1;
+static char serial_number[BASE58_MAX_LENGTH] = "";
+static struct usb_function *f_serial[MAX_U_SERIAL_PORTS];
+static const char *_base58_alphabet =
+	"123456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ";
+static struct usb_function_instance *fi_serial[MAX_U_SERIAL_PORTS];
 
 static struct usb_string strings_dev[] = {
 	[USB_GADGET_MANUFACTURER_IDX].s = "Tinkerforge GmbH",
 	[USB_GADGET_PRODUCT_IDX].s      = LONG_NAME,
-	[USB_GADGET_SERIAL_IDX].s       = "DUMMY1234", // TODO: Generate UID from chip ID.
-	[STRING_DESCRIPTION_IDX].s      = NULL,
+	[USB_GADGET_SERIAL_IDX].s       = serial_number,
 	{}
 };
 
@@ -58,50 +63,175 @@ static struct usb_gadget_strings *dev_strings[] = {
 };
 
 static struct usb_device_descriptor device_desc = {
-	.bLength            = USB_DT_DEVICE_SIZE,
+	.bLength            = sizeof(device_desc),
 	.bDescriptorType    = USB_DT_DEVICE,
-	.bDeviceSubClass    = 0,
-	.bDeviceProtocol    = 0,
-	.idVendor           = cpu_to_le16(VENDOR_ID),
+	.bcdUSB             = __constant_cpu_to_le16(0x0200),
+	.bDeviceClass       = USB_CLASS_PER_INTERFACE,
+	.idVendor           = __constant_cpu_to_le16(VENDOR_ID),
+	.idProduct          = __constant_cpu_to_le16(PRODUCT_ID),
+	.bcdDevice          = __constant_cpu_to_le16(0x0110),
 	.bNumConfigurations = 1,
 };
 
 static const struct usb_descriptor_header *otg_desc[2];
 
-static struct usb_composite_driver gserial_driver = {
-	.name      = "RED Brick",
+static struct usb_composite_driver red_brick_composite_driver = {
+	.name      = "RED Brick Composite Device",
 	.dev       = &device_desc,
 	.strings   = dev_strings,
 	.max_speed = USB_SPEED_SUPER,
-	.bind      = gs_bind,
-	.unbind    = gs_unbind,
+	.bind      = red_brick_bind,
+	.unbind    = red_brick_unbind,
 };
 
-static struct usb_configuration serial_config_driver = {
-	.bmAttributes	= USB_CONFIG_ATT_SELFPOWER,
+// Convert from host endian to little endian.
+uint32_t uint32_to_le(uint32_t native) {
+	union {
+		uint8_t bytes[4];
+		uint32_t little;
+	} c;
+
+	c.bytes[0] = (native >>  0) & 0xFF;
+	c.bytes[1] = (native >>  8) & 0xFF;
+	c.bytes[2] = (native >> 16) & 0xFF;
+	c.bytes[3] = (native >> 24) & 0xFF;
+
+	return c.little;
+}
+
+int red_brick_uid(uint32_t *uid /* Always little endian. */) {
+	int i;
+	int rc;
+
+	struct file *fp;
+	mm_segment_t fs;
+
+	uint8_t uid_u8_0;
+	uint8_t uid_u8_1;
+	uint8_t uid_u8_2;
+	uint8_t uid_u8_3;
+	uint16_t sid_u16[8];
+
+	memset(sid_u16, 0, sizeof(sid_u16));
+
+	fp = filp_open("/sys/bus/nvmem/devices/sunxi-sid0/nvmem", O_RDONLY, 0);
+
+	if (fp == NULL) {
+		return -1;
+	}
+
+	// Get current segment descriptor.
+	fs = get_fs();
+
+	// Set segment descriptor associated to kernel space.
+	set_fs(get_ds());
+
+	// Read the file.
+	rc = fp->f_op->read(fp, (char *)sid_u16, sizeof(sid_u16), &fp->f_pos);
+
+	// Restore segment descriptor.
+	set_fs(fs);
+
+	filp_close(fp, NULL);
+
+	if (rc != sizeof(sid_u16)) {
+		return -1;
+	}
+
+	for(i = 0; i < sizeof(sid_u16) / 2; i++) {
+		sid_u16[i] = ntohs(sid_u16[i]);
+	}
+
+	uid_u8_0 = ((uint8_t *)&sid_u16[1])[0];
+	uid_u8_1 = ((uint8_t *)&sid_u16[6])[0];
+	uid_u8_2 = ((uint8_t *)&sid_u16[7])[1];
+	uid_u8_3 = ((uint8_t *)&sid_u16[7])[0];
+
+	*uid = (uid_u8_0 << 24) | (uid_u8_1 << 16) | (uid_u8_2 << 8) | uid_u8_3;
+
+	/*
+	 * Avoid collisions with other Brick UIDs by clearing the 31th bit,
+	 * as other Brick UIDs should have the 31th bit set always.
+	 *
+	 * Avoid collisions with Bricklet UIDs by setting the 30th bit to
+	 * get a high UID, as Bricklets have a low UID.
+	 */
+	*uid = (*uid & ~(1 << 31)) | (1 << 30);
+
+	*uid = uint32_to_le(*uid);
+
+	return 0;
+}
+
+void base58_encode(char *base58, uint32_t value) {
+	int i = 0;
+	int k = 0;
+	uint32_t digit;
+	char reverse[BASE58_MAX_LENGTH];
+
+	while (value >= 58) {
+		digit = value % 58;
+		reverse[i] = _base58_alphabet[digit];
+		value = value / 58;
+		++i;
+	}
+
+	reverse[i] = _base58_alphabet[value];
+
+	for (k = 0; k <= i; ++k) {
+		base58[k] = reverse[i - k];
+	}
+
+	for (; k < BASE58_MAX_LENGTH; ++k) {
+		base58[k] = '\0';
+	}
+}
+
+int red_brick_get_uid_str(char *serial_number) {
+	int ret = 0;
+	uint32_t uid = 0;
+
+	ret = red_brick_uid(&uid);
+
+	if(ret < 0) {
+		return ret;
+	}
+
+	base58_encode(serial_number, uid);
+
+	return 0;
+}
+
+static int red_brick_config_setup(struct usb_configuration *c,
+                                  const struct usb_ctrlrequest *ctrl) {
+	struct usb_function *f = NULL;
+
+	f = c->interface[0];
+
+	if (f && f->setup) {
+		return f->setup(f, ctrl);
+	}
+
+	return -EOPNOTSUPP;
+}
+
+static struct usb_configuration red_brick_config = {
+	.label               = "RED Brick",
+	.bConfigurationValue = 1,
+	.bmAttributes        = USB_CONFIG_ATT_ONE,
+	.MaxPower            = 250, // 250 mA.
+	.setup               = red_brick_config_setup,
 };
 
-static struct usb_function *f_serial[MAX_U_SERIAL_PORTS];
-static struct usb_function_instance *fi_serial[MAX_U_SERIAL_PORTS];
-
-static int serial_register_ports(struct usb_composite_dev *cdev,
-                                 struct usb_configuration *c,
-                                 const char *f_name) {
+static int red_brick_serial_bind_config(struct usb_configuration *c) {
 	int i;
 	int ret;
 
-	ret = usb_add_config_only(cdev, c);
-
-	if (ret) {
-		goto out;
-	}
-
 	for (i = 0; i < n_ports; i++) {
-		fi_serial[i] = usb_get_function_instance(f_name);
+		fi_serial[i] = usb_get_function_instance("acm");
 
 		if (IS_ERR(fi_serial[i])) {
 			ret = PTR_ERR(fi_serial[i]);
-
 			goto fail;
 		}
 
@@ -109,7 +239,6 @@ static int serial_register_ports(struct usb_composite_dev *cdev,
 
 		if (IS_ERR(f_serial[i])) {
 			ret = PTR_ERR(f_serial[i]);
-
 			goto err_get_func;
 		}
 
@@ -118,14 +247,6 @@ static int serial_register_ports(struct usb_composite_dev *cdev,
 		if (ret) {
 			goto err_add_func;
 		}
-	}
-
-	ret = f_brick_bind_config(c);
-
-	if (ret < 0) {
-		printk(KERN_DEBUG "could not bind Brick config\n");
-
-		return ret;
 	}
 
 	return 0;
@@ -146,72 +267,88 @@ fail:
 		i--;
 	}
 
-out:
 	return ret;
 }
 
-static int gs_bind(struct usb_composite_dev *cdev) {
-	int status;
+static int red_brick_bind_config(struct usb_configuration *c) {
+	int ret;
 
-	/*
-	 * Allocate string descriptor numbers. Note that string
-	 * contents can be overridden by the composite_dev glue.
-	 */
-	status = usb_string_ids_tab(cdev, strings_dev);
+	// Add RED Brick configuration.
+	ret = f_brick_bind_config(c);
 
-	if (status < 0) {
+	if (ret < 0) {
+		return ret;
+	}
+
+	// Add RED Brick Serial configuration.
+	ret = red_brick_serial_bind_config(c);
+
+	if (ret < 0) {
+		return ret;
+	}
+
+	return 0;
+}
+
+static int red_brick_bind(struct usb_composite_dev *cdev) {
+	int ret;
+
+	ret = usb_string_id(cdev);
+
+	if (ret < 0) {
 		goto fail;
 	}
 
-	device_desc.iManufacturer = strings_dev[USB_GADGET_MANUFACTURER_IDX].id;
-	device_desc.iProduct = strings_dev[USB_GADGET_PRODUCT_IDX].id;
-	status = strings_dev[STRING_DESCRIPTION_IDX].id;
-	serial_config_driver.iConfiguration = status;
+	strings_dev[USB_GADGET_MANUFACTURER_IDX].id = ret;
+	device_desc.iManufacturer = ret;
+
+	ret = usb_string_id(cdev);
+
+	if (ret < 0) {
+		goto fail;
+	}
+
+	strings_dev[USB_GADGET_PRODUCT_IDX].id = ret;
+	device_desc.iProduct = ret;
+
+	// Set serial number from UID.
+	ret = red_brick_get_uid_str(serial_number);
+
+	if (ret < 0) {
+		goto fail;
+	}
+
+	ret = usb_string_id(cdev);
+
+	if (ret < 0) {
+		goto fail;
+	}
+
+	strings_dev[USB_GADGET_SERIAL_IDX].id = ret;
+	device_desc.iSerialNumber = ret;
 
 	if (gadget_is_otg(cdev->gadget)) {
-		if (!otg_desc[0]) {
-			struct usb_descriptor_header *usb_desc;
-
-			usb_desc = usb_otg_descriptor_alloc(cdev->gadget);
-
-			if (!usb_desc) {
-				status = -ENOMEM;
-				goto fail;
-			}
-
-			usb_otg_descriptor_init(cdev->gadget, usb_desc);
-			otg_desc[0] = usb_desc;
-			otg_desc[1] = NULL;
-		}
-
-		serial_config_driver.descriptors = otg_desc;
-		serial_config_driver.bmAttributes |= USB_CONFIG_ATT_WAKEUP;
+		red_brick_config.descriptors = otg_desc;
+		red_brick_config.bmAttributes |= USB_CONFIG_ATT_WAKEUP;
 	}
 
-	// Register our configuration.
-	status = serial_register_ports(cdev,
-                                 &serial_config_driver,
-                                 "acm");
+	// Register RED Brick configuration.
+	ret = usb_add_config(cdev, &red_brick_config, red_brick_bind_config);
 
-	usb_ep_autoconfig_reset(cdev->gadget);
-
-	if (status < 0) {
-		goto fail1;
+	if (ret < 0) {
+		goto fail;
 	}
-
-	usb_composite_overwrite_options(cdev, &coverwrite);
 
 	return 0;
 
-fail1:
+fail:
 	kfree(otg_desc[0]);
 	otg_desc[0] = NULL;
 
-fail:
-	return status;
+	return ret;
 }
 
-static int gs_unbind(struct usb_composite_dev *cdev) {
+static int red_brick_unbind(struct usb_composite_dev *cdev) {
 	int i;
 
 	for (i = 0; i < n_ports; i++) {
@@ -227,11 +364,6 @@ static int gs_unbind(struct usb_composite_dev *cdev) {
 
 static int __init init(void) {
 	int ret = 0;
-	serial_config_driver.label = "CDC ACM config";
-	serial_config_driver.bConfigurationValue = 2;
-	device_desc.bDeviceClass = USB_CLASS_COMM;
-	device_desc.idProduct = cpu_to_le16(PRODUCT_ID);
-	strings_dev[STRING_DESCRIPTION_IDX].s = serial_config_driver.label;
 
 	ret = f_brick_setup();
 
@@ -239,7 +371,7 @@ static int __init init(void) {
 		return ret;
 	}
 
-	ret = usb_composite_probe(&gserial_driver);
+	ret = usb_composite_probe(&red_brick_composite_driver);
 
 	if (ret < 0) {
 		f_brick_cleanup();
@@ -251,7 +383,7 @@ static int __init init(void) {
 }
 
 static void __exit cleanup(void) {
-	usb_composite_unregister(&gserial_driver);
+	usb_composite_unregister(&red_brick_composite_driver);
 	f_brick_cleanup();
 }
 
