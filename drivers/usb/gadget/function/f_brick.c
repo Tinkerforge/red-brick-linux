@@ -728,15 +728,25 @@ static int f_brick_func_set_alt(struct usb_function *f, unsigned intf, unsigned 
 
 static void f_brick_func_disable(struct usb_function *f)
 {
-	struct f_brick_ctx *ctx = _f_brick_ctx;
 	unsigned long flags;
+	struct f_brick_ctx *ctx = _f_brick_ctx;
+
+	/*
+	 * According to, https://groups.google.com/forum/#!topic/linux.kernel/bhJe9qN_twI
+	 * (Felipe Balbi's post of 14-10-2016) usb_ep_disable() should not be called with
+	 * locks held.
+	 *
+	 * With our older 3.4 kernel this was not a problem but with the latest mainline
+	 * kernel, doing so caused the whole system to totally hang. So as a fix we disable
+	 * the end points before acquiring the ctx->lock lock.
+	 */
+
+	f_brick_disable_endpoint(ctx->ep_in);
+	f_brick_disable_endpoint(ctx->ep_out);
 
 	spin_lock_irqsave(&ctx->lock, flags);
 
 	f_brick_set_state(F_BRICK_STATE_USB_DISCONNECTED);
-
-	f_brick_disable_endpoint(ctx->ep_in);
-	f_brick_disable_endpoint(ctx->ep_out);
 
 	/* unblock waiting reader, as there is currently nothing to read */
 	wake_up(&ctx->rx_wait);
