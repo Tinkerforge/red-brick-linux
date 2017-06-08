@@ -12,7 +12,7 @@
 #include <linux/etherdevice.h>
 #include <linux/list.h>
 #include <linux/slab.h>
-#include <net/dsa.h>
+
 #include "dsa_priv.h"
 
 /* This tag length is 4 bytes, older ones were 6 bytes, we do not
@@ -101,7 +101,7 @@ static struct sk_buff *brcm_tag_rcv(struct sk_buff *skb, struct net_device *dev,
 	int source_port;
 	u8 *brcm_tag;
 
-	ds = dst->cpu_switch;
+	ds = dst->cpu_dp->ds;
 
 	if (unlikely(!pskb_may_pull(skb, BRCM_TAG_LEN)))
 		goto out_drop;

@@ -24,7 +24,7 @@
 #include <linux/phy_fixed.h>
 #include <linux/gpio/consumer.h>
 #include <linux/etherdevice.h>
-#include <net/dsa.h>
+
 #include "dsa_priv.h"
 
 static struct sk_buff *dsa_slave_notag_xmit(struct sk_buff *skb,
@@ -40,26 +40,29 @@ static const struct dsa_device_ops none_ops = {
 };
 
 const struct dsa_device_ops *dsa_device_ops[DSA_TAG_LAST] = {
+#ifdef CONFIG_NET_DSA_TAG_BRCM
+	[DSA_TAG_PROTO_BRCM] = &brcm_netdev_ops,
+#endif
 #ifdef CONFIG_NET_DSA_TAG_DSA
 	[DSA_TAG_PROTO_DSA] = &dsa_netdev_ops,
 #endif
 #ifdef CONFIG_NET_DSA_TAG_EDSA
 	[DSA_TAG_PROTO_EDSA] = &edsa_netdev_ops,
 #endif
-#ifdef CONFIG_NET_DSA_TAG_TRAILER
-	[DSA_TAG_PROTO_TRAILER] = &trailer_netdev_ops,
+#ifdef CONFIG_NET_DSA_TAG_KSZ
+	[DSA_TAG_PROTO_KSZ] = &ksz_netdev_ops,
 #endif
-#ifdef CONFIG_NET_DSA_TAG_BRCM
-	[DSA_TAG_PROTO_BRCM] = &brcm_netdev_ops,
-#endif
-#ifdef CONFIG_NET_DSA_TAG_QCA
-	[DSA_TAG_PROTO_QCA] = &qca_netdev_ops,
+#ifdef CONFIG_NET_DSA_TAG_LAN9303
+	[DSA_TAG_PROTO_LAN9303] = &lan9303_netdev_ops,
 #endif
 #ifdef CONFIG_NET_DSA_TAG_MTK
 	[DSA_TAG_PROTO_MTK] = &mtk_netdev_ops,
 #endif
-#ifdef CONFIG_NET_DSA_TAG_LAN9303
-	[DSA_TAG_PROTO_LAN9303] = &lan9303_netdev_ops,
+#ifdef CONFIG_NET_DSA_TAG_QCA
+	[DSA_TAG_PROTO_QCA] = &qca_netdev_ops,
+#endif
+#ifdef CONFIG_NET_DSA_TAG_TRAILER
+	[DSA_TAG_PROTO_TRAILER] = &trailer_netdev_ops,
 #endif
 	[DSA_TAG_PROTO_NONE] = &none_ops,
 };

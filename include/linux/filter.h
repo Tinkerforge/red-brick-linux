@@ -57,6 +57,9 @@ struct bpf_prog_aux;
 #define BPF_REG_AX		MAX_BPF_REG
 #define MAX_BPF_JIT_REG		(MAX_BPF_REG + 1)
 
+/* unused opcode to mark special call to bpf_tail_call() helper */
+#define BPF_TAIL_CALL	0xf0
+
 /* As per nm, we expose JITed images as text (code) section for
  * kallsyms. That way, tools like perf can find it to match
  * addresses.
@@ -271,6 +274,16 @@ struct bpf_prog_aux;
 		.src_reg = 0,					\
 		.off   = OFF,					\
 		.imm   = IMM })
+
+/* Unconditional jumps, goto pc + off16 */
+
+#define BPF_JMP_A(OFF)						\
+	((struct bpf_insn) {					\
+		.code  = BPF_JMP | BPF_JA,			\
+		.dst_reg = 0,					\
+		.src_reg = 0,					\
+		.off   = OFF,					\
+		.imm   = 0 })
 
 /* Function call */
 

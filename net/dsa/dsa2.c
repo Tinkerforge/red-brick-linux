@@ -18,7 +18,7 @@
 #include <linux/rtnetlink.h>
 #include <linux/of.h>
 #include <linux/of_net.h>
-#include <net/dsa.h>
+
 #include "dsa_priv.h"
 
 static LIST_HEAD(dsa_switch_trees);
@@ -443,8 +443,8 @@ static int dsa_dst_apply(struct dsa_switch_tree *dst)
 			return err;
 	}
 
-	if (dst->cpu_switch) {
-		err = dsa_cpu_port_ethtool_setup(dst->cpu_switch);
+	if (dst->cpu_dp) {
+		err = dsa_cpu_port_ethtool_setup(dst->cpu_dp->ds);
 		if (err)
 			return err;
 	}
@@ -484,8 +484,8 @@ static void dsa_dst_unapply(struct dsa_switch_tree *dst)
 		dsa_ds_unapply(dst, ds);
 	}
 
-	if (dst->cpu_switch)
-		dsa_cpu_port_ethtool_restore(dst->cpu_switch);
+	if (dst->cpu_dp)
+		dsa_cpu_port_ethtool_restore(dst->cpu_dp->ds);
 
 	pr_info("DSA: tree %d unapplied\n", dst->tree);
 	dst->applied = false;
@@ -518,10 +518,8 @@ static int dsa_cpu_parse(struct dsa_port *port, u32 index,
 	if (!dst->master_netdev)
 		dst->master_netdev = ethernet_dev;
 
-	if (!dst->cpu_switch) {
-		dst->cpu_switch = ds;
-		dst->cpu_port = index;
-	}
+	if (!dst->cpu_dp)
+		dst->cpu_dp = port;
 
 	tag_protocol = ds->ops->get_tag_protocol(ds);
 	dst->tag_ops = dsa_resolve_tag_protocol(tag_protocol);
@@ -688,10 +686,10 @@ static struct device_node *dsa_get_ports(struct dsa_switch *ds,
 	return ports;
 }
 
-static int _dsa_register_switch(struct dsa_switch *ds, struct device *dev)
+static int _dsa_register_switch(struct dsa_switch *ds)
 {
-	struct dsa_chip_data *pdata = dev->platform_data;
-	struct device_node *np = dev->of_node;
+	struct dsa_chip_data *pdata = ds->dev->platform_data;
+	struct device_node *np = ds->dev->of_node;
 	struct dsa_switch_tree *dst;
 	struct device_node *ports;
 	u32 tree, index;
@@ -805,12 +803,12 @@ struct dsa_switch *dsa_switch_alloc(struct device *dev, size_t n)
 }
 EXPORT_SYMBOL_GPL(dsa_switch_alloc);
 
-int dsa_register_switch(struct dsa_switch *ds, struct device *dev)
+int dsa_register_switch(struct dsa_switch *ds)
 {
 	int err;
 
 	mutex_lock(&dsa2_mutex);
-	err = _dsa_register_switch(ds, dev);
+	err = _dsa_register_switch(ds);
 	mutex_unlock(&dsa2_mutex);
 
 	return err;

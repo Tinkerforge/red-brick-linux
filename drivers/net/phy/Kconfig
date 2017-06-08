@@ -108,7 +108,7 @@ config MDIO_MOXART
 config MDIO_OCTEON
 	tristate "Octeon and some ThunderX SOCs MDIO buses"
 	depends on 64BIT
-	depends on HAS_IOMEM
+	depends on HAS_IOMEM && OF_MDIO
 	select MDIO_CAVIUM
 	help
 	  This module provides a driver for the Octeon and ThunderX MDIO
@@ -233,6 +233,11 @@ config CICADA_PHY
 	tristate "Cicada PHYs"
 	---help---
 	  Currently supports the cis8204
+
+config CORTINA_PHY
+	tristate "Cortina EDC CDR 10G Ethernet PHY"
+	---help---
+	  Currently supports the CS4340 phy.
 
 config DAVICOM_PHY
 	tristate "Davicom PHYs"

@@ -44,7 +44,6 @@
 #include <linux/slab.h>
 #include <linux/stddef.h>
 #include <linux/string.h>
-#include <linux/version.h>
 #include <linux/workqueue.h>
 #include <linux/errno.h>
 #include <linux/list.h>
@@ -186,7 +185,7 @@ qed_sp_iscsi_func_start(struct qed_hwfn *p_hwfn,
 		DP_ERR(p_hwfn,
 		       "Cannot satisfy CQ amount. Queues requested %d, CQs available %d. Aborting function start\n",
 		       p_params->num_queues,
-		       p_hwfn->hw_info.resc_num[QED_ISCSI_CQ]);
+		       p_hwfn->hw_info.feat_num[QED_ISCSI_CQ]);
 		return -EINVAL;
 	}
 
@@ -221,7 +220,7 @@ qed_sp_iscsi_func_start(struct qed_hwfn *p_hwfn,
 	p_queue->cmdq_sb_pi = p_params->gl_cmd_pi;
 
 	for (i = 0; i < p_params->num_queues; i++) {
-		val = p_hwfn->sbs_info[i]->igu_sb_id;
+		val = qed_get_igu_sb_id(p_hwfn, i);
 		p_queue->cq_cmdq_sb_num_arr[i] = cpu_to_le16(val);
 	}
 
@@ -375,7 +374,6 @@ static int qed_sp_iscsi_conn_offload(struct qed_hwfn *p_hwfn,
 		p_tcp->ss_thresh = cpu_to_le32(p_conn->ss_thresh);
 		p_tcp->srtt = cpu_to_le16(p_conn->srtt);
 		p_tcp->rtt_var = cpu_to_le16(p_conn->rtt_var);
-		p_tcp->ts_time = cpu_to_le32(p_conn->ts_time);
 		p_tcp->ts_recent = cpu_to_le32(p_conn->ts_recent);
 		p_tcp->ts_recent_age = cpu_to_le32(p_conn->ts_recent_age);
 		p_tcp->total_rt = cpu_to_le32(p_conn->total_rt);
@@ -400,8 +398,6 @@ static int qed_sp_iscsi_conn_offload(struct qed_hwfn *p_hwfn,
 		p_tcp->mss = cpu_to_le16(p_conn->mss);
 		p_tcp->snd_wnd_scale = p_conn->snd_wnd_scale;
 		p_tcp->rcv_wnd_scale = p_conn->rcv_wnd_scale;
-		dval = p_conn->ts_ticks_per_second;
-		p_tcp->ts_ticks_per_second = cpu_to_le32(dval);
 		wval = p_conn->da_timeout_value;
 		p_tcp->da_timeout_value = cpu_to_le16(wval);
 		p_tcp->ack_frequency = p_conn->ack_frequency;
@@ -822,28 +818,31 @@ void qed_iscsi_free_connection(struct qed_hwfn *p_hwfn,
 	kfree(p_conn);
 }
 
-struct qed_iscsi_info *qed_iscsi_alloc(struct qed_hwfn *p_hwfn)
+int qed_iscsi_alloc(struct qed_hwfn *p_hwfn)
 {
 	struct qed_iscsi_info *p_iscsi_info;
 
 	p_iscsi_info = kzalloc(sizeof(*p_iscsi_info), GFP_KERNEL);
 	if (!p_iscsi_info)
-		return NULL;
+		return -ENOMEM;
 
 	INIT_LIST_HEAD(&p_iscsi_info->free_list);
-	return p_iscsi_info;
+
+	p_hwfn->p_iscsi_info = p_iscsi_info;
+	return 0;
 }
 
-void qed_iscsi_setup(struct qed_hwfn *p_hwfn,
-		     struct qed_iscsi_info *p_iscsi_info)
+void qed_iscsi_setup(struct qed_hwfn *p_hwfn)
 {
-	spin_lock_init(&p_iscsi_info->lock);
+	spin_lock_init(&p_hwfn->p_iscsi_info->lock);
 }
 
-void qed_iscsi_free(struct qed_hwfn *p_hwfn,
-		    struct qed_iscsi_info *p_iscsi_info)
+void qed_iscsi_free(struct qed_hwfn *p_hwfn)
 {
 	struct qed_iscsi_conn *p_conn = NULL;
+
+	if (!p_hwfn->p_iscsi_info)
+		return;
 
 	while (!list_empty(&p_hwfn->p_iscsi_info->free_list)) {
 		p_conn = list_first_entry(&p_hwfn->p_iscsi_info->free_list,
@@ -854,7 +853,8 @@ void qed_iscsi_free(struct qed_hwfn *p_hwfn,
 		}
 	}
 
-	kfree(p_iscsi_info);
+	kfree(p_hwfn->p_iscsi_info);
+	p_hwfn->p_iscsi_info = NULL;
 }
 
 static void _qed_iscsi_get_tstats(struct qed_hwfn *p_hwfn,

@@ -177,6 +177,7 @@ int qed_mcp_free(struct qed_hwfn *p_hwfn)
 	}
 
 	kfree(p_hwfn->mcp_info);
+	p_hwfn->mcp_info = NULL;
 
 	return 0;
 }
@@ -1397,6 +1398,28 @@ static void qed_mcp_update_bw(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 		    &param);
 }
 
+static void qed_mcp_update_stag(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
+{
+	struct public_func shmem_info;
+	u32 resp = 0, param = 0;
+
+	qed_mcp_get_shmem_func(p_hwfn, p_ptt, &shmem_info, MCP_PF_ID(p_hwfn));
+
+	p_hwfn->mcp_info->func_info.ovlan = (u16)shmem_info.ovlan_stag &
+						 FUNC_MF_CFG_OV_STAG_MASK;
+	p_hwfn->hw_info.ovlan = p_hwfn->mcp_info->func_info.ovlan;
+	if ((p_hwfn->hw_info.hw_mode & BIT(MODE_MF_SD)) &&
+	    (p_hwfn->hw_info.ovlan != QED_MCP_VLAN_UNSET)) {
+		qed_wr(p_hwfn, p_ptt,
+		       NIG_REG_LLH_FUNC_TAG_VALUE, p_hwfn->hw_info.ovlan);
+		qed_sp_pf_update_stag(p_hwfn);
+	}
+
+	/* Acknowledge the MFW */
+	qed_mcp_cmd(p_hwfn, p_ptt, DRV_MSG_CODE_S_TAG_UPDATE_ACK, 0,
+		    &resp, &param);
+}
+
 int qed_mcp_handle_events(struct qed_hwfn *p_hwfn,
 			  struct qed_ptt *p_ptt)
 {
@@ -1451,6 +1474,10 @@ int qed_mcp_handle_events(struct qed_hwfn *p_hwfn,
 			break;
 		case MFW_DRV_MSG_BW_UPDATE:
 			qed_mcp_update_bw(p_hwfn, p_ptt);
+			break;
+		case MFW_DRV_MSG_S_TAG_UPDATE:
+			qed_mcp_update_stag(p_hwfn, p_ptt);
+			break;
 			break;
 		default:
 			DP_INFO(p_hwfn, "Unimplemented MFW message %d\n", i);
@@ -1518,6 +1545,36 @@ int qed_mcp_get_mfw_ver(struct qed_hwfn *p_hwfn,
 					      offsetof(struct public_global,
 						       running_bundle_id));
 	}
+
+	return 0;
+}
+
+int qed_mcp_get_mbi_ver(struct qed_hwfn *p_hwfn,
+			struct qed_ptt *p_ptt, u32 *p_mbi_ver)
+{
+	u32 nvm_cfg_addr, nvm_cfg1_offset, mbi_ver_addr;
+
+	if (IS_VF(p_hwfn->cdev))
+		return -EINVAL;
+
+	/* Read the address of the nvm_cfg */
+	nvm_cfg_addr = qed_rd(p_hwfn, p_ptt, MISC_REG_GEN_PURP_CR0);
+	if (!nvm_cfg_addr) {
+		DP_NOTICE(p_hwfn, "Shared memory not initialized\n");
+		return -EINVAL;
+	}
+
+	/* Read the offset of nvm_cfg1 */
+	nvm_cfg1_offset = qed_rd(p_hwfn, p_ptt, nvm_cfg_addr + 4);
+
+	mbi_ver_addr = MCP_REG_SCRATCH + nvm_cfg1_offset +
+		       offsetof(struct nvm_cfg1, glob) +
+		       offsetof(struct nvm_cfg1_glob, mbi_version);
+	*p_mbi_ver = qed_rd(p_hwfn, p_ptt,
+			    mbi_ver_addr) &
+		     (NVM_CFG1_GLOB_MBI_VERSION_0_MASK |
+		      NVM_CFG1_GLOB_MBI_VERSION_1_MASK |
+		      NVM_CFG1_GLOB_MBI_VERSION_2_MASK);
 
 	return 0;
 }
@@ -1770,8 +1827,9 @@ int qed_mcp_get_flash_size(struct qed_hwfn *p_hwfn,
 	return 0;
 }
 
-int qed_mcp_config_vf_msix(struct qed_hwfn *p_hwfn,
-			   struct qed_ptt *p_ptt, u8 vf_id, u8 num)
+static int
+qed_mcp_config_vf_msix_bb(struct qed_hwfn *p_hwfn,
+			  struct qed_ptt *p_ptt, u8 vf_id, u8 num)
 {
 	u32 resp = 0, param = 0, rc_param = 0;
 	int rc;
@@ -1799,6 +1857,36 @@ int qed_mcp_config_vf_msix(struct qed_hwfn *p_hwfn,
 	}
 
 	return rc;
+}
+
+static int
+qed_mcp_config_vf_msix_ah(struct qed_hwfn *p_hwfn,
+			  struct qed_ptt *p_ptt, u8 num)
+{
+	u32 resp = 0, param = num, rc_param = 0;
+	int rc;
+
+	rc = qed_mcp_cmd(p_hwfn, p_ptt, DRV_MSG_CODE_CFG_PF_VFS_MSIX,
+			 param, &resp, &rc_param);
+
+	if (resp != FW_MSG_CODE_DRV_CFG_PF_VFS_MSIX_DONE) {
+		DP_NOTICE(p_hwfn, "MFW failed to set MSI-X for VFs\n");
+		rc = -EINVAL;
+	} else {
+		DP_VERBOSE(p_hwfn, QED_MSG_IOV,
+			   "Requested 0x%02x MSI-x interrupts for VFs\n", num);
+	}
+
+	return rc;
+}
+
+int qed_mcp_config_vf_msix(struct qed_hwfn *p_hwfn,
+			   struct qed_ptt *p_ptt, u8 vf_id, u8 num)
+{
+	if (QED_IS_BB(p_hwfn->cdev))
+		return qed_mcp_config_vf_msix_bb(p_hwfn, p_ptt, vf_id, num);
+	else
+		return qed_mcp_config_vf_msix_ah(p_hwfn, p_ptt, num);
 }
 
 int

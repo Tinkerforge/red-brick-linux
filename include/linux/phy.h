@@ -58,8 +58,7 @@
 #define PHY_IGNORE_INTERRUPT	-2
 
 #define PHY_HAS_INTERRUPT	0x00000001
-#define PHY_HAS_MAGICANEG	0x00000002
-#define PHY_IS_INTERNAL		0x00000004
+#define PHY_IS_INTERNAL		0x00000002
 #define MDIO_DEVICE_IS_PHY	0x80000000
 
 /* Interface Mode definitions */
@@ -364,6 +363,7 @@ struct phy_c45_device_ids {
  * is_pseudo_fixed_link: Set to true if this phy is an Ethernet switch, etc.
  * has_fixups: Set to true if this phy has fixups/quirks.
  * suspended: Set to true if this phy has been suspended successfully.
+ * sysfs_links: Internal boolean tracking sysfs symbolic links setup/removal.
  * state: state of the PHY for management purposes
  * dev_flags: Device-specific flags used by the PHY driver.
  * link_timeout: The number of timer firings to wait before the
@@ -400,6 +400,7 @@ struct phy_device {
 	bool is_pseudo_fixed_link;
 	bool has_fixups;
 	bool suspended;
+	bool sysfs_links;
 
 	enum phy_state state;
 
@@ -717,14 +718,24 @@ static inline bool phy_is_internal(struct phy_device *phydev)
 }
 
 /**
+ * phy_interface_mode_is_rgmii - Convenience function for testing if a
+ * PHY interface mode is RGMII (all variants)
+ * @mode: the phy_interface_t enum
+ */
+static inline bool phy_interface_mode_is_rgmii(phy_interface_t mode)
+{
+	return mode >= PHY_INTERFACE_MODE_RGMII &&
+		mode <= PHY_INTERFACE_MODE_RGMII_TXID;
+};
+
+/**
  * phy_interface_is_rgmii - Convenience function for testing if a PHY interface
  * is RGMII (all variants)
  * @phydev: the phy_device struct
  */
 static inline bool phy_interface_is_rgmii(struct phy_device *phydev)
 {
-	return phydev->interface >= PHY_INTERFACE_MODE_RGMII &&
-		phydev->interface <= PHY_INTERFACE_MODE_RGMII_TXID;
+	return phy_interface_mode_is_rgmii(phydev->interface);
 };
 
 /*
