@@ -88,7 +88,8 @@ revision=$(cat .version)
 if [ -n "$KDEB_PKGVERSION" ]; then
 	packageversion=$KDEB_PKGVERSION
 else
-	packageversion=$version-$revision
+	#packageversion=$version-$revision
+	packageversion=$version
 fi
 sourcename=$KDEB_SOURCENAME
 tmpdir="$objtree/debian/tmp"
