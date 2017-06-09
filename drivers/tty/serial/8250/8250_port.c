@@ -44,6 +44,12 @@
 
 #include "8250.h"
 
+void assert_rts_uart(struct uart_port *);
+void deassert_rts_uart(struct uart_port *);
+void assert_rts_uart8250(struct uart_8250_port *);
+void deassert_rts_uart8250(struct uart_8250_port *);
+static void serial8250_set_mctrl(struct uart_port *, unsigned int);
+
 /*
  * These are definitions for the Exar XR17V35X and XR17(C|D)15X
  */
@@ -360,6 +366,36 @@ static void au_serial_dl_write(struct uart_8250_port *up, int value)
 }
 
 #endif
+
+void assert_rts_uart(struct uart_port *up)
+{
+	unsigned int mctrl = up->mctrl;
+	mctrl &= ~TIOCM_RTS;
+	serial8250_set_mctrl(up, mctrl);
+}
+
+void deassert_rts_uart(struct uart_port *up)
+{
+	unsigned int mctrl = up->mctrl;
+	mctrl |= TIOCM_RTS;
+	serial8250_set_mctrl(up, mctrl);
+}
+
+void assert_rts_uart8250(struct uart_8250_port *up8250)
+{
+	struct uart_port *up = &up8250->port;
+	unsigned int mctrl = up->mctrl;
+	mctrl &= ~TIOCM_RTS;
+	serial8250_set_mctrl(up, mctrl);
+}
+
+void deassert_rts_uart8250(struct uart_8250_port *up8250)
+{
+	struct uart_port *up = &up8250->port;
+	unsigned int mctrl = up->mctrl;
+	mctrl |= TIOCM_RTS;
+	serial8250_set_mctrl(up, mctrl);
+}
 
 static unsigned int hub6_serial_in(struct uart_port *p, int offset)
 {
@@ -1824,6 +1860,7 @@ int serial8250_handle_irq(struct uart_port *port, unsigned int iir)
 	unsigned char status;
 	unsigned long flags;
 	struct uart_8250_port *up = up_to_u8250p(port);
+	struct circ_buf *xmit = &port->state->xmit;
 
 	if (iir & UART_IIR_NO_INT)
 		return 0;
@@ -1837,8 +1874,35 @@ int serial8250_handle_irq(struct uart_port *port, unsigned int iir)
 			status = serial8250_rx_chars(up, status);
 	}
 	serial8250_modem_status(up);
-	if ((!up->dma || up->dma->tx_err) && (status & UART_LSR_THRE))
+
+	if ((!up->dma || up->dma->tx_err) && (status & UART_LSR_THRE)) {
+		int empty = uart_circ_empty(xmit);
+
+		if (!empty) {
+			// Assert RTS
+			assert_rts_uart(port);
+			assert_rts_uart8250(up);
+		}
+
+		/*
+		 * The following function calls __stop_tx(up) which disables
+		 * THRI (THRE in datasheet) interrupt once all bytes are written to the FIFO.
+		 * So after the function call we are re-enabling this interrupt.
+		 * We need to re-enable this interrupt because we want to deassert the
+		 * RTS line once the FIFO and the TX shift register are empty.
+		 */
 		serial8250_tx_chars(up);
+
+		up->ier |= UART_IER_THRI;
+		serial_out(up, UART_IER, up->ier);
+
+		if (empty && (status & UART_LSR_TEMT)) {
+			// Deassert RTS
+			deassert_rts_uart(port);
+			deassert_rts_uart8250(up);
+			__stop_tx(up);
+		}
+	}
 
 	spin_unlock_irqrestore(&port->lock, flags);
 	return 1;
