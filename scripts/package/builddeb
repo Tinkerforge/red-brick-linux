@@ -216,6 +216,14 @@ export DEB_MAINT_PARAMS="\$*"
 export INITRD=$want_initrd
 
 test -d $debhookdir/$script.d && run-parts --arg="$version" --arg="/$installed_image_path" $debhookdir/$script.d
+
+# Manage kernel image symlink
+if [ -f /boot/vmlinuz ]; then
+	rm /boot/vmlinuz
+fi
+
+ln -s /$installed_image_path /boot/vmlinuz
+
 exit 0
 EOF
 	chmod 755 "$tmpdir/DEBIAN/$script"
