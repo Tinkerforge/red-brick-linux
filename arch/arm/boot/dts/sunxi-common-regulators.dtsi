@@ -43,31 +43,6 @@
  */
 
 #include <dt-bindings/gpio/gpio.h>
-<<<<<<< HEAD
-
-&pio {
-	ahci_pwr_pin_a: ahci_pwr_pin@0 {
-		pins = "PB8";
-		function = "gpio_out";
-	};
-
-	usb0_vbus_pin_a: usb0_vbus_pin@0 {
-		pins = "PB9";
-		function = "gpio_out";
-	};
-
-	usb1_vbus_pin_a: usb1_vbus_pin@0 {
-		pins = "PH6";
-		function = "gpio_out";
-	};
-
-	usb2_vbus_pin_a: usb2_vbus_pin@0 {
-		pins = "PH3";
-		function = "gpio_out";
-	};
-};
-=======
->>>>>>> sunxi/sunxi-next
 
 / {
 	reg_ahci_5v: ahci-5v {
