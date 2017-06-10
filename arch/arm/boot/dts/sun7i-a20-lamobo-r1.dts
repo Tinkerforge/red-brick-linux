@@ -85,10 +85,6 @@
 	};
 };
 
-&ahci_pwr_pin_a {
-	pins = "PB3";
-};
-
 &ahci {
 	target-supply = <&reg_ahci_5v>;
 	status = "okay";
@@ -166,7 +162,7 @@
 					reg = <8>;
 					label = "cpu";
 					ethernet = <&gmac>;
-					phy-mode = "rgmii";
+					phy-mode = "rgmii-txid";
 					fixed-link {
 						speed = <1000>;
 						full-duplex;
@@ -317,10 +313,6 @@
 
 &usb_power_supply {
 	status = "okay";
-};
-
-&usb2_vbus_pin_a {
-	pins = "PH12";
 };
 
 &usbphy {

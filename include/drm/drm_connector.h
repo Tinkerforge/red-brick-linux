@@ -32,6 +32,7 @@
 struct drm_device;
 
 struct drm_connector_helper_funcs;
+struct drm_modeset_acquire_ctx;
 struct drm_device;
 struct drm_crtc;
 struct drm_encoder;
@@ -87,6 +88,54 @@ enum subpixel_order {
 	SubPixelVerticalRGB,
 	SubPixelVerticalBGR,
 	SubPixelNone,
+
+};
+
+/**
+ * struct drm_scrambling: sink's scrambling support.
+ */
+struct drm_scrambling {
+	/**
+	 * @supported: scrambling supported for rates > 340 Mhz.
+	 */
+	bool supported;
+	/**
+	 * @low_rates: scrambling supported for rates <= 340 Mhz.
+	 */
+	bool low_rates;
+};
+
+/*
+ * struct drm_scdc - Information about scdc capabilities of a HDMI 2.0 sink
+ *
+ * Provides SCDC register support and capabilities related information on a
+ * HDMI 2.0 sink. In case of a HDMI 1.4 sink, all parameter must be 0.
+ */
+struct drm_scdc {
+	/**
+	 * @supported: status control & data channel present.
+	 */
+	bool supported;
+	/**
+	 * @read_request: sink is capable of generating scdc read request.
+	 */
+	bool read_request;
+	/**
+	 * @scrambling: sink's scrambling capabilities
+	 */
+	struct drm_scrambling scrambling;
+};
+
+
+/**
+ * struct drm_hdmi_info - runtime information about the connected HDMI sink
+ *
+ * Describes if a given display supports advanced HDMI 2.0 features.
+ * This information is available in CEA-861-F extension blocks (like HF-VSDB).
+ */
+struct drm_hdmi_info {
+	/** @scdc: sink's scdc support and capabilities */
+	struct drm_scdc scdc;
 };
 
 /**
@@ -176,6 +225,10 @@ struct drm_display_info {
 #define DRM_BUS_FLAG_PIXDATA_POSEDGE	(1<<2)
 /* drive data on neg. edge */
 #define DRM_BUS_FLAG_PIXDATA_NEGEDGE	(1<<3)
+/* data is transmitted MSB to LSB on the bus */
+#define DRM_BUS_FLAG_DATA_MSB_TO_LSB	(1<<4)
+/* data is transmitted LSB to MSB on the bus */
+#define DRM_BUS_FLAG_DATA_LSB_TO_MSB	(1<<5)
 
 	/**
 	 * @bus_flags: Additional information (like pixel signal polarity) for
@@ -204,6 +257,11 @@ struct drm_display_info {
 	 * @cea_rev: CEA revision of the HDMI sink.
 	 */
 	u8 cea_rev;
+
+	/**
+	 * @hdmi: advance features of a HDMI sink.
+	 */
+	struct drm_hdmi_info hdmi;
 };
 
 int drm_display_info_set_bus_formats(struct drm_display_info *info,
@@ -324,6 +382,11 @@ struct drm_connector_funcs {
 	 * Note that this hook is only called by the probe helper. It's not in
 	 * the helper library vtable purely for historical reasons. The only DRM
 	 * core	entry point to probe connector state is @fill_modes.
+	 *
+	 * Note that the helper library will already hold
+	 * &drm_mode_config.connection_mutex. Drivers which need to grab additional
+	 * locks to avoid races with concurrent modeset changes need to use
+	 * &drm_connector_helper_funcs.detect_ctx instead.
 	 *
 	 * RETURNS:
 	 *
@@ -603,7 +666,6 @@ struct drm_cmdline_mode {
  * @bad_edid_counter: track sinks that give us an EDID with invalid checksum
  * @edid_corrupt: indicates whether the last read EDID was corrupt
  * @debugfs_entry: debugfs directory for this connector
- * @state: current atomic state for this connector
  * @has_tile: is this connector connected to a tiled monitor
  * @tile_group: tile group for the connected monitor
  * @tile_is_single_monitor: whether the tile is one monitor housing
@@ -771,6 +833,21 @@ struct drm_connector {
 
 	struct dentry *debugfs_entry;
 
+	/**
+	 * @state:
+	 *
+	 * Current atomic state for this connector.
+	 *
+	 * This is protected by @drm_mode_config.connection_mutex. Note that
+	 * nonblocking atomic commits access the current connector state without
+	 * taking locks. Either by going through the &struct drm_atomic_state
+	 * pointers, see for_each_connector_in_state(),
+	 * for_each_oldnew_connector_in_state(),
+	 * for_each_old_connector_in_state() and
+	 * for_each_new_connector_in_state(). Or through careful ordering of
+	 * atomic commit operations as implemented in the atomic helpers, see
+	 * &struct drm_crtc_commit.
+	 */
 	struct drm_connector_state *state;
 
 	/* DisplayID bits */

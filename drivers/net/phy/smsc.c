@@ -20,6 +20,7 @@
 #include <linux/module.h>
 #include <linux/mii.h>
 #include <linux/ethtool.h>
+#include <linux/of.h>
 #include <linux/phy.h>
 #include <linux/netdevice.h>
 #include <linux/smscphy.h>
@@ -169,7 +170,7 @@ static struct phy_driver smsc_phy_driver[] = {
 	.name		= "SMSC LAN83C185",
 
 	.features	= PHY_BASIC_FEATURES,
-	.flags		= PHY_HAS_INTERRUPT | PHY_HAS_MAGICANEG,
+	.flags		= PHY_HAS_INTERRUPT,
 
 	.probe		= smsc_phy_probe,
 
@@ -191,7 +192,7 @@ static struct phy_driver smsc_phy_driver[] = {
 	.name		= "SMSC LAN8187",
 
 	.features	= PHY_BASIC_FEATURES,
-	.flags		= PHY_HAS_INTERRUPT | PHY_HAS_MAGICANEG,
+	.flags		= PHY_HAS_INTERRUPT,
 
 	.probe		= smsc_phy_probe,
 
@@ -213,7 +214,7 @@ static struct phy_driver smsc_phy_driver[] = {
 	.name		= "SMSC LAN8700",
 
 	.features	= PHY_BASIC_FEATURES,
-	.flags		= PHY_HAS_INTERRUPT | PHY_HAS_MAGICANEG,
+	.flags		= PHY_HAS_INTERRUPT,
 
 	.probe		= smsc_phy_probe,
 
@@ -235,7 +236,7 @@ static struct phy_driver smsc_phy_driver[] = {
 	.name		= "SMSC LAN911x Internal PHY",
 
 	.features	= PHY_BASIC_FEATURES,
-	.flags		= PHY_HAS_INTERRUPT | PHY_HAS_MAGICANEG,
+	.flags		= PHY_HAS_INTERRUPT,
 
 	.probe		= smsc_phy_probe,
 
@@ -256,7 +257,7 @@ static struct phy_driver smsc_phy_driver[] = {
 	.name		= "SMSC LAN8710/LAN8720",
 
 	.features	= PHY_BASIC_FEATURES,
-	.flags		= PHY_HAS_INTERRUPT | PHY_HAS_MAGICANEG,
+	.flags		= PHY_HAS_INTERRUPT,
 
 	.probe		= smsc_phy_probe,
 
@@ -278,7 +279,7 @@ static struct phy_driver smsc_phy_driver[] = {
 	.name		= "SMSC LAN8740",
 
 	.features	= PHY_BASIC_FEATURES,
-	.flags		= PHY_HAS_INTERRUPT | PHY_HAS_MAGICANEG,
+	.flags		= PHY_HAS_INTERRUPT,
 
 	.probe		= smsc_phy_probe,
 

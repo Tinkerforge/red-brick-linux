@@ -323,7 +323,11 @@ NETDEVICE_SHOW_RW(flags, fmt_hex);
 
 static int change_tx_queue_len(struct net_device *dev, unsigned long new_len)
 {
-	int res, orig_len = dev->tx_queue_len;
+	unsigned int orig_len = dev->tx_queue_len;
+	int res;
+
+	if (new_len != (unsigned int)new_len)
+		return -ERANGE;
 
 	if (new_len != orig_len) {
 		dev->tx_queue_len = new_len;
@@ -349,7 +353,7 @@ static ssize_t tx_queue_len_store(struct device *dev,
 
 	return netdev_store(dev, attr, buf, len, change_tx_queue_len);
 }
-NETDEVICE_SHOW_RW(tx_queue_len, fmt_ulong);
+NETDEVICE_SHOW_RW(tx_queue_len, fmt_dec);
 
 static int change_gro_flush_timeout(struct net_device *dev, unsigned long val)
 {
@@ -953,7 +957,7 @@ net_rx_queue_update_kobjects(struct net_device *dev, int old_num, int new_num)
 	while (--i >= new_num) {
 		struct kobject *kobj = &dev->_rx[i].kobj;
 
-		if (!list_empty(&dev_net(dev)->exit_list))
+		if (!atomic_read(&dev_net(dev)->count))
 			kobj->uevent_suppress = 1;
 		if (dev->sysfs_rx_queue_group)
 			sysfs_remove_group(kobj, dev->sysfs_rx_queue_group);
@@ -1371,7 +1375,7 @@ netdev_queue_update_kobjects(struct net_device *dev, int old_num, int new_num)
 	while (--i >= new_num) {
 		struct netdev_queue *queue = dev->_tx + i;
 
-		if (!list_empty(&dev_net(dev)->exit_list))
+		if (!atomic_read(&dev_net(dev)->count))
 			queue->kobj.uevent_suppress = 1;
 #ifdef CONFIG_BQL
 		sysfs_remove_group(&queue->kobj, &dql_group);
@@ -1558,7 +1562,7 @@ void netdev_unregister_kobject(struct net_device *ndev)
 {
 	struct device *dev = &(ndev->dev);
 
-	if (!list_empty(&dev_net(ndev)->exit_list))
+	if (!atomic_read(&dev_net(ndev)->count))
 		dev_set_uevent_suppress(dev, 1);
 
 	kobject_get(&dev->kobj);

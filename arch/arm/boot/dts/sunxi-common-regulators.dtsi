@@ -43,6 +43,7 @@
  */
 
 #include <dt-bindings/gpio/gpio.h>
+<<<<<<< HEAD
 
 &pio {
 	ahci_pwr_pin_a: ahci_pwr_pin@0 {
@@ -65,12 +66,12 @@
 		function = "gpio_out";
 	};
 };
+=======
+>>>>>>> sunxi/sunxi-next
 
 / {
 	reg_ahci_5v: ahci-5v {
 		compatible = "regulator-fixed";
-		pinctrl-names = "default";
-		pinctrl-0 = <&ahci_pwr_pin_a>;
 		regulator-name = "ahci-5v";
 		regulator-min-microvolt = <5000000>;
 		regulator-max-microvolt = <5000000>;
@@ -82,8 +83,6 @@
 
 	reg_usb0_vbus: usb0-vbus {
 		compatible = "regulator-fixed";
-		pinctrl-names = "default";
-		pinctrl-0 = <&usb0_vbus_pin_a>;
 		regulator-name = "usb0-vbus";
 		regulator-min-microvolt = <5000000>;
 		regulator-max-microvolt = <5000000>;
@@ -94,8 +93,6 @@
 
 	reg_usb1_vbus: usb1-vbus {
 		compatible = "regulator-fixed";
-		pinctrl-names = "default";
-		pinctrl-0 = <&usb1_vbus_pin_a>;
 		regulator-name = "usb1-vbus";
 		regulator-min-microvolt = <5000000>;
 		regulator-max-microvolt = <5000000>;
@@ -107,8 +104,6 @@
 
 	reg_usb2_vbus: usb2-vbus {
 		compatible = "regulator-fixed";
-		pinctrl-names = "default";
-		pinctrl-0 = <&usb2_vbus_pin_a>;
 		regulator-name = "usb2-vbus";
 		regulator-min-microvolt = <5000000>;
 		regulator-max-microvolt = <5000000>;

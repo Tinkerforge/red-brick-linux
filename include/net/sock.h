@@ -236,6 +236,7 @@ struct sock_common {
   *	@sk_shutdown: mask of %SEND_SHUTDOWN and/or %RCV_SHUTDOWN
   *	@sk_userlocks: %SO_SNDBUF and %SO_RCVBUF settings
   *	@sk_lock:	synchronizer
+  *	@sk_kern_sock: True if sock is using kernel lock classes
   *	@sk_rcvbuf: size of receive buffer in bytes
   *	@sk_wq: sock wait queue and async head
   *	@sk_rx_dst: receive input route used by early demux
@@ -252,6 +253,7 @@ struct sock_common {
   *	@sk_ll_usec: usecs to busypoll when there is no data
   *	@sk_allocation: allocation mode
   *	@sk_pacing_rate: Pacing rate (if supported by transport/packet scheduler)
+  *	@sk_pacing_status: Pacing status (requested, handled by sch_fq)
   *	@sk_max_pacing_rate: Maximum pacing rate (%SO_MAX_PACING_RATE)
   *	@sk_sndbuf: size of send buffer in bytes
   *	@sk_padding: unused element for alignment
@@ -395,7 +397,7 @@ struct sock {
 	__s32			sk_peek_off;
 	int			sk_write_pending;
 	__u32			sk_dst_pending_confirm;
-	/* Note: 32bit hole on 64bit arches */
+	u32			sk_pacing_status; /* see enum sk_pacing */
 	long			sk_sndtimeo;
 	struct timer_list	sk_timer;
 	__u32			sk_priority;
@@ -430,7 +432,8 @@ struct sock {
 #endif
 
 	kmemcheck_bitfield_begin(flags);
-	unsigned int		sk_padding : 2,
+	unsigned int		sk_padding : 1,
+				sk_kern_sock : 1,
 				sk_no_check_tx : 1,
 				sk_no_check_rx : 1,
 				sk_userlocks : 4,
@@ -471,6 +474,12 @@ struct sock {
 	void                    (*sk_destruct)(struct sock *sk);
 	struct sock_reuseport __rcu	*sk_reuseport_cb;
 	struct rcu_head		sk_rcu;
+};
+
+enum sk_pacing {
+	SK_PACING_NONE		= 0,
+	SK_PACING_NEEDED	= 1,
+	SK_PACING_FQ		= 2,
 };
 
 #define __sk_user_data(sk) ((*((void __rcu **)&(sk)->sk_user_data)))
@@ -993,7 +1002,7 @@ struct smc_hashinfo;
 struct module;
 
 /*
- * caches using SLAB_DESTROY_BY_RCU should let .next pointer from nulls nodes
+ * caches using SLAB_TYPESAFE_BY_RCU should let .next pointer from nulls nodes
  * un-modified. Special care is taken when initializing object to zero.
  */
 static inline void sk_prot_clear_nulls(struct sock *sk, int size)
@@ -1015,7 +1024,8 @@ struct proto {
 					int addr_len);
 	int			(*disconnect)(struct sock *sk, int flags);
 
-	struct sock *		(*accept)(struct sock *sk, int flags, int *err);
+	struct sock *		(*accept)(struct sock *sk, int flags, int *err,
+					  bool kern);
 
 	int			(*ioctl)(struct sock *sk, int cmd,
 					 unsigned long arg);
@@ -1573,7 +1583,7 @@ int sock_cmsg_send(struct sock *sk, struct msghdr *msg,
 int sock_no_bind(struct socket *, struct sockaddr *, int);
 int sock_no_connect(struct socket *, struct sockaddr *, int, int);
 int sock_no_socketpair(struct socket *, struct socket *);
-int sock_no_accept(struct socket *, struct socket *, int);
+int sock_no_accept(struct socket *, struct socket *, int, bool);
 int sock_no_getname(struct socket *, struct sockaddr *, int *, int);
 unsigned int sock_no_poll(struct file *, struct socket *,
 			  struct poll_table_struct *);
@@ -1780,11 +1790,8 @@ __sk_dst_set(struct sock *sk, struct dst_entry *dst)
 
 	sk_tx_queue_clear(sk);
 	sk->sk_dst_pending_confirm = 0;
-	/*
-	 * This can be called while sk is owned by the caller only,
-	 * with no state that can be checked in a rcu_dereference_check() cond
-	 */
-	old_dst = rcu_dereference_raw(sk->sk_dst_cache);
+	old_dst = rcu_dereference_protected(sk->sk_dst_cache,
+					    lockdep_sock_is_held(sk));
 	rcu_assign_pointer(sk->sk_dst_cache, dst);
 	dst_release(old_dst);
 }
@@ -2035,8 +2042,8 @@ void sk_reset_timer(struct sock *sk, struct timer_list *timer,
 
 void sk_stop_timer(struct sock *sk, struct timer_list *timer);
 
-int __sk_queue_drop_skb(struct sock *sk, struct sk_buff *skb,
-			unsigned int flags,
+int __sk_queue_drop_skb(struct sock *sk, struct sk_buff_head *sk_queue,
+			struct sk_buff *skb, unsigned int flags,
 			void (*destructor)(struct sock *sk,
 					   struct sk_buff *skb));
 int __sock_queue_rcv_skb(struct sock *sk, struct sk_buff *skb);
@@ -2239,6 +2246,7 @@ sock_recv_timestamp(struct msghdr *msg, struct sock *sk, struct sk_buff *skb)
 void __sock_recv_ts_and_drops(struct msghdr *msg, struct sock *sk,
 			      struct sk_buff *skb);
 
+#define SK_DEFAULT_STAMP (-1L * NSEC_PER_SEC)
 static inline void sock_recv_ts_and_drops(struct msghdr *msg, struct sock *sk,
 					  struct sk_buff *skb)
 {
@@ -2249,8 +2257,10 @@ static inline void sock_recv_ts_and_drops(struct msghdr *msg, struct sock *sk,
 
 	if (sk->sk_flags & FLAGS_TS_OR_DROPS || sk->sk_tsflags & TSFLAGS_ANY)
 		__sock_recv_ts_and_drops(msg, sk, skb);
-	else
+	else if (unlikely(sock_flag(sk, SOCK_TIMESTAMP)))
 		sk->sk_stamp = skb->tstamp;
+	else if (unlikely(sk->sk_stamp == SK_DEFAULT_STAMP))
+		sk->sk_stamp = 0;
 }
 
 void __sock_tx_timestamp(__u16 tsflags, __u8 *tx_flags);
@@ -2361,6 +2371,8 @@ bool sk_ns_capable(const struct sock *sk,
 		   struct user_namespace *user_ns, int cap);
 bool sk_capable(const struct sock *sk, int cap);
 bool sk_net_capable(const struct sock *sk, int cap);
+
+void sk_get_meminfo(const struct sock *sk, u32 *meminfo);
 
 extern __u32 sysctl_wmem_max;
 extern __u32 sysctl_rmem_max;

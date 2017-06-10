@@ -122,6 +122,8 @@ enum {
 
 	RTM_NEWNETCONF = 80,
 #define RTM_NEWNETCONF RTM_NEWNETCONF
+	RTM_DELNETCONF,
+#define RTM_DELNETCONF RTM_DELNETCONF
 	RTM_GETNETCONF = 82,
 #define RTM_GETNETCONF RTM_GETNETCONF
 
@@ -276,6 +278,7 @@ enum rt_scope_t {
 #define RTM_F_EQUALIZE		0x400	/* Multipath equalizer: NI	*/
 #define RTM_F_PREFIX		0x800	/* Prefix addresses		*/
 #define RTM_F_LOOKUP_TABLE	0x1000	/* set rtm_table to FIB lookup result */
+#define RTM_F_FIB_MATCH	        0x2000	/* return full fib lookup match */
 
 /* Reserved table identifiers */
 
@@ -319,6 +322,7 @@ enum rtattr_type_t {
 	RTA_EXPIRES,
 	RTA_PAD,
 	RTA_UID,
+	RTA_TTL_PROPAGATE,
 	__RTA_MAX
 };
 
@@ -545,6 +549,8 @@ enum {
 	TCA_STATS2,
 	TCA_STAB,
 	TCA_PAD,
+	TCA_DUMP_INVISIBLE,
+	TCA_CHAIN,
 	__TCA_MAX
 };
 

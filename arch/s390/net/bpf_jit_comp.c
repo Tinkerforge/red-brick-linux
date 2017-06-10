@@ -24,6 +24,7 @@
 #include <linux/bpf.h>
 #include <asm/cacheflush.h>
 #include <asm/dis.h>
+#include <asm/set_memory.h>
 #include "bpf_jit.h"
 
 int bpf_jit_enable __read_mostly;
@@ -990,7 +991,7 @@ static noinline int bpf_jit_insn(struct bpf_jit *jit, struct bpf_prog *fp, int i
 		}
 		break;
 	}
-	case BPF_JMP | BPF_CALL | BPF_X:
+	case BPF_JMP | BPF_TAIL_CALL:
 		/*
 		 * Implicit input:
 		 *  B1: pointer to ctx

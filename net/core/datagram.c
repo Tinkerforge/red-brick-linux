@@ -161,6 +161,45 @@ done:
 	return skb;
 }
 
+struct sk_buff *__skb_try_recv_from_queue(struct sock *sk,
+					  struct sk_buff_head *queue,
+					  unsigned int flags,
+					  void (*destructor)(struct sock *sk,
+							   struct sk_buff *skb),
+					  int *peeked, int *off, int *err,
+					  struct sk_buff **last)
+{
+	struct sk_buff *skb;
+	int _off = *off;
+
+	*last = queue->prev;
+	skb_queue_walk(queue, skb) {
+		if (flags & MSG_PEEK) {
+			if (_off >= skb->len && (skb->len || _off ||
+						 skb->peeked)) {
+				_off -= skb->len;
+				continue;
+			}
+			if (!skb->len) {
+				skb = skb_set_peeked(skb);
+				if (unlikely(IS_ERR(skb))) {
+					*err = PTR_ERR(skb);
+					return NULL;
+				}
+			}
+			*peeked = 1;
+			atomic_inc(&skb->users);
+		} else {
+			__skb_unlink(skb, queue);
+			if (destructor)
+				destructor(sk, skb);
+		}
+		*off = _off;
+		return skb;
+	}
+	return NULL;
+}
+
 /**
  *	__skb_try_recv_datagram - Receive a datagram skbuff
  *	@sk: socket
@@ -222,42 +261,20 @@ struct sk_buff *__skb_try_recv_datagram(struct sock *sk, unsigned int flags,
 		 * Look at current nfs client by the way...
 		 * However, this function was correct in any case. 8)
 		 */
-		int _off = *off;
-
-		*last = (struct sk_buff *)queue;
 		spin_lock_irqsave(&queue->lock, cpu_flags);
-		skb_queue_walk(queue, skb) {
-			*last = skb;
-			if (flags & MSG_PEEK) {
-				if (_off >= skb->len && (skb->len || _off ||
-							 skb->peeked)) {
-					_off -= skb->len;
-					continue;
-				}
-				if (!skb->len) {
-					skb = skb_set_peeked(skb);
-					if (IS_ERR(skb)) {
-						error = PTR_ERR(skb);
-						spin_unlock_irqrestore(&queue->lock,
-								       cpu_flags);
-						goto no_packet;
-					}
-				}
-				*peeked = 1;
-				atomic_inc(&skb->users);
-			} else {
-				__skb_unlink(skb, queue);
-				if (destructor)
-					destructor(sk, skb);
-			}
-			spin_unlock_irqrestore(&queue->lock, cpu_flags);
-			*off = _off;
-			return skb;
-		}
-
+		skb = __skb_try_recv_from_queue(sk, queue, flags, destructor,
+						peeked, off, &error, last);
 		spin_unlock_irqrestore(&queue->lock, cpu_flags);
-	} while (sk_can_busy_loop(sk) &&
-		 sk_busy_loop(sk, flags & MSG_DONTWAIT));
+		if (error)
+			goto no_packet;
+		if (skb)
+			return skb;
+
+		if (!sk_can_busy_loop(sk))
+			break;
+
+		sk_busy_loop(sk, flags & MSG_DONTWAIT);
+	} while (!skb_queue_empty(&sk->sk_receive_queue));
 
 	error = -EAGAIN;
 
@@ -331,8 +348,8 @@ void __skb_free_datagram_locked(struct sock *sk, struct sk_buff *skb, int len)
 }
 EXPORT_SYMBOL(__skb_free_datagram_locked);
 
-int __sk_queue_drop_skb(struct sock *sk, struct sk_buff *skb,
-			unsigned int flags,
+int __sk_queue_drop_skb(struct sock *sk, struct sk_buff_head *sk_queue,
+			struct sk_buff *skb, unsigned int flags,
 			void (*destructor)(struct sock *sk,
 					   struct sk_buff *skb))
 {
@@ -340,15 +357,15 @@ int __sk_queue_drop_skb(struct sock *sk, struct sk_buff *skb,
 
 	if (flags & MSG_PEEK) {
 		err = -ENOENT;
-		spin_lock_bh(&sk->sk_receive_queue.lock);
-		if (skb == skb_peek(&sk->sk_receive_queue)) {
-			__skb_unlink(skb, &sk->sk_receive_queue);
+		spin_lock_bh(&sk_queue->lock);
+		if (skb == skb_peek(sk_queue)) {
+			__skb_unlink(skb, sk_queue);
 			atomic_dec(&skb->users);
 			if (destructor)
 				destructor(sk, skb);
 			err = 0;
 		}
-		spin_unlock_bh(&sk->sk_receive_queue.lock);
+		spin_unlock_bh(&sk_queue->lock);
 	}
 
 	atomic_inc(&sk->sk_drops);
@@ -379,7 +396,8 @@ EXPORT_SYMBOL(__sk_queue_drop_skb);
 
 int skb_kill_datagram(struct sock *sk, struct sk_buff *skb, unsigned int flags)
 {
-	int err = __sk_queue_drop_skb(sk, skb, flags, NULL);
+	int err = __sk_queue_drop_skb(sk, &sk->sk_receive_queue, skb, flags,
+				      NULL);
 
 	kfree_skb(skb);
 	sk_mem_reclaim_partial(sk);
@@ -398,7 +416,7 @@ int skb_copy_datagram_iter(const struct sk_buff *skb, int offset,
 			   struct iov_iter *to, int len)
 {
 	int start = skb_headlen(skb);
-	int i, copy = start - offset;
+	int i, copy = start - offset, start_off = offset, n;
 	struct sk_buff *frag_iter;
 
 	trace_skb_copy_datagram_iovec(skb, len);
@@ -407,11 +425,12 @@ int skb_copy_datagram_iter(const struct sk_buff *skb, int offset,
 	if (copy > 0) {
 		if (copy > len)
 			copy = len;
-		if (copy_to_iter(skb->data + offset, copy, to) != copy)
+		n = copy_to_iter(skb->data + offset, copy, to);
+		offset += n;
+		if (n != copy)
 			goto short_copy;
 		if ((len -= copy) == 0)
 			return 0;
-		offset += copy;
 	}
 
 	/* Copy paged appendix. Hmm... why does this look so complicated? */
@@ -425,13 +444,14 @@ int skb_copy_datagram_iter(const struct sk_buff *skb, int offset,
 		if ((copy = end - offset) > 0) {
 			if (copy > len)
 				copy = len;
-			if (copy_page_to_iter(skb_frag_page(frag),
+			n = copy_page_to_iter(skb_frag_page(frag),
 					      frag->page_offset + offset -
-					      start, copy, to) != copy)
+					      start, copy, to);
+			offset += n;
+			if (n != copy)
 				goto short_copy;
 			if (!(len -= copy))
 				return 0;
-			offset += copy;
 		}
 		start = end;
 	}
@@ -463,6 +483,7 @@ int skb_copy_datagram_iter(const struct sk_buff *skb, int offset,
 	 */
 
 fault:
+	iov_iter_revert(to, offset - start_off);
 	return -EFAULT;
 
 short_copy:
@@ -613,7 +634,7 @@ static int skb_copy_and_csum_datagram(const struct sk_buff *skb, int offset,
 				      __wsum *csump)
 {
 	int start = skb_headlen(skb);
-	int i, copy = start - offset;
+	int i, copy = start - offset, start_off = offset;
 	struct sk_buff *frag_iter;
 	int pos = 0;
 	int n;
@@ -623,11 +644,11 @@ static int skb_copy_and_csum_datagram(const struct sk_buff *skb, int offset,
 		if (copy > len)
 			copy = len;
 		n = csum_and_copy_to_iter(skb->data + offset, copy, csump, to);
+		offset += n;
 		if (n != copy)
 			goto fault;
 		if ((len -= copy) == 0)
 			return 0;
-		offset += copy;
 		pos = copy;
 	}
 
@@ -649,12 +670,12 @@ static int skb_copy_and_csum_datagram(const struct sk_buff *skb, int offset,
 						  offset - start, copy,
 						  &csum2, to);
 			kunmap(page);
+			offset += n;
 			if (n != copy)
 				goto fault;
 			*csump = csum_block_add(*csump, csum2, pos);
 			if (!(len -= copy))
 				return 0;
-			offset += copy;
 			pos += copy;
 		}
 		start = end;
@@ -687,6 +708,7 @@ static int skb_copy_and_csum_datagram(const struct sk_buff *skb, int offset,
 		return 0;
 
 fault:
+	iov_iter_revert(to, offset - start_off);
 	return -EFAULT;
 }
 
@@ -756,7 +778,7 @@ int skb_copy_and_csum_datagram_msg(struct sk_buff *skb,
 
 	if (msg_data_left(msg) < chunk) {
 		if (__skb_checksum_complete(skb))
-			goto csum_error;
+			return -EINVAL;
 		if (skb_copy_datagram_msg(skb, hlen, msg, chunk))
 			goto fault;
 	} else {
@@ -764,14 +786,16 @@ int skb_copy_and_csum_datagram_msg(struct sk_buff *skb,
 		if (skb_copy_and_csum_datagram(skb, hlen, &msg->msg_iter,
 					       chunk, &csum))
 			goto fault;
-		if (csum_fold(csum))
-			goto csum_error;
+
+		if (csum_fold(csum)) {
+			iov_iter_revert(&msg->msg_iter, chunk);
+			return -EINVAL;
+		}
+
 		if (unlikely(skb->ip_summed == CHECKSUM_COMPLETE))
 			netdev_rx_csum_fault(skb->dev);
 	}
 	return 0;
-csum_error:
-	return -EINVAL;
 fault:
 	return -EFAULT;
 }

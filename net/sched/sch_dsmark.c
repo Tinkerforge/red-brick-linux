@@ -44,6 +44,7 @@ struct mask_value {
 struct dsmark_qdisc_data {
 	struct Qdisc		*q;
 	struct tcf_proto __rcu	*filter_list;
+	struct tcf_block	*block;
 	struct mask_value	*mv;
 	u16			indices;
 	u8			set_tc_index;
@@ -129,7 +130,7 @@ static int dsmark_change(struct Qdisc *sch, u32 classid, u32 parent,
 	if (!opt)
 		goto errout;
 
-	err = nla_parse_nested(tb, TCA_DSMARK_MAX, opt, dsmark_policy);
+	err = nla_parse_nested(tb, TCA_DSMARK_MAX, opt, dsmark_policy, NULL);
 	if (err < 0)
 		goto errout;
 
@@ -183,11 +184,11 @@ ignore:
 	}
 }
 
-static inline struct tcf_proto __rcu **dsmark_find_tcf(struct Qdisc *sch,
-						       unsigned long cl)
+static struct tcf_block *dsmark_tcf_block(struct Qdisc *sch, unsigned long cl)
 {
 	struct dsmark_qdisc_data *p = qdisc_priv(sch);
-	return &p->filter_list;
+
+	return p->block;
 }
 
 /* --------------------------- Qdisc operations ---------------------------- */
@@ -201,9 +202,13 @@ static int dsmark_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	pr_debug("%s(skb %p,sch %p,[qdisc %p])\n", __func__, skb, sch, p);
 
 	if (p->set_tc_index) {
+		int wlen = skb_network_offset(skb);
+
 		switch (tc_skb_protocol(skb)) {
 		case htons(ETH_P_IP):
-			if (skb_cow_head(skb, sizeof(struct iphdr)))
+			wlen += sizeof(struct iphdr);
+			if (!pskb_may_pull(skb, wlen) ||
+			    skb_try_make_writable(skb, wlen))
 				goto drop;
 
 			skb->tc_index = ipv4_get_dsfield(ip_hdr(skb))
@@ -211,7 +216,9 @@ static int dsmark_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 			break;
 
 		case htons(ETH_P_IPV6):
-			if (skb_cow_head(skb, sizeof(struct ipv6hdr)))
+			wlen += sizeof(struct ipv6hdr);
+			if (!pskb_may_pull(skb, wlen) ||
+			    skb_try_make_writable(skb, wlen))
 				goto drop;
 
 			skb->tc_index = ipv6_get_dsfield(ipv6_hdr(skb))
@@ -228,7 +235,7 @@ static int dsmark_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	else {
 		struct tcf_result res;
 		struct tcf_proto *fl = rcu_dereference_bh(p->filter_list);
-		int result = tc_classify(skb, fl, &res, false);
+		int result = tcf_classify(skb, fl, &res, false);
 
 		pr_debug("result %d class 0x%04x\n", result, res.classid);
 
@@ -336,7 +343,11 @@ static int dsmark_init(struct Qdisc *sch, struct nlattr *opt)
 	if (!opt)
 		goto errout;
 
-	err = nla_parse_nested(tb, TCA_DSMARK_MAX, opt, dsmark_policy);
+	err = tcf_block_get(&p->block, &p->filter_list);
+	if (err)
+		return err;
+
+	err = nla_parse_nested(tb, TCA_DSMARK_MAX, opt, dsmark_policy, NULL);
 	if (err < 0)
 		goto errout;
 
@@ -368,6 +379,8 @@ static int dsmark_init(struct Qdisc *sch, struct nlattr *opt)
 	p->q = qdisc_create_dflt(sch->dev_queue, &pfifo_qdisc_ops, sch->handle);
 	if (p->q == NULL)
 		p->q = &noop_qdisc;
+	else
+		qdisc_hash_add(p->q, true);
 
 	pr_debug("%s: qdisc %p\n", __func__, p->q);
 
@@ -392,7 +405,7 @@ static void dsmark_destroy(struct Qdisc *sch)
 
 	pr_debug("%s(sch %p,[qdisc %p])\n", __func__, sch, p);
 
-	tcf_destroy_chain(&p->filter_list);
+	tcf_block_put(p->block);
 	qdisc_destroy(p->q);
 	if (p->mv != p->embedded)
 		kfree(p->mv);
@@ -460,7 +473,7 @@ static const struct Qdisc_class_ops dsmark_class_ops = {
 	.change		=	dsmark_change,
 	.delete		=	dsmark_delete,
 	.walk		=	dsmark_walk,
-	.tcf_chain	=	dsmark_find_tcf,
+	.tcf_block	=	dsmark_tcf_block,
 	.bind_tcf	=	dsmark_bind_filter,
 	.unbind_tcf	=	dsmark_put,
 	.dump		=	dsmark_dump_class,

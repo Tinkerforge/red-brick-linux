@@ -101,8 +101,39 @@ function create_bond_cfg_redhat {
 	echo BONDING_OPTS=\"mode=active-backup miimon=100 primary=$2\" >>$fn
 }
 
+function del_eth_cfg_ubuntu {
+	local mainfn=$cfgdir/interfaces
+	local fnlist=( $mainfn )
+
+	local dirlist=(`awk '/^[ \t]*source/{print $2}' $mainfn`)
+
+	local i
+	for i in "${dirlist[@]}"
+	do
+		fnlist+=(`ls $i 2>/dev/null`)
+	done
+
+	local tmpfl=$(mktemp)
+
+	local nic_start='^[ \t]*(auto|iface|mapping|allow-.*)[ \t]+'$1
+	local nic_end='^[ \t]*(auto|iface|mapping|allow-.*|source)'
+
+	local fn
+	for fn in "${fnlist[@]}"
+	do
+		awk "/$nic_end/{x=0} x{next} /$nic_start/{x=1;next} 1" \
+			$fn >$tmpfl
+
+		cp $tmpfl $fn
+	done
+
+	rm $tmpfl
+}
+
 function create_eth_cfg_ubuntu {
 	local fn=$cfgdir/interfaces
+
+	del_eth_cfg_ubuntu $1
 
 	echo $'\n'auto $1 >>$fn
 	echo iface $1 inet manual >>$fn
@@ -118,6 +149,8 @@ function create_eth_cfg_pri_ubuntu {
 
 function create_bond_cfg_ubuntu {
 	local fn=$cfgdir/interfaces
+
+	del_eth_cfg_ubuntu $1
 
 	echo $'\n'auto $1 >>$fn
 	echo iface $1 inet dhcp >>$fn

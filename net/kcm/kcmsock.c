@@ -1687,7 +1687,7 @@ static int kcm_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		struct kcm_attach info;
 
 		if (copy_from_user(&info, (void __user *)arg, sizeof(info)))
-			err = -EFAULT;
+			return -EFAULT;
 
 		err = kcm_attach_ioctl(sock, &info);
 
@@ -1697,7 +1697,7 @@ static int kcm_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		struct kcm_unattach info;
 
 		if (copy_from_user(&info, (void __user *)arg, sizeof(info)))
-			err = -EFAULT;
+			return -EFAULT;
 
 		err = kcm_unattach_ioctl(sock, &info);
 
@@ -1707,11 +1707,7 @@ static int kcm_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		struct kcm_clone info;
 		struct socket *newsock = NULL;
 
-		if (copy_from_user(&info, (void __user *)arg, sizeof(info)))
-			err = -EFAULT;
-
 		err = kcm_clone(sock, &info, &newsock);
-
 		if (!err) {
 			if (copy_to_user((void __user *)arg, &info,
 					 sizeof(info))) {
@@ -1989,7 +1985,7 @@ static int kcm_create(struct net *net, struct socket *sock,
 	return 0;
 }
 
-static struct net_proto_family kcm_family_ops = {
+static const struct net_proto_family kcm_family_ops = {
 	.family = PF_KCM,
 	.create = kcm_create,
 	.owner  = THIS_MODULE,

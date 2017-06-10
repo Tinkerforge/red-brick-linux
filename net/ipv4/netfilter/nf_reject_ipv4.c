@@ -104,7 +104,6 @@ EXPORT_SYMBOL_GPL(nf_reject_ip_tcphdr_put);
 void nf_send_reset(struct net *net, struct sk_buff *oldskb, int hook)
 {
 	struct sk_buff *nskb;
-	const struct iphdr *oiph;
 	struct iphdr *niph;
 	const struct tcphdr *oth;
 	struct tcphdr _oth;
@@ -115,8 +114,6 @@ void nf_send_reset(struct net *net, struct sk_buff *oldskb, int hook)
 
 	if (skb_rtable(oldskb)->rt_flags & (RTCF_BROADCAST | RTCF_MULTICAST))
 		return;
-
-	oiph = ip_hdr(oldskb);
 
 	nskb = alloc_skb(sizeof(struct iphdr) + sizeof(struct tcphdr) +
 			 LL_MAX_HEADER, GFP_ATOMIC);
@@ -175,7 +172,7 @@ void nf_send_unreach(struct sk_buff *skb_in, int code, int hook)
 	struct iphdr *iph = ip_hdr(skb_in);
 	u8 proto;
 
-	if (skb_in->csum_bad || iph->frag_off & htons(IP_OFFSET))
+	if (iph->frag_off & htons(IP_OFFSET))
 		return;
 
 	if (skb_csum_unnecessary(skb_in)) {

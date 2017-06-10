@@ -41,6 +41,13 @@ struct flow_dissector_key_vlan {
 	u16	padding;
 };
 
+struct flow_dissector_key_mpls {
+	u32	mpls_ttl:8,
+		mpls_bos:1,
+		mpls_tc:3,
+		mpls_label:20;
+};
+
 struct flow_dissector_key_keyid {
 	__be32	keyid;
 };
@@ -150,6 +157,14 @@ struct flow_dissector_key_eth_addrs {
 	unsigned char src[ETH_ALEN];
 };
 
+/**
+ * struct flow_dissector_key_tcp:
+ * @flags: flags
+ */
+struct flow_dissector_key_tcp {
+	__be16 flags;
+};
+
 enum flow_dissector_key_id {
 	FLOW_DISSECTOR_KEY_CONTROL, /* struct flow_dissector_key_control */
 	FLOW_DISSECTOR_KEY_BASIC, /* struct flow_dissector_key_basic */
@@ -169,6 +184,8 @@ enum flow_dissector_key_id {
 	FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS, /* struct flow_dissector_key_ipv6_addrs */
 	FLOW_DISSECTOR_KEY_ENC_CONTROL, /* struct flow_dissector_key_control */
 	FLOW_DISSECTOR_KEY_ENC_PORTS, /* struct flow_dissector_key_ports */
+	FLOW_DISSECTOR_KEY_MPLS, /* struct flow_dissector_key_mpls */
+	FLOW_DISSECTOR_KEY_TCP, /* struct flow_dissector_key_tcp */
 
 	FLOW_DISSECTOR_KEY_MAX,
 };

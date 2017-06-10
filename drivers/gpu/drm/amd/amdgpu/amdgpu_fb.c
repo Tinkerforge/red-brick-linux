@@ -112,7 +112,7 @@ static void amdgpufb_destroy_pinned_object(struct drm_gem_object *gobj)
 	struct amdgpu_bo *abo = gem_to_amdgpu_bo(gobj);
 	int ret;
 
-	ret = amdgpu_bo_reserve(abo, false);
+	ret = amdgpu_bo_reserve(abo, true);
 	if (likely(ret == 0)) {
 		amdgpu_bo_kunmap(abo);
 		amdgpu_bo_unpin(abo);
@@ -147,11 +147,11 @@ static int amdgpufb_create_pinned_object(struct amdgpu_fbdev *rfbdev,
 	ret = amdgpu_gem_object_create(adev, aligned_size, 0,
 				       AMDGPU_GEM_DOMAIN_VRAM,
 				       AMDGPU_GEM_CREATE_CPU_ACCESS_REQUIRED |
-				       AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS,
+				       AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS |
+				       AMDGPU_GEM_CREATE_VRAM_CLEARED,
 				       true, &gobj);
 	if (ret) {
-		printk(KERN_ERR "failed to allocate framebuffer (%d)\n",
-		       aligned_size);
+		pr_err("failed to allocate framebuffer (%d)\n", aligned_size);
 		return -ENOMEM;
 	}
 	abo = gem_to_amdgpu_bo(gobj);
@@ -240,8 +240,6 @@ static int amdgpufb_create(struct drm_fb_helper *helper,
 
 	/* setup helper */
 	rfbdev->helper.fb = fb;
-
-	memset_io(abo->kptr, 0x0, amdgpu_bo_size(abo));
 
 	strcpy(info->fix.id, "amdgpudrmfb");
 
@@ -427,9 +425,14 @@ bool amdgpu_fbdev_robj_is_fb(struct amdgpu_device *adev, struct amdgpu_bo *robj)
 
 void amdgpu_fbdev_restore_mode(struct amdgpu_device *adev)
 {
-	struct amdgpu_fbdev *afbdev = adev->mode_info.rfbdev;
+	struct amdgpu_fbdev *afbdev;
 	struct drm_fb_helper *fb_helper;
 	int ret;
+
+	if (!adev)
+		return;
+
+	afbdev = adev->mode_info.rfbdev;
 
 	if (!afbdev)
 		return;
