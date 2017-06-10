@@ -880,27 +880,6 @@ freeout:
 	return err;
 }
 
-/*
- * Allocate a chunk of memory using kmalloc or, if that fails, vmalloc.
- * The allocated memory is cleared.
- */
-void *t4_alloc_mem(size_t size)
-{
-	void *p = kzalloc(size, GFP_KERNEL | __GFP_NOWARN);
-
-	if (!p)
-		p = vzalloc(size);
-	return p;
-}
-
-/*
- * Free memory allocated through alloc_mem().
- */
-void t4_free_mem(void *addr)
-{
-	kvfree(addr);
-}
-
 static u16 cxgb_select_queue(struct net_device *dev, struct sk_buff *skb,
 			     void *accel_priv, select_queue_fallback_t fallback)
 {
@@ -912,7 +891,7 @@ static u16 cxgb_select_queue(struct net_device *dev, struct sk_buff *skb,
 	 * The skb's priority is determined via the VLAN Tag Priority Code
 	 * Point field.
 	 */
-	if (cxgb4_dcb_enabled(dev)) {
+	if (cxgb4_dcb_enabled(dev) && !is_kdump_kernel()) {
 		u16 vlan_tci;
 		int err;
 
@@ -1299,7 +1278,7 @@ static int tid_init(struct tid_info *t)
 	       max_ftids * sizeof(*t->ftid_tab) +
 	       ftid_bmap_size * sizeof(long);
 
-	t->tid_tab = t4_alloc_mem(size);
+	t->tid_tab = kvzalloc(size, GFP_KERNEL);
 	if (!t->tid_tab)
 		return -ENOMEM;
 
@@ -2266,6 +2245,13 @@ static int cxgb_open(struct net_device *dev)
 			return err;
 	}
 
+	/* It's possible that the basic port information could have
+	 * changed since we first read it.
+	 */
+	err = t4_update_port_info(pi);
+	if (err < 0)
+		return err;
+
 	err = link_start(dev);
 	if (!err)
 		netif_tx_start_all_queues(dev);
@@ -2338,6 +2324,10 @@ int cxgb4_create_server_filter(const struct net_device *dev, unsigned int stid,
 	f->locked = 1;
 	f->fs.rpttid = 1;
 
+	/* Save the actual tid. We need this to get the corresponding
+	 * filter entry structure in filter_rpl.
+	 */
+	f->tid = stid + adap->tids.ftid_base;
 	ret = set_filter_wr(adap, stid);
 	if (ret) {
 		clear_filter(adap, f);
@@ -2737,6 +2727,16 @@ static int cxgb_setup_tc(struct net_device *dev, u32 handle, __be16 proto,
 	return -EOPNOTSUPP;
 }
 
+static netdev_features_t cxgb_fix_features(struct net_device *dev,
+					   netdev_features_t features)
+{
+	/* Disable GRO, if RX_CSUM is disabled */
+	if (!(features & NETIF_F_RXCSUM))
+		features &= ~NETIF_F_GRO;
+
+	return features;
+}
+
 static const struct net_device_ops cxgb4_netdev_ops = {
 	.ndo_open             = cxgb_open,
 	.ndo_stop             = cxgb_close,
@@ -2758,6 +2758,7 @@ static const struct net_device_ops cxgb4_netdev_ops = {
 #endif /* CONFIG_CHELSIO_T4_FCOE */
 	.ndo_set_tx_maxrate   = cxgb_set_tx_maxrate,
 	.ndo_setup_tc         = cxgb_setup_tc,
+	.ndo_fix_features     = cxgb_fix_features,
 };
 
 #ifdef CONFIG_PCI_IOV
@@ -3441,7 +3442,7 @@ static int adap_init0(struct adapter *adap)
 		/* allocate memory to read the header of the firmware on the
 		 * card
 		 */
-		card_fw = t4_alloc_mem(sizeof(*card_fw));
+		card_fw = kvzalloc(sizeof(*card_fw), GFP_KERNEL);
 
 		/* Get FW from from /lib/firmware/ */
 		ret = request_firmware(&fw, fw_info->fw_mod_name,
@@ -3461,7 +3462,7 @@ static int adap_init0(struct adapter *adap)
 
 		/* Cleaning up */
 		release_firmware(fw);
-		t4_free_mem(card_fw);
+		kvfree(card_fw);
 
 		if (ret < 0)
 			goto bye;
@@ -3809,6 +3810,15 @@ static int adap_init0(struct adapter *adap)
 	}
 	if (caps_cmd.cryptocaps) {
 		/* Should query params here...TODO */
+		params[0] = FW_PARAM_PFVF(NCRYPTO_LOOKASIDE);
+		ret = t4_query_params(adap, adap->mbox, adap->pf, 0, 2,
+				      params, val);
+		if (ret < 0) {
+			if (ret != -EINVAL)
+				goto bye;
+		} else {
+			adap->vres.ncrypto_fc = val[0];
+		}
 		adap->params.crypto |= ULP_CRYPTO_LOOKASIDE;
 		adap->num_uld += 1;
 	}
@@ -4015,10 +4025,7 @@ static void cfg_queues(struct adapter *adap)
 
 	/* Reduce memory usage in kdump environment, disable all offload.
 	 */
-	if (is_kdump_kernel()) {
-		adap->params.offload = 0;
-		adap->params.crypto = 0;
-	} else if (is_uld(adap) && t4_uld_mem_alloc(adap)) {
+	if (is_kdump_kernel() || (is_uld(adap) && t4_uld_mem_alloc(adap))) {
 		adap->params.offload = 0;
 		adap->params.crypto = 0;
 	}
@@ -4039,7 +4046,7 @@ static void cfg_queues(struct adapter *adap)
 		struct port_info *pi = adap2pinfo(adap, i);
 
 		pi->first_qset = qidx;
-		pi->nqsets = 8;
+		pi->nqsets = is_kdump_kernel() ? 1 : 8;
 		qidx += pi->nqsets;
 	}
 #else /* !CONFIG_CHELSIO_T4_DCB */
@@ -4051,6 +4058,9 @@ static void cfg_queues(struct adapter *adap)
 		q10g = (MAX_ETH_QSETS - (adap->params.nports - n10g)) / n10g;
 	if (q10g > netif_get_num_default_rss_queues())
 		q10g = netif_get_num_default_rss_queues();
+
+	if (is_kdump_kernel())
+		q10g = 1;
 
 	for_each_port(adap, i) {
 		struct port_info *pi = adap2pinfo(adap, i);
@@ -4457,9 +4467,9 @@ static void free_some_resources(struct adapter *adapter)
 {
 	unsigned int i;
 
-	t4_free_mem(adapter->l2t);
+	kvfree(adapter->l2t);
 	t4_cleanup_sched(adapter);
-	t4_free_mem(adapter->tids.tid_tab);
+	kvfree(adapter->tids.tid_tab);
 	cxgb4_cleanup_tc_u32(adapter);
 	kfree(adapter->sge.egr_map);
 	kfree(adapter->sge.ingr_map);
@@ -4956,6 +4966,8 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		adapter->port[i]->dev_port = pi->lport;
 		netif_set_real_num_tx_queues(adapter->port[i], pi->nqsets);
 		netif_set_real_num_rx_queues(adapter->port[i], pi->nqsets);
+
+		netif_carrier_off(adapter->port[i]);
 
 		err = register_netdev(adapter->port[i]);
 		if (err)

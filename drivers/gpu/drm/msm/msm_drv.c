@@ -55,14 +55,13 @@ int msm_register_address_space(struct drm_device *dev,
 		struct msm_gem_address_space *aspace)
 {
 	struct msm_drm_private *priv = dev->dev_private;
-	int idx = priv->num_aspaces++;
 
-	if (WARN_ON(idx >= ARRAY_SIZE(priv->aspace)))
+	if (WARN_ON(priv->num_aspaces >= ARRAY_SIZE(priv->aspace)))
 		return -EINVAL;
 
-	priv->aspace[idx] = aspace;
+	priv->aspace[priv->num_aspaces] = aspace;
 
-	return idx;
+	return priv->num_aspaces++;
 }
 
 #ifdef CONFIG_DRM_MSM_REGISTER_LOGGING
@@ -241,6 +240,9 @@ static int msm_drm_uninit(struct device *dev)
 
 	drm_dev_unregister(ddev);
 
+	msm_perf_debugfs_cleanup(priv);
+	msm_rd_debugfs_cleanup(priv);
+
 #ifdef CONFIG_DRM_FBDEV_EMULATION
 	if (fbdev && priv->fbdev)
 		msm_fbdev_free(ddev);
@@ -262,6 +264,8 @@ static int msm_drm_uninit(struct device *dev)
 
 	if (gpu) {
 		mutex_lock(&ddev->struct_mutex);
+		// XXX what do we do here?
+		//pm_runtime_enable(&pdev->dev);
 		gpu->funcs->pm_suspend(gpu);
 		mutex_unlock(&ddev->struct_mutex);
 		gpu->funcs->destroy(gpu);
@@ -383,7 +387,6 @@ static int msm_drm_init(struct device *dev, struct drm_driver *drv)
 	}
 
 	platform_set_drvdata(pdev, ddev);
-	ddev->platformdev = pdev;
 
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv) {
@@ -537,7 +540,7 @@ static int msm_open(struct drm_device *dev, struct drm_file *file)
 	return 0;
 }
 
-static void msm_preclose(struct drm_device *dev, struct drm_file *file)
+static void msm_postclose(struct drm_device *dev, struct drm_file *file)
 {
 	struct msm_drm_private *priv = dev->dev_private;
 	struct msm_file_private *ctx = file->driver_priv;
@@ -810,7 +813,7 @@ static struct drm_driver msm_driver = {
 				DRIVER_ATOMIC |
 				DRIVER_MODESET,
 	.open               = msm_open,
-	.preclose           = msm_preclose,
+	.postclose           = msm_postclose,
 	.lastclose          = msm_lastclose,
 	.irq_handler        = msm_irq,
 	.irq_preinstall     = msm_irq_preinstall,
@@ -827,6 +830,7 @@ static struct drm_driver msm_driver = {
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
 	.gem_prime_export   = drm_gem_prime_export,
 	.gem_prime_import   = drm_gem_prime_import,
+	.gem_prime_res_obj  = msm_gem_prime_res_obj,
 	.gem_prime_pin      = msm_gem_prime_pin,
 	.gem_prime_unpin    = msm_gem_prime_unpin,
 	.gem_prime_get_sg_table = msm_gem_prime_get_sg_table,
@@ -836,7 +840,6 @@ static struct drm_driver msm_driver = {
 	.gem_prime_mmap     = msm_gem_prime_mmap,
 #ifdef CONFIG_DEBUG_FS
 	.debugfs_init       = msm_debugfs_init,
-	.debugfs_cleanup    = msm_debugfs_cleanup,
 #endif
 	.ioctls             = msm_ioctls,
 	.num_ioctls         = DRM_MSM_NUM_IOCTLS,

@@ -756,7 +756,8 @@ vc4_update_plane(struct drm_plane *plane,
 		 int crtc_x, int crtc_y,
 		 unsigned int crtc_w, unsigned int crtc_h,
 		 uint32_t src_x, uint32_t src_y,
-		 uint32_t src_w, uint32_t src_h)
+		 uint32_t src_w, uint32_t src_h,
+		 struct drm_modeset_acquire_ctx *ctx)
 {
 	struct drm_plane_state *plane_state;
 	struct vc4_plane_state *vc4_state;
@@ -817,7 +818,8 @@ out:
 					      crtc_x, crtc_y,
 					      crtc_w, crtc_h,
 					      src_x, src_y,
-					      src_w, src_h);
+					      src_w, src_h,
+					      ctx);
 }
 
 static const struct drm_plane_funcs vc4_plane_funcs = {
@@ -842,10 +844,8 @@ struct drm_plane *vc4_plane_init(struct drm_device *dev,
 
 	vc4_plane = devm_kzalloc(dev->dev, sizeof(*vc4_plane),
 				 GFP_KERNEL);
-	if (!vc4_plane) {
-		ret = -ENOMEM;
-		goto fail;
-	}
+	if (!vc4_plane)
+		return ERR_PTR(-ENOMEM);
 
 	for (i = 0; i < ARRAY_SIZE(hvs_formats); i++) {
 		/* Don't allow YUV in cursor planes, since that means
@@ -866,9 +866,4 @@ struct drm_plane *vc4_plane_init(struct drm_device *dev,
 	drm_plane_helper_add(plane, &vc4_plane_helper_funcs);
 
 	return plane;
-fail:
-	if (plane)
-		vc4_plane_destroy(plane);
-
-	return ERR_PTR(ret);
 }

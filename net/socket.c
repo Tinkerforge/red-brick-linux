@@ -461,7 +461,7 @@ EXPORT_SYMBOL(sock_from_file);
  *	@err: pointer to an error code return
  *
  *	The file handle passed in is locked and the socket it is bound
- *	too is returned. If an error occurs the err pointer is overwritten
+ *	to is returned. If an error occurs the err pointer is overwritten
  *	with a negative errno code and NULL is returned. The function checks
  *	for both invalid handles and passing a handle which is not a socket.
  *
@@ -652,6 +652,50 @@ int kernel_sendmsg(struct socket *sock, struct msghdr *msg,
 }
 EXPORT_SYMBOL(kernel_sendmsg);
 
+static bool skb_is_err_queue(const struct sk_buff *skb)
+{
+	/* pkt_type of skbs enqueued on the error queue are set to
+	 * PACKET_OUTGOING in skb_set_err_queue(). This is only safe to do
+	 * in recvmsg, since skbs received on a local socket will never
+	 * have a pkt_type of PACKET_OUTGOING.
+	 */
+	return skb->pkt_type == PACKET_OUTGOING;
+}
+
+/* On transmit, software and hardware timestamps are returned independently.
+ * As the two skb clones share the hardware timestamp, which may be updated
+ * before the software timestamp is received, a hardware TX timestamp may be
+ * returned only if there is no software TX timestamp. Ignore false software
+ * timestamps, which may be made in the __sock_recv_timestamp() call when the
+ * option SO_TIMESTAMP(NS) is enabled on the socket, even when the skb has a
+ * hardware timestamp.
+ */
+static bool skb_is_swtx_tstamp(const struct sk_buff *skb, int false_tstamp)
+{
+	return skb->tstamp && !false_tstamp && skb_is_err_queue(skb);
+}
+
+static void put_ts_pktinfo(struct msghdr *msg, struct sk_buff *skb)
+{
+	struct scm_ts_pktinfo ts_pktinfo;
+	struct net_device *orig_dev;
+
+	if (!skb_mac_header_was_set(skb))
+		return;
+
+	memset(&ts_pktinfo, 0, sizeof(ts_pktinfo));
+
+	rcu_read_lock();
+	orig_dev = dev_get_by_napi_id(skb_napi_id(skb));
+	if (orig_dev)
+		ts_pktinfo.if_index = orig_dev->ifindex;
+	rcu_read_unlock();
+
+	ts_pktinfo.pkt_length = skb->len - skb_mac_offset(skb);
+	put_cmsg(msg, SOL_SOCKET, SCM_TIMESTAMPING_PKTINFO,
+		 sizeof(ts_pktinfo), &ts_pktinfo);
+}
+
 /*
  * called from sock_recv_timestamp() if sock_flag(sk, SOCK_RCVTSTAMP)
  */
@@ -660,14 +704,16 @@ void __sock_recv_timestamp(struct msghdr *msg, struct sock *sk,
 {
 	int need_software_tstamp = sock_flag(sk, SOCK_RCVTSTAMP);
 	struct scm_timestamping tss;
-	int empty = 1;
+	int empty = 1, false_tstamp = 0;
 	struct skb_shared_hwtstamps *shhwtstamps =
 		skb_hwtstamps(skb);
 
 	/* Race occurred between timestamp enabling and packet
 	   receiving.  Fill in the current time for now. */
-	if (need_software_tstamp && skb->tstamp == 0)
+	if (need_software_tstamp && skb->tstamp == 0) {
 		__net_timestamp(skb);
+		false_tstamp = 1;
+	}
 
 	if (need_software_tstamp) {
 		if (!sock_flag(sk, SOCK_RCVTSTAMPNS)) {
@@ -689,13 +735,19 @@ void __sock_recv_timestamp(struct msghdr *msg, struct sock *sk,
 		empty = 0;
 	if (shhwtstamps &&
 	    (sk->sk_tsflags & SOF_TIMESTAMPING_RAW_HARDWARE) &&
-	    ktime_to_timespec_cond(shhwtstamps->hwtstamp, tss.ts + 2))
+	    !skb_is_swtx_tstamp(skb, false_tstamp) &&
+	    ktime_to_timespec_cond(shhwtstamps->hwtstamp, tss.ts + 2)) {
 		empty = 0;
+		if ((sk->sk_tsflags & SOF_TIMESTAMPING_OPT_PKTINFO) &&
+		    !skb_is_err_queue(skb))
+			put_ts_pktinfo(msg, skb);
+	}
 	if (!empty) {
 		put_cmsg(msg, SOL_SOCKET,
 			 SCM_TIMESTAMPING, sizeof(tss), &tss);
 
-		if (skb->len && (sk->sk_tsflags & SOF_TIMESTAMPING_OPT_STATS))
+		if (skb_is_err_queue(skb) && skb->len &&
+		    SKB_EXT_ERR(skb)->opt_stats)
 			put_cmsg(msg, SOL_SOCKET, SCM_TIMESTAMPING_OPT_STATS,
 				 skb->len, skb->data);
 	}
@@ -1506,7 +1558,7 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 	if (err)
 		goto out_fd;
 
-	err = sock->ops->accept(sock, newsock, sock->file->f_flags);
+	err = sock->ops->accept(sock, newsock, sock->file->f_flags, false);
 	if (err < 0)
 		goto out_fd;
 
@@ -1731,6 +1783,7 @@ SYSCALL_DEFINE6(recvfrom, int, fd, void __user *, ubuf, size_t, size,
 	/* We assume all kernel code knows the size of sockaddr_storage */
 	msg.msg_namelen = 0;
 	msg.msg_iocb = NULL;
+	msg.msg_flags = 0;
 	if (sock->file->f_flags & O_NONBLOCK)
 		flags |= MSG_DONTWAIT;
 	err = sock_recvmsg(sock, &msg, flags);
@@ -3238,7 +3291,7 @@ int kernel_accept(struct socket *sock, struct socket **newsock, int flags)
 	if (err < 0)
 		goto done;
 
-	err = sock->ops->accept(sock, *newsock, flags);
+	err = sock->ops->accept(sock, *newsock, flags, true);
 	if (err < 0) {
 		sock_release(*newsock);
 		*newsock = NULL;
@@ -3344,3 +3397,49 @@ int kernel_sock_shutdown(struct socket *sock, enum sock_shutdown_cmd how)
 	return sock->ops->shutdown(sock, how);
 }
 EXPORT_SYMBOL(kernel_sock_shutdown);
+
+/* This routine returns the IP overhead imposed by a socket i.e.
+ * the length of the underlying IP header, depending on whether
+ * this is an IPv4 or IPv6 socket and the length from IP options turned
+ * on at the socket. Assumes that the caller has a lock on the socket.
+ */
+u32 kernel_sock_ip_overhead(struct sock *sk)
+{
+	struct inet_sock *inet;
+	struct ip_options_rcu *opt;
+	u32 overhead = 0;
+	bool owned_by_user;
+#if IS_ENABLED(CONFIG_IPV6)
+	struct ipv6_pinfo *np;
+	struct ipv6_txoptions *optv6 = NULL;
+#endif /* IS_ENABLED(CONFIG_IPV6) */
+
+	if (!sk)
+		return overhead;
+
+	owned_by_user = sock_owned_by_user(sk);
+	switch (sk->sk_family) {
+	case AF_INET:
+		inet = inet_sk(sk);
+		overhead += sizeof(struct iphdr);
+		opt = rcu_dereference_protected(inet->inet_opt,
+						owned_by_user);
+		if (opt)
+			overhead += opt->opt.optlen;
+		return overhead;
+#if IS_ENABLED(CONFIG_IPV6)
+	case AF_INET6:
+		np = inet6_sk(sk);
+		overhead += sizeof(struct ipv6hdr);
+		if (np)
+			optv6 = rcu_dereference_protected(np->opt,
+							  owned_by_user);
+		if (optv6)
+			overhead += (optv6->opt_flen + optv6->opt_nflen);
+		return overhead;
+#endif /* IS_ENABLED(CONFIG_IPV6) */
+	default: /* Returns 0 overhead if the socket is not ipv4 or ipv6 */
+		return overhead;
+	}
+}
+EXPORT_SYMBOL(kernel_sock_ip_overhead);

@@ -764,8 +764,7 @@ static void igb_ptp_tx_hwtstamp(struct igb_adapter *adapter)
  * incoming frame.  The value is stored in little endian format starting on
  * byte 8.
  **/
-void igb_ptp_rx_pktstamp(struct igb_q_vector *q_vector,
-			 unsigned char *va,
+void igb_ptp_rx_pktstamp(struct igb_q_vector *q_vector, void *va,
 			 struct sk_buff *skb)
 {
 	__le64 *regval = (__le64 *)va;
@@ -942,6 +941,7 @@ static int igb_ptp_set_timestamp_mode(struct igb_adapter *adapter,
 		is_l4 = true;
 		break;
 	case HWTSTAMP_FILTER_PTP_V1_L4_EVENT:
+	case HWTSTAMP_FILTER_NTP_ALL:
 	case HWTSTAMP_FILTER_ALL:
 		/* 82576 cannot timestamp all packets, which it needs to do to
 		 * support both V1 Sync and Delay_Req messages

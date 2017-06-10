@@ -94,12 +94,18 @@ static int tcp_v4_md5_hash_hdr(char *md5_hash, const struct tcp_md5sig_key *key,
 struct inet_hashinfo tcp_hashinfo;
 EXPORT_SYMBOL(tcp_hashinfo);
 
-static u32 tcp_v4_init_sequence(const struct sk_buff *skb, u32 *tsoff)
+static u32 tcp_v4_init_seq(const struct sk_buff *skb)
 {
-	return secure_tcp_sequence_number(ip_hdr(skb)->daddr,
-					  ip_hdr(skb)->saddr,
-					  tcp_hdr(skb)->dest,
-					  tcp_hdr(skb)->source, tsoff);
+	return secure_tcp_seq(ip_hdr(skb)->daddr,
+			      ip_hdr(skb)->saddr,
+			      tcp_hdr(skb)->dest,
+			      tcp_hdr(skb)->source);
+}
+
+static u32 tcp_v4_init_ts_off(const struct sk_buff *skb)
+{
+	return secure_tcp_ts_off(ip_hdr(skb)->daddr,
+				 ip_hdr(skb)->saddr);
 }
 
 int tcp_twsk_unique(struct sock *sk, struct sock *sktw, void *twp)
@@ -145,7 +151,6 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 	struct flowi4 *fl4;
 	struct rtable *rt;
 	int err;
-	u32 seq;
 	struct ip_options_rcu *inet_opt;
 	struct inet_timewait_death_row *tcp_death_row = &sock_net(sk)->ipv4.tcp_death_row;
 
@@ -198,10 +203,6 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 			tp->write_seq	   = 0;
 	}
 
-	if (tcp_death_row->sysctl_tw_recycle &&
-	    !tp->rx_opt.ts_recent_stamp && fl4->daddr == daddr)
-		tcp_fetch_timewait_stamp(sk, &rt->dst);
-
 	inet->inet_dport = usin->sin_port;
 	sk_daddr_set(sk, daddr);
 
@@ -236,13 +237,13 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 	rt = NULL;
 
 	if (likely(!tp->repair)) {
-		seq = secure_tcp_sequence_number(inet->inet_saddr,
-						 inet->inet_daddr,
-						 inet->inet_sport,
-						 usin->sin_port,
-						 &tp->tsoffset);
 		if (!tp->write_seq)
-			tp->write_seq = seq;
+			tp->write_seq = secure_tcp_seq(inet->inet_saddr,
+						       inet->inet_daddr,
+						       inet->inet_sport,
+						       usin->sin_port);
+		tp->tsoffset = secure_tcp_ts_off(inet->inet_saddr,
+						 inet->inet_daddr);
 	}
 
 	inet->inet_id = tp->write_seq ^ jiffies;
@@ -279,10 +280,13 @@ EXPORT_SYMBOL(tcp_v4_connect);
  */
 void tcp_v4_mtu_reduced(struct sock *sk)
 {
-	struct dst_entry *dst;
 	struct inet_sock *inet = inet_sk(sk);
-	u32 mtu = tcp_sk(sk)->mtu_info;
+	struct dst_entry *dst;
+	u32 mtu;
 
+	if ((1 << sk->sk_state) & (TCPF_LISTEN | TCPF_CLOSE))
+		return;
+	mtu = tcp_sk(sk)->mtu_info;
 	dst = inet_csk_update_pmtu(sk, mtu);
 	if (!dst)
 		return;
@@ -372,8 +376,9 @@ void tcp_v4_err(struct sk_buff *icmp_skb, u32 info)
 	struct sock *sk;
 	struct sk_buff *skb;
 	struct request_sock *fastopen;
-	__u32 seq, snd_una;
-	__u32 remaining;
+	u32 seq, snd_una;
+	s32 remaining;
+	u32 delta_us;
 	int err;
 	struct net *net = dev_net(icmp_skb->dev);
 
@@ -428,7 +433,8 @@ void tcp_v4_err(struct sk_buff *icmp_skb, u32 info)
 
 	switch (type) {
 	case ICMP_REDIRECT:
-		do_redirect(icmp_skb, sk);
+		if (!sock_owned_by_user(sk))
+			do_redirect(icmp_skb, sk);
 		goto out;
 	case ICMP_SOURCE_QUENCH:
 		/* Just silently ignore these. */
@@ -478,11 +484,12 @@ void tcp_v4_err(struct sk_buff *icmp_skb, u32 info)
 		skb = tcp_write_queue_head(sk);
 		BUG_ON(!skb);
 
+		tcp_mstamp_refresh(tp);
+		delta_us = (u32)(tp->tcp_mstamp - skb->skb_mstamp);
 		remaining = icsk->icsk_rto -
-			    min(icsk->icsk_rto,
-				tcp_time_stamp - tcp_skb_timestamp(skb));
+			    usecs_to_jiffies(delta_us);
 
-		if (remaining) {
+		if (remaining > 0) {
 			inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS,
 						  remaining, TCP_RTO_MAX);
 		} else {
@@ -806,7 +813,7 @@ static void tcp_v4_timewait_ack(struct sock *sk, struct sk_buff *skb)
 	tcp_v4_send_ack(sk, skb,
 			tcptw->tw_snd_nxt, tcptw->tw_rcv_nxt,
 			tcptw->tw_rcv_wnd >> tw->tw_rcv_wscale,
-			tcp_time_stamp + tcptw->tw_ts_offset,
+			tcp_time_stamp_raw() + tcptw->tw_ts_offset,
 			tcptw->tw_ts_recent,
 			tw->tw_bound_dev_if,
 			tcp_twsk_md5_key(tcptw),
@@ -834,7 +841,7 @@ static void tcp_v4_reqsk_send_ack(const struct sock *sk, struct sk_buff *skb,
 	tcp_v4_send_ack(sk, skb, seq,
 			tcp_rsk(req)->rcv_nxt,
 			req->rsk_rcv_wnd >> inet_rsk(req)->rcv_wscale,
-			tcp_time_stamp + tcp_rsk(req)->ts_off,
+			tcp_time_stamp_raw() + tcp_rsk(req)->ts_off,
 			req->ts_recent,
 			0,
 			tcp_md5_do_lookup(sk, (union tcp_md5_addr *)&ip_hdr(skb)->daddr,
@@ -1213,19 +1220,9 @@ static void tcp_v4_init_req(struct request_sock *req,
 
 static struct dst_entry *tcp_v4_route_req(const struct sock *sk,
 					  struct flowi *fl,
-					  const struct request_sock *req,
-					  bool *strict)
+					  const struct request_sock *req)
 {
-	struct dst_entry *dst = inet_csk_route_req(sk, &fl->u.ip4, req);
-
-	if (strict) {
-		if (fl->u.ip4.daddr == inet_rsk(req)->ir_rmt_addr)
-			*strict = true;
-		else
-			*strict = false;
-	}
-
-	return dst;
+	return inet_csk_route_req(sk, &fl->u.ip4, req);
 }
 
 struct request_sock_ops tcp_request_sock_ops __read_mostly = {
@@ -1249,7 +1246,8 @@ static const struct tcp_request_sock_ops tcp_request_sock_ipv4_ops = {
 	.cookie_init_seq =	cookie_v4_init_sequence,
 #endif
 	.route_req	=	tcp_v4_route_req,
-	.init_seq	=	tcp_v4_init_sequence,
+	.init_seq	=	tcp_v4_init_seq,
+	.init_ts_off	=	tcp_v4_init_ts_off,
 	.send_synack	=	tcp_v4_send_synack,
 };
 
@@ -1419,8 +1417,6 @@ int tcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb)
 		if (!nsk)
 			goto discard;
 		if (nsk != sk) {
-			sock_rps_save_rxhash(nsk, skb);
-			sk_mark_napi_id(nsk, skb);
 			if (tcp_child_process(sk, nsk, skb)) {
 				rsk = nsk;
 				goto reset;
@@ -1866,6 +1862,9 @@ void tcp_v4_destroy_sock(struct sock *sk)
 
 	/* Cleanup up the write buffer. */
 	tcp_write_queue_purge(sk);
+
+	/* Check if we want to disable active TFO */
+	tcp_fastopen_active_disable_ofo_check(sk);
 
 	/* Cleans up our, hopefully empty, out_of_order_queue. */
 	skb_rbtree_purge(&tp->out_of_order_queue);
@@ -2398,7 +2397,7 @@ struct proto tcp_prot = {
 	.sysctl_rmem		= sysctl_tcp_rmem,
 	.max_header		= MAX_TCP_HEADER,
 	.obj_size		= sizeof(struct tcp_sock),
-	.slab_flags		= SLAB_DESTROY_BY_RCU,
+	.slab_flags		= SLAB_TYPESAFE_BY_RCU,
 	.twsk_prot		= &tcp_timewait_sock_ops,
 	.rsk_prot		= &tcp_request_sock_ops,
 	.h.hashinfo		= &tcp_hashinfo,
@@ -2462,7 +2461,6 @@ static int __net_init tcp_sk_init(struct net *net)
 	net->ipv4.sysctl_tcp_tw_reuse = 0;
 
 	cnt = tcp_hashinfo.ehash_mask + 1;
-	net->ipv4.tcp_death_row.sysctl_tw_recycle = 0;
 	net->ipv4.tcp_death_row.sysctl_max_tw_buckets = (cnt + 1) / 2;
 	net->ipv4.tcp_death_row.hashinfo = &tcp_hashinfo;
 

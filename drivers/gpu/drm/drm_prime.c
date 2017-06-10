@@ -29,8 +29,9 @@
 #include <linux/export.h>
 #include <linux/dma-buf.h>
 #include <linux/rbtree.h>
-#include <drm/drmP.h>
+#include <drm/drm_prime.h>
 #include <drm/drm_gem.h>
+#include <drm/drmP.h>
 
 #include "drm_internal.h"
 
@@ -402,10 +403,10 @@ static const struct dma_buf_ops drm_gem_prime_dmabuf_ops =  {
 	.map_dma_buf = drm_gem_map_dma_buf,
 	.unmap_dma_buf = drm_gem_unmap_dma_buf,
 	.release = drm_gem_dmabuf_release,
-	.kmap = drm_gem_dmabuf_kmap,
-	.kmap_atomic = drm_gem_dmabuf_kmap_atomic,
-	.kunmap = drm_gem_dmabuf_kunmap,
-	.kunmap_atomic = drm_gem_dmabuf_kunmap_atomic,
+	.map = drm_gem_dmabuf_kmap,
+	.map_atomic = drm_gem_dmabuf_kmap_atomic,
+	.unmap = drm_gem_dmabuf_kunmap,
+	.unmap_atomic = drm_gem_dmabuf_kunmap_atomic,
 	.mmap = drm_gem_dmabuf_mmap,
 	.vmap = drm_gem_dmabuf_vmap,
 	.vunmap = drm_gem_dmabuf_vunmap,

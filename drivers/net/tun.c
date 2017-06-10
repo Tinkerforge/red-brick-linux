@@ -822,7 +822,18 @@ static void tun_net_uninit(struct net_device *dev)
 /* Net device open. */
 static int tun_net_open(struct net_device *dev)
 {
+	struct tun_struct *tun = netdev_priv(dev);
+	int i;
+
 	netif_tx_start_all_queues(dev);
+
+	for (i = 0; i < tun->numqueues; i++) {
+		struct tun_file *tfile;
+
+		tfile = rtnl_dereference(tun->tfiles[i]);
+		tfile->socket.sk->sk_write_space(tfile->socket.sk);
+	}
+
 	return 0;
 }
 
@@ -1103,9 +1114,10 @@ static unsigned int tun_chr_poll(struct file *file, poll_table *wait)
 	if (!skb_array_empty(&tfile->tx_array))
 		mask |= POLLIN | POLLRDNORM;
 
-	if (sock_writeable(sk) ||
-	    (!test_and_set_bit(SOCKWQ_ASYNC_NOSPACE, &sk->sk_socket->flags) &&
-	     sock_writeable(sk)))
+	if (tun->dev->flags & IFF_UP &&
+	    (sock_writeable(sk) ||
+	     (!test_and_set_bit(SOCKWQ_ASYNC_NOSPACE, &sk->sk_socket->flags) &&
+	      sock_writeable(sk))))
 		mask |= POLLOUT | POLLWRNORM;
 
 	if (tun->dev->reg_state != NETREG_REGISTERED)
@@ -1498,9 +1510,8 @@ out:
 
 static ssize_t tun_do_read(struct tun_struct *tun, struct tun_file *tfile,
 			   struct iov_iter *to,
-			   int noblock)
+			   int noblock, struct sk_buff *skb)
 {
-	struct sk_buff *skb;
 	ssize_t ret;
 	int err;
 
@@ -1509,10 +1520,12 @@ static ssize_t tun_do_read(struct tun_struct *tun, struct tun_file *tfile,
 	if (!iov_iter_count(to))
 		return 0;
 
-	/* Read frames from ring */
-	skb = tun_ring_recv(tfile, noblock, &err);
-	if (!skb)
-		return err;
+	if (!skb) {
+		/* Read frames from ring */
+		skb = tun_ring_recv(tfile, noblock, &err);
+		if (!skb)
+			return err;
+	}
 
 	ret = tun_put_user(tun, tfile, skb, to);
 	if (unlikely(ret < 0))
@@ -1532,7 +1545,7 @@ static ssize_t tun_chr_read_iter(struct kiocb *iocb, struct iov_iter *to)
 
 	if (!tun)
 		return -EBADFD;
-	ret = tun_do_read(tun, tfile, to, file->f_flags & O_NONBLOCK);
+	ret = tun_do_read(tun, tfile, to, file->f_flags & O_NONBLOCK, NULL);
 	ret = min_t(ssize_t, ret, len);
 	if (ret > 0)
 		iocb->ki_pos = ret;
@@ -1634,7 +1647,8 @@ static int tun_recvmsg(struct socket *sock, struct msghdr *m, size_t total_len,
 					 SOL_PACKET, TUN_TX_TIMESTAMP);
 		goto out;
 	}
-	ret = tun_do_read(tun, tfile, &m->msg_iter, flags & MSG_DONTWAIT);
+	ret = tun_do_read(tun, tfile, &m->msg_iter, flags & MSG_DONTWAIT,
+			  m->msg_control);
 	if (ret > (ssize_t)total_len) {
 		m->msg_flags |= MSG_TRUNC;
 		ret = flags & MSG_TRUNC ? ret : total_len;
@@ -1919,6 +1933,8 @@ static int set_offload(struct tun_struct *tun, unsigned long arg)
 		return -EINVAL;
 
 	tun->set_features = features;
+	tun->dev->wanted_features &= ~TUN_USER_FEATURES;
+	tun->dev->wanted_features |= features;
 	netdev_update_features(tun->dev);
 
 	return 0;
@@ -2430,18 +2446,16 @@ static struct miscdevice tun_miscdev = {
 
 /* ethtool interface */
 
-static int tun_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
+static int tun_get_link_ksettings(struct net_device *dev,
+				  struct ethtool_link_ksettings *cmd)
 {
-	cmd->supported		= 0;
-	cmd->advertising	= 0;
-	ethtool_cmd_speed_set(cmd, SPEED_10);
-	cmd->duplex		= DUPLEX_FULL;
-	cmd->port		= PORT_TP;
-	cmd->phy_address	= 0;
-	cmd->transceiver	= XCVR_INTERNAL;
-	cmd->autoneg		= AUTONEG_DISABLE;
-	cmd->maxtxpkt		= 0;
-	cmd->maxrxpkt		= 0;
+	ethtool_link_ksettings_zero_link_mode(cmd, supported);
+	ethtool_link_ksettings_zero_link_mode(cmd, advertising);
+	cmd->base.speed		= SPEED_10;
+	cmd->base.duplex	= DUPLEX_FULL;
+	cmd->base.port		= PORT_TP;
+	cmd->base.phy_address	= 0;
+	cmd->base.autoneg	= AUTONEG_DISABLE;
 	return 0;
 }
 
@@ -2504,7 +2518,6 @@ static int tun_set_coalesce(struct net_device *dev,
 }
 
 static const struct ethtool_ops tun_ethtool_ops = {
-	.get_settings	= tun_get_settings,
 	.get_drvinfo	= tun_get_drvinfo,
 	.get_msglevel	= tun_get_msglevel,
 	.set_msglevel	= tun_set_msglevel,
@@ -2512,6 +2525,7 @@ static const struct ethtool_ops tun_ethtool_ops = {
 	.get_ts_info	= ethtool_op_get_ts_info,
 	.get_coalesce   = tun_get_coalesce,
 	.set_coalesce   = tun_set_coalesce,
+	.get_link_ksettings = tun_get_link_ksettings,
 };
 
 static int tun_queue_resize(struct tun_struct *tun)
@@ -2570,7 +2584,6 @@ static int __init tun_init(void)
 	int ret = 0;
 
 	pr_info("%s, %s\n", DRV_DESCRIPTION, DRV_VERSION);
-	pr_info("%s\n", DRV_COPYRIGHT);
 
 	ret = rtnl_link_register(&tun_link_ops);
 	if (ret) {
@@ -2614,6 +2627,19 @@ struct socket *tun_get_socket(struct file *file)
 	return &tfile->socket;
 }
 EXPORT_SYMBOL_GPL(tun_get_socket);
+
+struct skb_array *tun_get_skb_array(struct file *file)
+{
+	struct tun_file *tfile;
+
+	if (file->f_op != &tun_fops)
+		return ERR_PTR(-EINVAL);
+	tfile = file->private_data;
+	if (!tfile)
+		return ERR_PTR(-EBADFD);
+	return &tfile->tx_array;
+}
+EXPORT_SYMBOL_GPL(tun_get_skb_array);
 
 module_init(tun_init);
 module_exit(tun_cleanup);

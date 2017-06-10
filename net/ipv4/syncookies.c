@@ -16,6 +16,7 @@
 #include <linux/siphash.h>
 #include <linux/kernel.h>
 #include <linux/export.h>
+#include <net/secure_seq.h>
 #include <net/tcp.h>
 #include <net/route.h>
 
@@ -65,10 +66,10 @@ static u32 cookie_hash(__be32 saddr, __be32 daddr, __be16 sport, __be16 dport,
  * Since subsequent timestamps use the normal tcp_time_stamp value, we
  * must make sure that the resulting initial timestamp is <= tcp_time_stamp.
  */
-__u32 cookie_init_timestamp(struct request_sock *req)
+u64 cookie_init_timestamp(struct request_sock *req)
 {
 	struct inet_request_sock *ireq;
-	u32 ts, ts_now = tcp_time_stamp;
+	u32 ts, ts_now = tcp_time_stamp_raw();
 	u32 options = 0;
 
 	ireq = inet_rsk(req);
@@ -87,7 +88,7 @@ __u32 cookie_init_timestamp(struct request_sock *req)
 		ts <<= TSBITS;
 		ts |= options;
 	}
-	return ts;
+	return (u64)ts * (USEC_PER_SEC / TCP_TS_HZ);
 }
 
 
@@ -203,7 +204,7 @@ EXPORT_SYMBOL_GPL(__cookie_v4_check);
 
 struct sock *tcp_get_cookie_sock(struct sock *sk, struct sk_buff *skb,
 				 struct request_sock *req,
-				 struct dst_entry *dst)
+				 struct dst_entry *dst, u32 tsoff)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	struct sock *child;
@@ -213,6 +214,7 @@ struct sock *tcp_get_cookie_sock(struct sock *sk, struct sk_buff *skb,
 						 NULL, &own_req);
 	if (child) {
 		atomic_set(&req->rsk_refcnt, 1);
+		tcp_sk(child)->tsoffset = tsoff;
 		sock_rps_save_rxhash(child, skb);
 		inet_csk_reqsk_queue_add(sk, req, child);
 	} else {
@@ -292,6 +294,7 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb)
 	struct rtable *rt;
 	__u8 rcv_wscale;
 	struct flowi4 fl4;
+	u32 tsoff = 0;
 
 	if (!sock_net(sk)->ipv4.sysctl_tcp_syncookies || !th->ack || th->rst)
 		goto out;
@@ -310,6 +313,11 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb)
 	/* check for timestamp cookie support */
 	memset(&tcp_opt, 0, sizeof(tcp_opt));
 	tcp_parse_options(skb, &tcp_opt, 0, NULL);
+
+	if (tcp_opt.saw_tstamp && tcp_opt.rcv_tsecr) {
+		tsoff = secure_tcp_ts_off(ip_hdr(skb)->daddr, ip_hdr(skb)->saddr);
+		tcp_opt.rcv_tsecr -= tsoff;
+	}
 
 	if (!cookie_timestamp_decode(&tcp_opt))
 		goto out;
@@ -335,7 +343,7 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb)
 	ireq->wscale_ok		= tcp_opt.wscale_ok;
 	ireq->tstamp_ok		= tcp_opt.saw_tstamp;
 	req->ts_recent		= tcp_opt.saw_tstamp ? tcp_opt.rcv_tsval : 0;
-	treq->snt_synack.v64	= 0;
+	treq->snt_synack	= 0;
 	treq->tfo_listener	= false;
 
 	ireq->ir_iif = inet_request_bound_dev_if(sk, skb);
@@ -381,7 +389,7 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb)
 	ireq->rcv_wscale  = rcv_wscale;
 	ireq->ecn_ok = cookie_ecn_ok(&tcp_opt, sock_net(sk), &rt->dst);
 
-	ret = tcp_get_cookie_sock(sk, skb, req, &rt->dst);
+	ret = tcp_get_cookie_sock(sk, skb, req, &rt->dst, tsoff);
 	/* ip_queue_xmit() depends on our flow being setup
 	 * Normal sockets get it right from inet_csk_route_child_sock()
 	 */

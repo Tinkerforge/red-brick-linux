@@ -39,8 +39,7 @@
 #include <linux/if_link.h>
 
 #define DRIVER_NAME "mlx5_core"
-#define DRIVER_VERSION "3.0-1"
-#define DRIVER_RELDATE  "January 2015"
+#define DRIVER_VERSION "5.0-0"
 
 #define MLX5_TOTAL_VPORTS(mdev) (1 + pci_sriov_get_totalvfs(mdev->pdev))
 
@@ -140,6 +139,11 @@ int mlx5_encap_alloc(struct mlx5_core_dev *dev,
 		     void *encap_header,
 		     u32 *encap_id);
 void mlx5_encap_dealloc(struct mlx5_core_dev *dev, u32 encap_id);
+
+int mlx5_modify_header_alloc(struct mlx5_core_dev *dev,
+			     u8 namespace, u8 num_actions,
+			     void *modify_actions, u32 *modify_header_id);
+void mlx5_modify_header_dealloc(struct mlx5_core_dev *dev, u32 modify_header_id);
 
 bool mlx5_lag_intf_add(struct mlx5_interface *intf, struct mlx5_priv *priv);
 

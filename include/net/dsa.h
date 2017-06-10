@@ -19,6 +19,8 @@
 #include <linux/workqueue.h>
 #include <linux/of.h>
 #include <linux/ethtool.h>
+#include <net/devlink.h>
+#include <net/switchdev.h>
 
 struct tc_action;
 struct phy_device;
@@ -26,11 +28,14 @@ struct fixed_phy_status;
 
 enum dsa_tag_protocol {
 	DSA_TAG_PROTO_NONE = 0,
-	DSA_TAG_PROTO_DSA,
-	DSA_TAG_PROTO_TRAILER,
-	DSA_TAG_PROTO_EDSA,
 	DSA_TAG_PROTO_BRCM,
+	DSA_TAG_PROTO_DSA,
+	DSA_TAG_PROTO_EDSA,
+	DSA_TAG_PROTO_KSZ,
+	DSA_TAG_PROTO_LAN9303,
+	DSA_TAG_PROTO_MTK,
 	DSA_TAG_PROTO_QCA,
+	DSA_TAG_PROTO_TRAILER,
 	DSA_TAG_LAST,		/* MUST BE LAST */
 };
 
@@ -122,7 +127,7 @@ struct dsa_switch_tree {
 	 * protocol to use.
 	 */
 	struct net_device	*master_netdev;
-	int			(*rcv)(struct sk_buff *skb,
+	struct sk_buff *	(*rcv)(struct sk_buff *skb,
 				       struct net_device *dev,
 				       struct packet_type *pt,
 				       struct net_device *orig_dev);
@@ -134,10 +139,9 @@ struct dsa_switch_tree {
 	const struct ethtool_ops *master_orig_ethtool_ops;
 
 	/*
-	 * The switch and port to which the CPU is attached.
+	 * The switch port to which the CPU is attached.
 	 */
-	struct dsa_switch	*cpu_switch;
-	s8			cpu_port;
+	struct dsa_port		*cpu_dp;
 
 	/*
 	 * Data for the individual switch chips.
@@ -182,6 +186,7 @@ struct dsa_port {
 	unsigned int		ageing_time;
 	u8			stp_state;
 	struct net_device	*bridge_dev;
+	struct devlink_port	devlink_port;
 };
 
 struct dsa_switch {
@@ -233,6 +238,13 @@ struct dsa_switch {
 	u32			phys_mii_mask;
 	struct mii_bus		*slave_mii_bus;
 
+	/* Ageing Time limits in msecs */
+	unsigned int ageing_time_min;
+	unsigned int ageing_time_max;
+
+	/* devlink used to represent this switch device */
+	struct devlink		*devlink;
+
 	/* Dynamically allocated ports, keep last */
 	size_t num_ports;
 	struct dsa_port ports[];
@@ -240,12 +252,17 @@ struct dsa_switch {
 
 static inline bool dsa_is_cpu_port(struct dsa_switch *ds, int p)
 {
-	return !!(ds == ds->dst->cpu_switch && p == ds->dst->cpu_port);
+	return ds->dst->cpu_dp == &ds->ports[p];
 }
 
 static inline bool dsa_is_dsa_port(struct dsa_switch *ds, int p)
 {
 	return !!((ds->dsa_port_mask) & (1 << p));
+}
+
+static inline bool dsa_is_normal_port(struct dsa_switch *ds, int p)
+{
+	return !dsa_is_cpu_port(ds, p) && !dsa_is_dsa_port(ds, p);
 }
 
 static inline bool dsa_is_port_initialized(struct dsa_switch *ds, int p)
@@ -263,31 +280,15 @@ static inline u8 dsa_upstream_port(struct dsa_switch *ds)
 	 * Else return the (DSA) port number that connects to the
 	 * switch that is one hop closer to the cpu.
 	 */
-	if (dst->cpu_switch == ds)
-		return dst->cpu_port;
+	if (dst->cpu_dp->ds == ds)
+		return dst->cpu_dp->index;
 	else
-		return ds->rtable[dst->cpu_switch->index];
+		return ds->rtable[dst->cpu_dp->ds->index];
 }
-
-struct switchdev_trans;
-struct switchdev_obj;
-struct switchdev_obj_port_fdb;
-struct switchdev_obj_port_mdb;
-struct switchdev_obj_port_vlan;
-
-#define DSA_NOTIFIER_BRIDGE_JOIN		1
-#define DSA_NOTIFIER_BRIDGE_LEAVE		2
-
-/* DSA_NOTIFIER_BRIDGE_* */
-struct dsa_notifier_bridge_info {
-	struct net_device *br;
-	int sw_index;
-	int port;
-};
 
 struct dsa_switch_ops {
 	/*
-	 * Probing and setup.
+	 * Legacy probing.
 	 */
 	const char	*(*probe)(struct device *dsa_dev,
 				  struct device *host_dev, int sw_addr,
@@ -394,7 +395,7 @@ struct dsa_switch_ops {
 				 const struct switchdev_obj_port_vlan *vlan);
 	int	(*port_vlan_dump)(struct dsa_switch *ds, int port,
 				  struct switchdev_obj_port_vlan *vlan,
-				  int (*cb)(struct switchdev_obj *obj));
+				  switchdev_obj_dump_cb_t *cb);
 
 	/*
 	 * Forwarding database
@@ -409,7 +410,7 @@ struct dsa_switch_ops {
 				const struct switchdev_obj_port_fdb *fdb);
 	int	(*port_fdb_dump)(struct dsa_switch *ds, int port,
 				 struct switchdev_obj_port_fdb *fdb,
-				 int (*cb)(struct switchdev_obj *obj));
+				  switchdev_obj_dump_cb_t *cb);
 
 	/*
 	 * Multicast database
@@ -424,7 +425,7 @@ struct dsa_switch_ops {
 				const struct switchdev_obj_port_mdb *mdb);
 	int	(*port_mdb_dump)(struct dsa_switch *ds, int port,
 				 struct switchdev_obj_port_mdb *mdb,
-				 int (*cb)(struct switchdev_obj *obj));
+				  switchdev_obj_dump_cb_t *cb);
 
 	/*
 	 * RXNFC
@@ -442,6 +443,14 @@ struct dsa_switch_ops {
 				   bool ingress);
 	void	(*port_mirror_del)(struct dsa_switch *ds, int port,
 				   struct dsa_mall_mirror_tc_entry *mirror);
+
+	/*
+	 * Cross-chip operations
+	 */
+	int	(*crosschip_bridge_join)(struct dsa_switch *ds, int sw_index,
+					 int port, struct net_device *br);
+	void	(*crosschip_bridge_leave)(struct dsa_switch *ds, int sw_index,
+					  int port, struct net_device *br);
 };
 
 struct dsa_switch_driver {
@@ -449,9 +458,11 @@ struct dsa_switch_driver {
 	const struct dsa_switch_ops *ops;
 };
 
+/* Legacy driver registration */
 void register_switch_driver(struct dsa_switch_driver *type);
 void unregister_switch_driver(struct dsa_switch_driver *type);
 struct mii_bus *dsa_host_dev_to_mii_bus(struct device *dev);
+
 struct net_device *dsa_dev_to_net_device(struct device *dev);
 
 static inline bool dsa_uses_tagged_protocol(struct dsa_switch_tree *dst)
@@ -459,9 +470,18 @@ static inline bool dsa_uses_tagged_protocol(struct dsa_switch_tree *dst)
 	return dst->rcv != NULL;
 }
 
+static inline bool netdev_uses_dsa(struct net_device *dev)
+{
+#if IS_ENABLED(CONFIG_NET_DSA)
+	if (dev->dsa_ptr != NULL)
+		return dsa_uses_tagged_protocol(dev->dsa_ptr);
+#endif
+	return false;
+}
+
 struct dsa_switch *dsa_switch_alloc(struct device *dev, size_t n);
 void dsa_unregister_switch(struct dsa_switch *ds);
-int dsa_register_switch(struct dsa_switch *ds, struct device *dev);
+int dsa_register_switch(struct dsa_switch *ds);
 #ifdef CONFIG_PM_SLEEP
 int dsa_switch_suspend(struct dsa_switch *ds);
 int dsa_switch_resume(struct dsa_switch *ds);
