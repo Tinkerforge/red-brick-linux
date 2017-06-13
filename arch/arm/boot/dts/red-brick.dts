@@ -43,7 +43,7 @@
  */
 
 /dts-v1/;
-#include "sun5i-a10s-red-brick.dtsi"
+#include "sun5i-a10s.dtsi"
 #include "sunxi-common-regulators.dtsi"
 
 #include <dt-bindings/gpio/gpio.h>
@@ -61,6 +61,11 @@
 
 	chosen {
 		stdout-path = "serial3:115200n8";
+
+		// HDMI framebuffer interface defined in sun5i-a10s.dtsi
+		framebuffer@2 {
+			status = "okay";
+		};
 	};
 
 	connector {
@@ -81,7 +86,7 @@
 
 		running {
 			label = "red-brick:led:running";
-      linux,default-trigger = "heartbeat";
+			linux,default-trigger = "heartbeat";
 			gpios = <&pio 2 5 GPIO_ACTIVE_HIGH>;
 			default-state = "off";
 		};
@@ -144,46 +149,6 @@
 	status = "okay";
 };
 
-&lradc {
-	vref-supply = <&reg_vcc3v0>;
-	status = "okay";
-
-	button@191 {
-		label = "Volume Up";
-		linux,code = <KEY_VOLUMEUP>;
-		channel = <0>;
-		voltage = <191274>;
-	};
-
-	button@392 {
-		label = "Volume Down";
-		linux,code = <KEY_VOLUMEDOWN>;
-		channel = <0>;
-		voltage = <392644>;
-	};
-
-	button@601 {
-		label = "Menu";
-		linux,code = <KEY_MENU>;
-		channel = <0>;
-		voltage = <601151>;
-	};
-
-	button@795 {
-		label = "Enter";
-		linux,code = <KEY_ENTER>;
-		channel = <0>;
-		voltage = <795090>;
-	};
-
-	button@987 {
-		label = "Home";
-		linux,code = <KEY_HOMEPAGE>;
-		channel = <0>;
-		voltage = <987387>;
-	};
-};
-
 &mmc0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&mmc0_pins_a>;
@@ -211,6 +176,24 @@
 	usb1_vbus_pin_olinuxino_m: usb1_vbus_pin@0 {
 		pins = "PB10";
 		function = "gpio_out";
+	};
+
+	uart3_pins_a: uart3@0 {
+		pins = "PC16", "PC17";
+	};
+
+	uart3_cts_rts_pins_a: uart3-cts-rts@0 {
+		pins = "PC18", "PC19";
+	};
+
+	spi0_pins_a: spi0@0 {
+		allwinner,pins = "PC0", "PC1", "PC2", "PC3";
+		allwinner,function = "spi0";
+	};
+
+	spi1_pins_a: spi1@0 {
+		allwinner,pins = "PG9", "PG10", "PG11", "PG12", "PG13";
+		allwinner,function = "spi1";
 	};
 };
 
