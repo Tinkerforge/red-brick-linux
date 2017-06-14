@@ -212,7 +212,17 @@ export INITRD=$want_initrd
 
 test -d $debhookdir/$script.d && run-parts --arg="$version" --arg="/$installed_image_path" $debhookdir/$script.d
 
-# Manage kernel image symlink
+exit 0
+EOF
+	chmod 755 "$tmpdir/DEBIAN/$script"
+done
+
+# Post install kernel image symbolic link management hook.
+	cat <<EOF > "$tmpdir$debhookdir/postinst.d/image-symlink"
+#!/bin/sh
+
+set -e
+
 if [ -f /boot/vmlinuz ]; then
 	rm /boot/vmlinuz
 fi
@@ -221,8 +231,7 @@ ln -s /$installed_image_path /boot/vmlinuz
 
 exit 0
 EOF
-	chmod 755 "$tmpdir/DEBIAN/$script"
-done
+	chmod 755 "$tmpdir$debhookdir/postinst.d/image-symlink"
 
 # Try to determine maintainer and email values
 if [ -n "$DEBEMAIL" ]; then
@@ -376,6 +385,18 @@ exit 0
 EOF
 
 chmod 755 $kernel_headers_dir/DEBIAN/postinst
+
+cat <<EOF > $kernel_headers_dir/DEBIAN/postrm
+#!/bin/sh
+
+set -e
+
+rm -rf /usr/src/$kernel_headers_packagename
+
+exit 0
+EOF
+
+chmod 755 $kernel_headers_dir/DEBIAN/postrm
 
 # Do we have firmware? Move it out of the way and build it into a package.
 if [ -e "$tmpdir/lib/firmware" ]; then
