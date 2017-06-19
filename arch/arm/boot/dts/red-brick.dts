@@ -62,11 +62,6 @@
 
 	chosen {
 		stdout-path = "serial3:115200n8";
-
-		// HDMI framebuffer interface defined in sun5i-a10s.dtsi
-		framebuffer@2 {
-			status = "okay";
-		};
 	};
 
 	connector {
