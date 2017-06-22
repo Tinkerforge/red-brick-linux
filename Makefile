@@ -2,8 +2,6 @@ VERSION = 4
 PATCHLEVEL = 12
 SUBLEVEL = 0
 EXTRAVERSION = -rc4
-# This is Tinkerforge GmbH RED Brick specific version
-LOCALVERSION = -1
 NAME = Fearless Coyote
 
 # *DOCUMENTATION*
@@ -1625,9 +1623,6 @@ kernelrelease:
 
 kernelversion:
 	@echo $(KERNELVERSION)
-
-localversion:
-	@echo $(LOCALVERSION)
 
 image_name:
 	@echo $(KBUILD_IMAGE)
