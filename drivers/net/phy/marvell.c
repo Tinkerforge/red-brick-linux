@@ -1139,7 +1139,6 @@ static int marvell_read_status_page_an(struct phy_device *phydev,
 	int status;
 	int lpa;
 	int lpagb;
-	int adv;
 
 	status = phy_read(phydev, MII_M1011_PHY_STATUS);
 	if (status < 0)
@@ -1152,12 +1151,6 @@ static int marvell_read_status_page_an(struct phy_device *phydev,
 	lpagb = phy_read(phydev, MII_STAT1000);
 	if (lpagb < 0)
 		return lpagb;
-
-	adv = phy_read(phydev, MII_ADVERTISE);
-	if (adv < 0)
-		return adv;
-
-	lpa &= adv;
 
 	if (status & MII_M1011_PHY_STATUS_FULLDUPLEX)
 		phydev->duplex = DUPLEX_FULL;
@@ -1706,7 +1699,7 @@ error:
 	return ret;
 }
 
-int m88e1510_get_temp_critical(struct phy_device *phydev, long *temp)
+static int m88e1510_get_temp_critical(struct phy_device *phydev, long *temp)
 {
 	int oldpage;
 	int ret;
@@ -1737,7 +1730,7 @@ error:
 	return ret;
 }
 
-int m88e1510_set_temp_critical(struct phy_device *phydev, long temp)
+static int m88e1510_set_temp_critical(struct phy_device *phydev, long temp)
 {
 	int oldpage;
 	int ret;
@@ -1767,7 +1760,7 @@ error:
 	return ret;
 }
 
-int m88e1510_get_temp_alarm(struct phy_device *phydev, long *alarm)
+static int m88e1510_get_temp_alarm(struct phy_device *phydev, long *alarm)
 {
 	int oldpage;
 	int ret;
@@ -2178,6 +2171,7 @@ static struct phy_driver marvell_drivers[] = {
 		.get_sset_count = marvell_get_sset_count,
 		.get_strings = marvell_get_strings,
 		.get_stats = marvell_get_stats,
+		.set_loopback = genphy_loopback,
 	},
 	{
 		.phy_id = MARVELL_PHY_ID_88E1540,

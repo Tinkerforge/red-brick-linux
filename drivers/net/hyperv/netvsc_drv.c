@@ -58,42 +58,18 @@ static int debug = -1;
 module_param(debug, int, S_IRUGO);
 MODULE_PARM_DESC(debug, "Debug level (0=none,...,16=all)");
 
-static void do_set_multicast(struct work_struct *w)
-{
-	struct net_device_context *ndevctx =
-		container_of(w, struct net_device_context, work);
-	struct hv_device *device_obj = ndevctx->device_ctx;
-	struct net_device *ndev = hv_get_drvdata(device_obj);
-	struct netvsc_device *nvdev = rcu_dereference(ndevctx->nvdev);
-	struct rndis_device *rdev;
-
-	if (!nvdev)
-		return;
-
-	rdev = nvdev->extension;
-	if (rdev == NULL)
-		return;
-
-	if (ndev->flags & IFF_PROMISC)
-		rndis_filter_set_packet_filter(rdev,
-			NDIS_PACKET_TYPE_PROMISCUOUS);
-	else
-		rndis_filter_set_packet_filter(rdev,
-			NDIS_PACKET_TYPE_BROADCAST |
-			NDIS_PACKET_TYPE_ALL_MULTICAST |
-			NDIS_PACKET_TYPE_DIRECTED);
-}
-
 static void netvsc_set_multicast_list(struct net_device *net)
 {
 	struct net_device_context *net_device_ctx = netdev_priv(net);
+	struct netvsc_device *nvdev = rtnl_dereference(net_device_ctx->nvdev);
 
-	schedule_work(&net_device_ctx->work);
+	rndis_filter_update(nvdev);
 }
 
 static int netvsc_open(struct net_device *net)
 {
-	struct netvsc_device *nvdev = net_device_to_netvsc_device(net);
+	struct net_device_context *ndev_ctx = netdev_priv(net);
+	struct netvsc_device *nvdev = ndev_ctx->nvdev;
 	struct rndis_device *rdev;
 	int ret = 0;
 
@@ -109,7 +85,7 @@ static int netvsc_open(struct net_device *net)
 	netif_tx_wake_all_queues(net);
 
 	rdev = nvdev->extension;
-	if (!rdev->link_state)
+	if (!rdev->link_state && !ndev_ctx->datapath)
 		netif_carrier_on(net);
 
 	return ret;
@@ -120,13 +96,11 @@ static int netvsc_close(struct net_device *net)
 	struct net_device_context *net_device_ctx = netdev_priv(net);
 	struct netvsc_device *nvdev = rtnl_dereference(net_device_ctx->nvdev);
 	int ret;
-	u32 aread, awrite, i, msec = 10, retry = 0, retry_max = 20;
+	u32 aread, i, msec = 10, retry = 0, retry_max = 20;
 	struct vmbus_channel *chn;
 
 	netif_tx_disable(net);
 
-	/* Make sure netvsc_set_multicast_list doesn't re-enable filter! */
-	cancel_work_sync(&net_device_ctx->work);
 	ret = rndis_filter_close(nvdev);
 	if (ret != 0) {
 		netdev_err(net, "unable to close device (ret %d).\n", ret);
@@ -141,15 +115,11 @@ static int netvsc_close(struct net_device *net)
 			if (!chn)
 				continue;
 
-			hv_get_ringbuffer_availbytes(&chn->inbound, &aread,
-						     &awrite);
-
+			aread = hv_get_bytes_to_read(&chn->inbound);
 			if (aread)
 				break;
 
-			hv_get_ringbuffer_availbytes(&chn->outbound, &aread,
-						     &awrite);
-
+			aread = hv_get_bytes_to_read(&chn->outbound);
 			if (aread)
 				break;
 		}
@@ -647,7 +617,7 @@ static struct sk_buff *netvsc_alloc_recv_skb(struct net_device *net,
 	 * Copy to skb. This copy is needed here since the memory pointed by
 	 * hv_netvsc_packet cannot be deallocated
 	 */
-	memcpy(skb_put(skb, buflen), data, buflen);
+	skb_put_data(skb, data, buflen);
 
 	skb->protocol = eth_type_trans(skb, net);
 
@@ -805,7 +775,7 @@ static int netvsc_set_channels(struct net_device *net,
 	    channels->rx_count || channels->tx_count || channels->other_count)
 		return -EINVAL;
 
-	if (count > net->num_tx_queues || count > net->num_rx_queues)
+	if (count > net->num_tx_queues || count > VRSS_CHANNEL_MAX)
 		return -EINVAL;
 
 	if (!nvdev || nvdev->destroy)
@@ -1030,7 +1000,7 @@ static const struct {
 static int netvsc_get_sset_count(struct net_device *dev, int string_set)
 {
 	struct net_device_context *ndc = netdev_priv(dev);
-	struct netvsc_device *nvdev = rcu_dereference(ndc->nvdev);
+	struct netvsc_device *nvdev = rtnl_dereference(ndc->nvdev);
 
 	if (!nvdev)
 		return -ENODEV;
@@ -1160,11 +1130,22 @@ netvsc_get_rxnfc(struct net_device *dev, struct ethtool_rxnfc *info,
 }
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
-static void netvsc_poll_controller(struct net_device *net)
+static void netvsc_poll_controller(struct net_device *dev)
 {
-	/* As netvsc_start_xmit() works synchronous we don't have to
-	 * trigger anything here.
-	 */
+	struct net_device_context *ndc = netdev_priv(dev);
+	struct netvsc_device *ndev;
+	int i;
+
+	rcu_read_lock();
+	ndev = rcu_dereference(ndc->nvdev);
+	if (ndev) {
+		for (i = 0; i < ndev->num_chn; i++) {
+			struct netvsc_channel *nvchan = &ndev->chan_table[i];
+
+			napi_schedule(&nvchan->napi);
+		}
+	}
+	rcu_read_unlock();
 }
 #endif
 
@@ -1221,7 +1202,7 @@ static int netvsc_set_rxfh(struct net_device *dev, const u32 *indir,
 	rndis_dev = ndev->extension;
 	if (indir) {
 		for (i = 0; i < ITAB_NUM; i++)
-			if (indir[i] >= dev->num_rx_queues)
+			if (indir[i] >= VRSS_CHANNEL_MAX)
 				return -EINVAL;
 
 		for (i = 0; i < ITAB_NUM; i++)
@@ -1288,7 +1269,12 @@ static void netvsc_link_change(struct work_struct *w)
 	bool notify = false, reschedule = false;
 	unsigned long flags, next_reconfig, delay;
 
-	rtnl_lock();
+	/* if changes are happening, comeback later */
+	if (!rtnl_trylock()) {
+		schedule_delayed_work(&ndev_ctx->dwork, LINKCHANGE_INT);
+		return;
+	}
+
 	net_device = rtnl_dereference(ndev_ctx->nvdev);
 	if (!net_device)
 		goto out_unlock;
@@ -1327,7 +1313,8 @@ static void netvsc_link_change(struct work_struct *w)
 	case RNDIS_STATUS_MEDIA_CONNECT:
 		if (rdev->link_state) {
 			rdev->link_state = false;
-			netif_carrier_on(net);
+			if (!ndev_ctx->datapath)
+				netif_carrier_on(net);
 			netif_tx_wake_all_queues(net);
 		} else {
 			notify = true;
@@ -1554,7 +1541,6 @@ static int netvsc_probe(struct hv_device *dev,
 	hv_set_drvdata(dev, net);
 
 	INIT_DELAYED_WORK(&net_device_ctx->dwork, netvsc_link_change);
-	INIT_WORK(&net_device_ctx->work, do_set_multicast);
 
 	spin_lock_init(&net_device_ctx->lock);
 	INIT_LIST_HEAD(&net_device_ctx->reconfig_events);
@@ -1624,7 +1610,6 @@ static int netvsc_remove(struct hv_device *dev)
 	netif_device_detach(net);
 
 	cancel_delayed_work_sync(&ndev_ctx->dwork);
-	cancel_work_sync(&ndev_ctx->work);
 
 	/*
 	 * Call to the vsc driver to let it know that the device is being

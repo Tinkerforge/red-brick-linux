@@ -122,7 +122,7 @@ static void qed_free_pci(struct qed_dev *cdev)
 {
 	struct pci_dev *pdev = cdev->pdev;
 
-	if (cdev->doorbells)
+	if (cdev->doorbells && cdev->db_size)
 		iounmap(cdev->doorbells);
 	if (cdev->regview)
 		iounmap(cdev->regview);
@@ -206,14 +206,22 @@ static int qed_init_pci(struct qed_dev *cdev, struct pci_dev *pdev)
 		goto err2;
 	}
 
-	if (IS_PF(cdev)) {
-		cdev->db_phys_addr = pci_resource_start(cdev->pdev, 2);
-		cdev->db_size = pci_resource_len(cdev->pdev, 2);
-		cdev->doorbells = ioremap_wc(cdev->db_phys_addr, cdev->db_size);
-		if (!cdev->doorbells) {
-			DP_NOTICE(cdev, "Cannot map doorbell space\n");
-			return -ENOMEM;
+	cdev->db_phys_addr = pci_resource_start(cdev->pdev, 2);
+	cdev->db_size = pci_resource_len(cdev->pdev, 2);
+	if (!cdev->db_size) {
+		if (IS_PF(cdev)) {
+			DP_NOTICE(cdev, "No Doorbell bar available\n");
+			return -EINVAL;
+		} else {
+			return 0;
 		}
+	}
+
+	cdev->doorbells = ioremap_wc(cdev->db_phys_addr, cdev->db_size);
+
+	if (!cdev->doorbells) {
+		DP_NOTICE(cdev, "Cannot map doorbell space\n");
+		return -ENOMEM;
 	}
 
 	return 0;
@@ -229,6 +237,8 @@ err0:
 int qed_fill_dev_info(struct qed_dev *cdev,
 		      struct qed_dev_info *dev_info)
 {
+	struct qed_hwfn *p_hwfn = QED_LEADING_HWFN(cdev);
+	struct qed_hw_info *hw_info = &p_hwfn->hw_info;
 	struct qed_tunnel_info *tun = &cdev->tunnel;
 	struct qed_ptt  *ptt;
 
@@ -252,11 +262,10 @@ int qed_fill_dev_info(struct qed_dev *cdev,
 	dev_info->pci_mem_start = cdev->pci_params.mem_start;
 	dev_info->pci_mem_end = cdev->pci_params.mem_end;
 	dev_info->pci_irq = cdev->pci_params.irq;
-	dev_info->rdma_supported = (cdev->hwfns[0].hw_info.personality ==
-				    QED_PCI_ETH_ROCE);
+	dev_info->rdma_supported = QED_IS_RDMA_PERSONALITY(p_hwfn);
 	dev_info->is_mf_default = IS_MF_DEFAULT(&cdev->hwfns[0]);
 	dev_info->dev_type = cdev->type;
-	ether_addr_copy(dev_info->hw_mac, cdev->hwfns[0].hw_info.hw_mac_addr);
+	ether_addr_copy(dev_info->hw_mac, hw_info->hw_mac_addr);
 
 	if (IS_PF(cdev)) {
 		dev_info->fw_major = FW_MAJOR_VERSION;
@@ -266,9 +275,10 @@ int qed_fill_dev_info(struct qed_dev *cdev,
 		dev_info->mf_mode = cdev->mf_mode;
 		dev_info->tx_switching = true;
 
-		if (QED_LEADING_HWFN(cdev)->hw_info.b_wol_support ==
-		    QED_WOL_SUPPORT_PME)
+		if (hw_info->b_wol_support == QED_WOL_SUPPORT_PME)
 			dev_info->wol_support = true;
+
+		dev_info->abs_pf_id = QED_LEADING_HWFN(cdev)->abs_pf_id;
 	} else {
 		qed_vf_get_fw_version(&cdev->hwfns[0], &dev_info->fw_major,
 				      &dev_info->fw_minor, &dev_info->fw_rev,
@@ -294,7 +304,7 @@ int qed_fill_dev_info(struct qed_dev *cdev,
 				    &dev_info->mfw_rev, NULL);
 	}
 
-	dev_info->mtu = QED_LEADING_HWFN(cdev)->hw_info.mtu;
+	dev_info->mtu = hw_info->mtu;
 
 	return 0;
 }
@@ -780,7 +790,7 @@ static int qed_slowpath_setup_int(struct qed_dev *cdev,
 				       cdev->num_hwfns;
 
 	if (!IS_ENABLED(CONFIG_QED_RDMA) ||
-	    QED_LEADING_HWFN(cdev)->hw_info.personality != QED_PCI_ETH_ROCE)
+	    !QED_IS_RDMA_PERSONALITY(QED_LEADING_HWFN(cdev)))
 		return 0;
 
 	for_each_hwfn(cdev, i)
@@ -921,8 +931,7 @@ static void qed_update_pf_params(struct qed_dev *cdev,
 	/* In case we might support RDMA, don't allow qede to be greedy
 	 * with the L2 contexts. Allow for 64 queues [rx, tx, xdp] per hwfn.
 	 */
-	if (QED_LEADING_HWFN(cdev)->hw_info.personality ==
-	    QED_PCI_ETH_ROCE) {
+	if (QED_IS_RDMA_PERSONALITY(QED_LEADING_HWFN(cdev))) {
 		u16 *num_cons;
 
 		num_cons = &params->eth_pf_params.num_cons;
@@ -1533,6 +1542,21 @@ static int qed_drain(struct qed_dev *cdev)
 	return 0;
 }
 
+static int qed_nvm_get_image(struct qed_dev *cdev, enum qed_nvm_images type,
+			     u8 *buf, u16 len)
+{
+	struct qed_hwfn *hwfn = QED_LEADING_HWFN(cdev);
+	struct qed_ptt *ptt = qed_ptt_acquire(hwfn);
+	int rc;
+
+	if (!ptt)
+		return -EAGAIN;
+
+	rc = qed_mcp_get_nvm_image(hwfn, ptt, type, buf, len);
+	qed_ptt_release(hwfn, ptt);
+	return rc;
+}
+
 static void qed_get_coalesce(struct qed_dev *cdev, u16 *rx_coal, u16 *tx_coal)
 {
 	*rx_coal = cdev->rx_coalesce_usecs;
@@ -1710,6 +1734,7 @@ const struct qed_common_ops qed_common_ops_pass = {
 	.dbg_all_data_size = &qed_dbg_all_data_size,
 	.chain_alloc = &qed_chain_alloc,
 	.chain_free = &qed_chain_free,
+	.nvm_get_image = &qed_nvm_get_image,
 	.get_coalesce = &qed_get_coalesce,
 	.set_coalesce = &qed_set_coalesce,
 	.set_led = &qed_set_led,
@@ -1743,7 +1768,8 @@ void qed_get_protocol_stats(struct qed_dev *cdev,
 		qed_get_protocol_stats_iscsi(cdev, &stats->iscsi_stats);
 		break;
 	default:
-		DP_ERR(cdev, "Invalid protocol type = %d\n", type);
+		DP_VERBOSE(cdev, QED_MSG_SP,
+			   "Invalid protocol type = %d\n", type);
 		return;
 	}
 }

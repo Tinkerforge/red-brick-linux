@@ -697,7 +697,7 @@ static struct sk_buff *macsec_encrypt(struct sk_buff *skb,
 	unprotected_len = skb->len;
 	eth = eth_hdr(skb);
 	sci_present = send_sci(secy);
-	hh = (struct macsec_eth_header *)skb_push(skb, macsec_extra_len(sci_present));
+	hh = skb_push(skb, macsec_extra_len(sci_present));
 	memmove(hh, eth, 2 * ETH_ALEN);
 
 	pn = tx_sa_update_pn(tx_sa, secy);
@@ -740,7 +740,12 @@ static struct sk_buff *macsec_encrypt(struct sk_buff *skb,
 	macsec_fill_iv(iv, secy->sci, pn);
 
 	sg_init_table(sg, ret);
-	skb_to_sgvec(skb, sg, 0, skb->len);
+	ret = skb_to_sgvec(skb, sg, 0, skb->len);
+	if (unlikely(ret < 0)) {
+		macsec_txsa_put(tx_sa);
+		kfree_skb(skb);
+		return ERR_PTR(ret);
+	}
 
 	if (tx_sc->encrypt) {
 		int len = skb->len - macsec_hdr_len(sci_present) -
@@ -947,7 +952,11 @@ static struct sk_buff *macsec_decrypt(struct sk_buff *skb,
 	macsec_fill_iv(iv, sci, ntohl(hdr->packet_number));
 
 	sg_init_table(sg, ret);
-	skb_to_sgvec(skb, sg, 0, skb->len);
+	ret = skb_to_sgvec(skb, sg, 0, skb->len);
+	if (unlikely(ret < 0)) {
+		kfree_skb(skb);
+		return ERR_PTR(ret);
+	}
 
 	if (hdr->tci_an & MACSEC_TCI_E) {
 		/* confidentiality: ethernet + macsec header
@@ -2987,7 +2996,6 @@ static void macsec_free_netdev(struct net_device *dev)
 	free_percpu(macsec->secy.tx_sc.stats);
 
 	dev_put(real_dev);
-	free_netdev(dev);
 }
 
 static void macsec_setup(struct net_device *dev)
@@ -2997,7 +3005,8 @@ static void macsec_setup(struct net_device *dev)
 	dev->max_mtu = ETH_MAX_MTU;
 	dev->priv_flags |= IFF_NO_QUEUE;
 	dev->netdev_ops = &macsec_netdev_ops;
-	dev->destructor = macsec_free_netdev;
+	dev->needs_free_netdev = true;
+	dev->priv_destructor = macsec_free_netdev;
 	SET_NETDEV_DEVTYPE(dev, &macsec_type);
 
 	eth_zero_addr(dev->broadcast);
@@ -3047,7 +3056,8 @@ static void macsec_changelink_common(struct net_device *dev,
 }
 
 static int macsec_changelink(struct net_device *dev, struct nlattr *tb[],
-			     struct nlattr *data[])
+			     struct nlattr *data[],
+			     struct netlink_ext_ack *extack)
 {
 	if (!data)
 		return 0;
@@ -3194,7 +3204,8 @@ static int macsec_add_dev(struct net_device *dev, sci_t sci, u8 icv_len)
 }
 
 static int macsec_newlink(struct net *net, struct net_device *dev,
-			  struct nlattr *tb[], struct nlattr *data[])
+			  struct nlattr *tb[], struct nlattr *data[],
+			  struct netlink_ext_ack *extack)
 {
 	struct macsec_dev *macsec = macsec_priv(dev);
 	struct net_device *real_dev;
@@ -3276,7 +3287,8 @@ unregister:
 	return err;
 }
 
-static int macsec_validate_attr(struct nlattr *tb[], struct nlattr *data[])
+static int macsec_validate_attr(struct nlattr *tb[], struct nlattr *data[],
+				struct netlink_ext_ack *extack)
 {
 	u64 csid = MACSEC_DEFAULT_CIPHER_ID;
 	u8 icv_len = DEFAULT_ICV_LEN;
@@ -3509,6 +3521,7 @@ module_init(macsec_init);
 module_exit(macsec_exit);
 
 MODULE_ALIAS_RTNL_LINK("macsec");
+MODULE_ALIAS_GENL_FAMILY("macsec");
 
 MODULE_DESCRIPTION("MACsec IEEE 802.1AE");
 MODULE_LICENSE("GPL v2");

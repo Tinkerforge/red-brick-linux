@@ -374,11 +374,15 @@ struct rx_tpa_end_cmp_ext {
 
 	__le32 rx_tpa_end_cmp_errors_v2;
 	#define RX_TPA_END_CMP_V2				(0x1 << 0)
-	#define RX_TPA_END_CMP_ERRORS				(0x7fff << 1)
+	#define RX_TPA_END_CMP_ERRORS				(0x3 << 1)
 	#define RX_TPA_END_CMPL_ERRORS_SHIFT			 1
 
 	u32 rx_tpa_end_cmp_start_opaque;
 };
+
+#define TPA_END_ERRORS(rx_tpa_end_ext)					\
+	((rx_tpa_end_ext)->rx_tpa_end_cmp_errors_v2 &			\
+	 cpu_to_le32(RX_TPA_END_CMP_ERRORS))
 
 #define DB_IDX_MASK						0xffffff
 #define DB_IDX_VALID						(0x1 << 26)
@@ -1113,6 +1117,7 @@ struct bnxt {
 	unsigned long		state;
 #define BNXT_STATE_OPEN		0
 #define BNXT_STATE_IN_SP_TASK	1
+#define BNXT_STATE_READ_STATS	2
 
 	struct bnxt_irq	*irq_tbl;
 	int			total_irqs;
@@ -1296,7 +1301,8 @@ int bnxt_open_nic(struct bnxt *, bool, bool);
 int bnxt_half_open_nic(struct bnxt *bp);
 void bnxt_half_close_nic(struct bnxt *bp);
 int bnxt_close_nic(struct bnxt *, bool, bool);
-int bnxt_reserve_rings(struct bnxt *bp, int tx, int rx, int tcs, int tx_xdp);
+int bnxt_reserve_rings(struct bnxt *bp, int tx, int rx, bool sh, int tcs,
+		       int tx_xdp);
 int bnxt_setup_mq_tc(struct net_device *dev, u8 tc);
 int bnxt_get_max_rings(struct bnxt *, int *, int *, bool);
 void bnxt_restore_pf_fw_resources(struct bnxt *bp);

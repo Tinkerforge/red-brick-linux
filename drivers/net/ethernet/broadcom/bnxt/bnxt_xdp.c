@@ -170,7 +170,7 @@ static int bnxt_xdp_set(struct bnxt *bp, struct bpf_prog *prog)
 	if (!tc)
 		tc = 1;
 	rc = bnxt_reserve_rings(bp, bp->tx_nr_rings_per_tc, bp->rx_nr_rings,
-				tc, tx_xdp);
+				true, tc, tx_xdp);
 	if (rc) {
 		netdev_warn(dev, "Unable to reserve enough TX rings to support XDP.\n");
 		return rc;
@@ -218,6 +218,7 @@ int bnxt_xdp(struct net_device *dev, struct netdev_xdp *xdp)
 		break;
 	case XDP_QUERY_PROG:
 		xdp->prog_attached = !!bp->xdp_prog;
+		xdp->prog_id = bp->xdp_prog ? bp->xdp_prog->aux->id : 0;
 		rc = 0;
 		break;
 	default:

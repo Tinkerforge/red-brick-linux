@@ -167,7 +167,6 @@ void __rxrpc_disconnect_call(struct rxrpc_connection *conn,
 		 * through the channel, whilst disposing of the actual call record.
 		 */
 		trace_rxrpc_disconnect_call(call);
-		chan->last_service_id = call->service_id;
 		if (call->abort_code) {
 			chan->last_abort = call->abort_code;
 			chan->last_type = RXRPC_PACKET_TYPE_ABORT;
@@ -193,6 +192,8 @@ void __rxrpc_disconnect_call(struct rxrpc_connection *conn,
 void rxrpc_disconnect_call(struct rxrpc_call *call)
 {
 	struct rxrpc_connection *conn = call->conn;
+
+	call->peer->cong_cwnd = call->cong_cwnd;
 
 	spin_lock_bh(&conn->params.peer->lock);
 	hlist_del_init(&call->error_link);

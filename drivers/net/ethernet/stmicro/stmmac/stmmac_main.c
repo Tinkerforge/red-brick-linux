@@ -445,14 +445,14 @@ static void stmmac_get_tx_hwtstamp(struct stmmac_priv *priv,
 		return;
 
 	/* check tx tstamp status */
-	if (!priv->hw->desc->get_tx_timestamp_status(p)) {
+	if (priv->hw->desc->get_tx_timestamp_status(p)) {
 		/* get the valid tstamp */
 		ns = priv->hw->desc->get_timestamp(p, priv->adv_ts);
 
 		memset(&shhwtstamp, 0, sizeof(struct skb_shared_hwtstamps));
 		shhwtstamp.hwtstamp = ns_to_ktime(ns);
 
-		netdev_info(priv->dev, "get valid TX hw timestamp %llu\n", ns);
+		netdev_dbg(priv->dev, "get valid TX hw timestamp %llu\n", ns);
 		/* pass tstamp to stack */
 		skb_tstamp_tx(skb, &shhwtstamp);
 	}
@@ -479,19 +479,19 @@ static void stmmac_get_rx_hwtstamp(struct stmmac_priv *priv, struct dma_desc *p,
 		return;
 
 	/* Check if timestamp is available */
-	if (!priv->hw->desc->get_rx_timestamp_status(p, priv->adv_ts)) {
+	if (priv->hw->desc->get_rx_timestamp_status(p, priv->adv_ts)) {
 		/* For GMAC4, the valid timestamp is from CTX next desc. */
 		if (priv->plat->has_gmac4)
 			ns = priv->hw->desc->get_timestamp(np, priv->adv_ts);
 		else
 			ns = priv->hw->desc->get_timestamp(p, priv->adv_ts);
 
-		netdev_info(priv->dev, "get valid RX hw timestamp %llu\n", ns);
+		netdev_dbg(priv->dev, "get valid RX hw timestamp %llu\n", ns);
 		shhwtstamp = skb_hwtstamps(skb);
 		memset(shhwtstamp, 0, sizeof(struct skb_shared_hwtstamps));
 		shhwtstamp->hwtstamp = ns_to_ktime(ns);
 	} else  {
-		netdev_err(priv->dev, "cannot get RX hw timestamp\n");
+		netdev_dbg(priv->dev, "cannot get RX hw timestamp\n");
 	}
 }
 
@@ -557,7 +557,10 @@ static int stmmac_hwtstamp_ioctl(struct net_device *dev, struct ifreq *ifr)
 			/* PTP v1, UDP, any kind of event packet */
 			config.rx_filter = HWTSTAMP_FILTER_PTP_V1_L4_EVENT;
 			/* take time stamp for all event messages */
-			snap_type_sel = PTP_TCR_SNAPTYPSEL_1;
+			if (priv->plat->has_gmac4)
+				snap_type_sel = PTP_GMAC4_TCR_SNAPTYPSEL_1;
+			else
+				snap_type_sel = PTP_TCR_SNAPTYPSEL_1;
 
 			ptp_over_ipv4_udp = PTP_TCR_TSIPV4ENA;
 			ptp_over_ipv6_udp = PTP_TCR_TSIPV6ENA;
@@ -589,7 +592,10 @@ static int stmmac_hwtstamp_ioctl(struct net_device *dev, struct ifreq *ifr)
 			config.rx_filter = HWTSTAMP_FILTER_PTP_V2_L4_EVENT;
 			ptp_v2 = PTP_TCR_TSVER2ENA;
 			/* take time stamp for all event messages */
-			snap_type_sel = PTP_TCR_SNAPTYPSEL_1;
+			if (priv->plat->has_gmac4)
+				snap_type_sel = PTP_GMAC4_TCR_SNAPTYPSEL_1;
+			else
+				snap_type_sel = PTP_TCR_SNAPTYPSEL_1;
 
 			ptp_over_ipv4_udp = PTP_TCR_TSIPV4ENA;
 			ptp_over_ipv6_udp = PTP_TCR_TSIPV6ENA;
@@ -623,7 +629,10 @@ static int stmmac_hwtstamp_ioctl(struct net_device *dev, struct ifreq *ifr)
 			config.rx_filter = HWTSTAMP_FILTER_PTP_V2_EVENT;
 			ptp_v2 = PTP_TCR_TSVER2ENA;
 			/* take time stamp for all event messages */
-			snap_type_sel = PTP_TCR_SNAPTYPSEL_1;
+			if (priv->plat->has_gmac4)
+				snap_type_sel = PTP_GMAC4_TCR_SNAPTYPSEL_1;
+			else
+				snap_type_sel = PTP_TCR_SNAPTYPSEL_1;
 
 			ptp_over_ipv4_udp = PTP_TCR_TSIPV4ENA;
 			ptp_over_ipv6_udp = PTP_TCR_TSIPV6ENA;
@@ -1207,7 +1216,7 @@ static int init_dma_rx_desc_rings(struct net_device *dev, gfp_t flags)
 	u32 rx_count = priv->plat->rx_queues_to_use;
 	unsigned int bfsize = 0;
 	int ret = -ENOMEM;
-	u32 queue;
+	int queue;
 	int i;
 
 	if (priv->hw->mode->set_16kib_bfsize)
@@ -1440,7 +1449,7 @@ static void free_dma_rx_desc_resources(struct stmmac_priv *priv)
 static void free_dma_tx_desc_resources(struct stmmac_priv *priv)
 {
 	u32 tx_count = priv->plat->tx_queues_to_use;
-	u32 queue = 0;
+	u32 queue;
 
 	/* Free TX queue resources */
 	for (queue = 0; queue < tx_count; queue++) {
@@ -1489,7 +1498,7 @@ static int alloc_dma_rx_desc_resources(struct stmmac_priv *priv)
 						    sizeof(dma_addr_t),
 						    GFP_KERNEL);
 		if (!rx_q->rx_skbuff_dma)
-			return -ENOMEM;
+			goto err_dma;
 
 		rx_q->rx_skbuff = kmalloc_array(DMA_RX_SIZE,
 						sizeof(struct sk_buff *),
@@ -1552,13 +1561,13 @@ static int alloc_dma_tx_desc_resources(struct stmmac_priv *priv)
 						    sizeof(*tx_q->tx_skbuff_dma),
 						    GFP_KERNEL);
 		if (!tx_q->tx_skbuff_dma)
-			return -ENOMEM;
+			goto err_dma;
 
 		tx_q->tx_skbuff = kmalloc_array(DMA_TX_SIZE,
 						sizeof(struct sk_buff *),
 						GFP_KERNEL);
 		if (!tx_q->tx_skbuff)
-			goto err_dma_buffers;
+			goto err_dma;
 
 		if (priv->extend_desc) {
 			tx_q->dma_etx = dma_zalloc_coherent(priv->device,
@@ -1568,7 +1577,7 @@ static int alloc_dma_tx_desc_resources(struct stmmac_priv *priv)
 							    &tx_q->dma_tx_phy,
 							    GFP_KERNEL);
 			if (!tx_q->dma_etx)
-				goto err_dma_buffers;
+				goto err_dma;
 		} else {
 			tx_q->dma_tx = dma_zalloc_coherent(priv->device,
 							   DMA_TX_SIZE *
@@ -1577,13 +1586,13 @@ static int alloc_dma_tx_desc_resources(struct stmmac_priv *priv)
 							   &tx_q->dma_tx_phy,
 							   GFP_KERNEL);
 			if (!tx_q->dma_tx)
-				goto err_dma_buffers;
+				goto err_dma;
 		}
 	}
 
 	return 0;
 
-err_dma_buffers:
+err_dma:
 	free_dma_tx_desc_resources(priv);
 
 	return ret;
@@ -2723,7 +2732,7 @@ static void stmmac_tso_allocator(struct stmmac_priv *priv, unsigned int des,
 
 		priv->hw->desc->prepare_tso_tx_desc(desc, 0, buff_size,
 			0, 1,
-			(last_segment) && (buff_size < TSO_MAX_BUFF_SIZE),
+			(last_segment) && (tmp_len <= TSO_MAX_BUFF_SIZE),
 			0, 0);
 
 		tmp_len -= TSO_MAX_BUFF_SIZE;
@@ -2821,7 +2830,6 @@ static netdev_tx_t stmmac_tso_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	tx_q->tx_skbuff_dma[first_entry].buf = des;
 	tx_q->tx_skbuff_dma[first_entry].len = skb_headlen(skb);
-	tx_q->tx_skbuff[first_entry] = skb;
 
 	first->des0 = cpu_to_le32(des);
 
@@ -2855,6 +2863,14 @@ static netdev_tx_t stmmac_tso_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	tx_q->tx_skbuff_dma[tx_q->cur_tx].last_segment = true;
 
+	/* Only the last descriptor gets to point to the skb. */
+	tx_q->tx_skbuff[tx_q->cur_tx] = skb;
+
+	/* We've used all descriptors we need for this skb, however,
+	 * advance cur_tx so that it references a fresh descriptor.
+	 * ndo_start_xmit will fill this descriptor the next time it's
+	 * called and stmmac_tx_clean may clean up to this descriptor.
+	 */
 	tx_q->cur_tx = STMMAC_GET_ENTRY(tx_q->cur_tx, DMA_TX_SIZE);
 
 	if (unlikely(stmmac_tx_avail(priv, queue) <= (MAX_SKB_FRAGS + 1))) {
@@ -2945,7 +2961,8 @@ static netdev_tx_t stmmac_xmit(struct sk_buff *skb, struct net_device *dev)
 	int i, csum_insertion = 0, is_jumbo = 0;
 	u32 queue = skb_get_queue_mapping(skb);
 	int nfrags = skb_shinfo(skb)->nr_frags;
-	unsigned int entry, first_entry;
+	int entry;
+	unsigned int first_entry;
 	struct dma_desc *desc, *first;
 	struct stmmac_tx_queue *tx_q;
 	unsigned int enh_desc;
@@ -2955,7 +2972,7 @@ static netdev_tx_t stmmac_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	/* Manage oversized TCP frames for GMAC4 device */
 	if (skb_is_gso(skb) && priv->tso) {
-		if (ip_hdr(skb)->protocol == IPPROTO_TCP)
+		if (skb_shinfo(skb)->gso_type & (SKB_GSO_TCPV4 | SKB_GSO_TCPV6))
 			return stmmac_tso_xmit(skb, dev);
 	}
 
@@ -2985,8 +3002,6 @@ static netdev_tx_t stmmac_xmit(struct sk_buff *skb, struct net_device *dev)
 		desc = tx_q->dma_tx + entry;
 
 	first = desc;
-
-	tx_q->tx_skbuff[first_entry] = skb;
 
 	enh_desc = priv->plat->enh_desc;
 	/* To program the descriptors according to the size of the frame */
@@ -3035,8 +3050,15 @@ static netdev_tx_t stmmac_xmit(struct sk_buff *skb, struct net_device *dev)
 						skb->len);
 	}
 
-	entry = STMMAC_GET_ENTRY(entry, DMA_TX_SIZE);
+	/* Only the last descriptor gets to point to the skb. */
+	tx_q->tx_skbuff[entry] = skb;
 
+	/* We've used all descriptors we need for this skb, however,
+	 * advance cur_tx so that it references a fresh descriptor.
+	 * ndo_start_xmit will fill this descriptor the next time it's
+	 * called and stmmac_tx_clean may clean up to this descriptor.
+	 */
+	entry = STMMAC_GET_ENTRY(entry, DMA_TX_SIZE);
 	tx_q->cur_tx = entry;
 
 	if (netif_msg_pktdata(priv)) {
@@ -4098,8 +4120,15 @@ int stmmac_dvr_probe(struct device *device,
 	if ((phyaddr >= 0) && (phyaddr <= 31))
 		priv->plat->phy_addr = phyaddr;
 
-	if (priv->plat->stmmac_rst)
+	if (priv->plat->stmmac_rst) {
+		ret = reset_control_assert(priv->plat->stmmac_rst);
 		reset_control_deassert(priv->plat->stmmac_rst);
+		/* Some reset controllers have only reset callback instead of
+		 * assert + deassert callbacks pair.
+		 */
+		if (ret == -ENOTSUPP)
+			reset_control_reset(priv->plat->stmmac_rst);
+	}
 
 	/* Init MAC and get the capabilities */
 	ret = stmmac_hw_init(priv);
@@ -4116,7 +4145,7 @@ int stmmac_dvr_probe(struct device *device,
 			    NETIF_F_RXCSUM;
 
 	if ((priv->plat->tso_en) && (priv->dma_cap.tsoen)) {
-		ndev->hw_features |= NETIF_F_TSO;
+		ndev->hw_features |= NETIF_F_TSO | NETIF_F_TSO6;
 		priv->tso = true;
 		dev_info(priv->device, "TSO feature enabled\n");
 	}

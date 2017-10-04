@@ -1217,7 +1217,6 @@ static int esw_vport_ingress_config(struct mlx5_eswitch *esw,
 			       "vport[%d] configure ingress rules failed, illegal mac with spoofchk\n",
 			       vport->vport);
 		return -EPERM;
-
 	}
 
 	esw_vport_cleanup_ingress_rules(esw, vport);
@@ -1669,7 +1668,8 @@ void mlx5_eswitch_disable_sriov(struct mlx5_eswitch *esw)
 	int i;
 
 	if (!esw || !MLX5_CAP_GEN(esw->dev, vport_group_manager) ||
-	    MLX5_CAP_GEN(esw->dev, port_type) != MLX5_CAP_PORT_TYPE_ETH)
+	    MLX5_CAP_GEN(esw->dev, port_type) != MLX5_CAP_PORT_TYPE_ETH ||
+	    esw->mode == SRIOV_NONE)
 		return;
 
 	esw_info(esw->dev, "disable SRIOV: active vports(%d) mode(%d)\n",
@@ -1769,6 +1769,7 @@ int mlx5_eswitch_init(struct mlx5_core_dev *dev)
 	}
 
 	hash_init(esw->offloads.encap_tbl);
+	hash_init(esw->offloads.mod_hdr_tbl);
 	mutex_init(&esw->state_lock);
 
 	for (vport_num = 0; vport_num < total_vports; vport_num++) {

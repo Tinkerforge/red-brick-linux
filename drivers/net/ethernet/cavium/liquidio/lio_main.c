@@ -3591,6 +3591,10 @@ static netdev_features_t liquidio_fix_features(struct net_device *netdev,
 	    (lio->dev_capability & NETIF_F_LRO))
 		request &= ~NETIF_F_LRO;
 
+	if ((request & NETIF_F_HW_VLAN_CTAG_FILTER) &&
+	    !(lio->dev_capability & NETIF_F_HW_VLAN_CTAG_FILTER))
+		request &= ~NETIF_F_HW_VLAN_CTAG_FILTER;
+
 	return request;
 }
 
@@ -3603,14 +3607,14 @@ static int liquidio_set_features(struct net_device *netdev,
 {
 	struct lio *lio = netdev_priv(netdev);
 
-	if (!((netdev->features ^ features) & NETIF_F_LRO))
-		return 0;
-
-	if ((features & NETIF_F_LRO) && (lio->dev_capability & NETIF_F_LRO))
+	if ((features & NETIF_F_LRO) &&
+	    (lio->dev_capability & NETIF_F_LRO) &&
+	    !(netdev->features & NETIF_F_LRO))
 		liquidio_set_feature(netdev, OCTNET_CMD_LRO_ENABLE,
 				     OCTNIC_LROIPV4 | OCTNIC_LROIPV6);
 	else if (!(features & NETIF_F_LRO) &&
-		 (lio->dev_capability & NETIF_F_LRO))
+		 (lio->dev_capability & NETIF_F_LRO) &&
+		 (netdev->features & NETIF_F_LRO))
 		liquidio_set_feature(netdev, OCTNET_CMD_LRO_DISABLE,
 				     OCTNIC_LROIPV4 | OCTNIC_LROIPV6);
 
@@ -3628,6 +3632,17 @@ static int liquidio_set_features(struct net_device *netdev,
 		 !(features & NETIF_F_RXCSUM))
 		liquidio_set_rxcsum_command(netdev, OCTNET_CMD_TNL_RX_CSUM_CTL,
 					    OCTNET_CMD_RXCSUM_DISABLE);
+
+	if ((features & NETIF_F_HW_VLAN_CTAG_FILTER) &&
+	    (lio->dev_capability & NETIF_F_HW_VLAN_CTAG_FILTER) &&
+	    !(netdev->features & NETIF_F_HW_VLAN_CTAG_FILTER))
+		liquidio_set_feature(netdev, OCTNET_CMD_VLAN_FILTER_CTL,
+				     OCTNET_CMD_VLAN_FILTER_ENABLE);
+	else if (!(features & NETIF_F_HW_VLAN_CTAG_FILTER) &&
+		 (lio->dev_capability & NETIF_F_HW_VLAN_CTAG_FILTER) &&
+		 (netdev->features & NETIF_F_HW_VLAN_CTAG_FILTER))
+		liquidio_set_feature(netdev, OCTNET_CMD_VLAN_FILTER_CTL,
+				     OCTNET_CMD_VLAN_FILTER_DISABLE);
 
 	return 0;
 }
@@ -3884,7 +3899,7 @@ static int lio_nic_info(struct octeon_recv_info *recv_info, void *buf)
 	union oct_link_status *ls;
 	int i;
 
-	if (recv_pkt->buffer_size[0] != sizeof(*ls)) {
+	if (recv_pkt->buffer_size[0] != (sizeof(*ls) + OCT_DROQ_INFO_SIZE)) {
 		dev_err(&oct->pci_dev->dev, "Malformed NIC_INFO, len=%d, ifidx=%d\n",
 			recv_pkt->buffer_size[0],
 			recv_pkt->rh.r_nic_info.gmxport);
@@ -3892,7 +3907,8 @@ static int lio_nic_info(struct octeon_recv_info *recv_info, void *buf)
 	}
 
 	gmxport = recv_pkt->rh.r_nic_info.gmxport;
-	ls = (union oct_link_status *)get_rbd(recv_pkt->buffer_ptr[0]);
+	ls = (union oct_link_status *)(get_rbd(recv_pkt->buffer_ptr[0]) +
+		OCT_DROQ_INFO_SIZE);
 
 	octeon_swap_8B_data((u64 *)ls, (sizeof(union oct_link_status)) >> 3);
 	for (i = 0; i < oct->ifcount; i++) {
@@ -4199,7 +4215,8 @@ static int setup_nic_devices(struct octeon_device *octeon_dev)
 			liquidio_set_feature(netdev, OCTNET_CMD_LRO_ENABLE,
 					     OCTNIC_LROIPV4 | OCTNIC_LROIPV6);
 
-		liquidio_set_feature(netdev, OCTNET_CMD_ENABLE_VLAN_FILTER, 0);
+		liquidio_set_feature(netdev, OCTNET_CMD_VLAN_FILTER_CTL,
+				     OCTNET_CMD_VLAN_FILTER_ENABLE);
 
 		if ((debug != -1) && (debug & NETIF_MSG_HW))
 			liquidio_set_feature(netdev,
@@ -4449,7 +4466,7 @@ octeon_recv_vf_drv_notice(struct octeon_recv_info *recv_info, void *buf)
 	u64 *data, vf_num;
 
 	notice = recv_pkt->rh.r.ossp;
-	data = (u64 *)get_rbd(recv_pkt->buffer_ptr[0]);
+	data = (u64 *)(get_rbd(recv_pkt->buffer_ptr[0]) + OCT_DROQ_INFO_SIZE);
 
 	/* the first 64-bit word of data is the vf_num */
 	vf_num = data[0];

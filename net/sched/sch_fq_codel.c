@@ -103,6 +103,7 @@ static unsigned int fq_codel_classify(struct sk_buff *skb, struct Qdisc *sch,
 		switch (result) {
 		case TC_ACT_STOLEN:
 		case TC_ACT_QUEUED:
+		case TC_ACT_TRAP:
 			*qerr = NET_XMIT_SUCCESS | __NET_XMIT_STOLEN;
 		case TC_ACT_SHOT:
 			return 0;
@@ -490,10 +491,8 @@ static int fq_codel_init(struct Qdisc *sch, struct nlattr *opt)
 		if (!q->flows)
 			return -ENOMEM;
 		q->backlogs = kvzalloc(q->flows_cnt * sizeof(u32), GFP_KERNEL);
-		if (!q->backlogs) {
-			kvfree(q->flows);
+		if (!q->backlogs)
 			return -ENOMEM;
-		}
 		for (i = 0; i < q->flows_cnt; i++) {
 			struct fq_codel_flow *flow = q->flows + i;
 

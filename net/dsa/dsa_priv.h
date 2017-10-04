@@ -73,6 +73,7 @@ struct dsa_device_ops {
 };
 
 struct dsa_slave_priv {
+	/* Copy of dp->ds->dst->tag_ops->xmit for faster access in hot path */
 	struct sk_buff *	(*xmit)(struct sk_buff *skb,
 					struct net_device *dev);
 
@@ -102,8 +103,8 @@ int dsa_cpu_dsa_setup(struct dsa_switch *ds, struct device *dev,
 		      struct dsa_port *dport, int port);
 void dsa_cpu_dsa_destroy(struct dsa_port *dport);
 const struct dsa_device_ops *dsa_resolve_tag_protocol(int tag_protocol);
-int dsa_cpu_port_ethtool_setup(struct dsa_switch *ds);
-void dsa_cpu_port_ethtool_restore(struct dsa_switch *ds);
+int dsa_cpu_port_ethtool_setup(struct dsa_port *cpu_dp);
+void dsa_cpu_port_ethtool_restore(struct dsa_port *cpu_dp);
 
 /* legacy.c */
 int dsa_legacy_register(void);
@@ -181,5 +182,15 @@ extern const struct dsa_device_ops qca_netdev_ops;
 
 /* tag_trailer.c */
 extern const struct dsa_device_ops trailer_netdev_ops;
+
+static inline struct net_device *dsa_master_netdev(struct dsa_slave_priv *p)
+{
+	return p->dp->cpu_dp->netdev;
+}
+
+static inline struct dsa_port *dsa_get_cpu_port(struct dsa_switch_tree *dst)
+{
+	return dst->cpu_dp;
+}
 
 #endif

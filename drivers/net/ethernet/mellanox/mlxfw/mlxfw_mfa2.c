@@ -492,8 +492,6 @@ static int mlxfw_mfa2_file_cb_offset_xz(const struct mlxfw_mfa2_file *mfa2_file,
 	dec_buf.out_pos = 0;
 	dec_buf.out_size = size;
 	err = mlxfw_mfa2_xz_dec_run(xz_dec, &dec_buf, &finished);
-	if (err)
-		goto out;
 out:
 	xz_dec_end(xz_dec);
 	return err;
@@ -596,6 +594,7 @@ mlxfw_mfa2_file_component_get(const struct mlxfw_mfa2_file *mfa2_file,
 	if (memcmp(comp_data->buff, mlxfw_mfa2_comp_magic,
 		   mlxfw_mfa2_comp_magic_len) != 0) {
 		pr_err("Component has wrong magic\n");
+		err = -EINVAL;
 		goto err_out;
 	}
 

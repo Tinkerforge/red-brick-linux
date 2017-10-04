@@ -29,7 +29,7 @@ struct edid;
 struct cec_adapter;
 struct cec_notifier;
 
-#ifdef CONFIG_MEDIA_CEC_NOTIFIER
+#if IS_REACHABLE(CONFIG_CEC_CORE) && IS_ENABLED(CONFIG_CEC_NOTIFIER)
 
 /**
  * cec_notifier_get - find or create a new cec_notifier for the given device.
@@ -57,6 +57,7 @@ void cec_notifier_put(struct cec_notifier *n);
  * @pa: the CEC physical address
  *
  * Set a new CEC physical address.
+ * Does nothing if @n == NULL.
  */
 void cec_notifier_set_phys_addr(struct cec_notifier *n, u16 pa);
 
@@ -66,6 +67,7 @@ void cec_notifier_set_phys_addr(struct cec_notifier *n, u16 pa);
  * @edid: the struct edid pointer
  *
  * Parses the EDID to obtain the new CEC physical address and set it.
+ * Does nothing if @n == NULL.
  */
 void cec_notifier_set_phys_addr_from_edid(struct cec_notifier *n,
 					  const struct edid *edid);
@@ -106,6 +108,29 @@ static inline void cec_notifier_set_phys_addr_from_edid(struct cec_notifier *n,
 {
 }
 
+static inline void cec_notifier_register(struct cec_notifier *n,
+			 struct cec_adapter *adap,
+			 void (*callback)(struct cec_adapter *adap, u16 pa))
+{
+}
+
+static inline void cec_notifier_unregister(struct cec_notifier *n)
+{
+}
+
 #endif
+
+/**
+ * cec_notifier_phys_addr_invalidate() - set the physical address to INVALID
+ *
+ * @n: the CEC notifier
+ *
+ * This is a simple helper function to invalidate the physical
+ * address. Does nothing if @n == NULL.
+ */
+static inline void cec_notifier_phys_addr_invalidate(struct cec_notifier *n)
+{
+	cec_notifier_set_phys_addr(n, CEC_PHYS_ADDR_INVALID);
+}
 
 #endif

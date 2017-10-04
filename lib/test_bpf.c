@@ -435,6 +435,30 @@ loop:
 	return 0;
 }
 
+static int bpf_fill_jump_around_ld_abs(struct bpf_test *self)
+{
+	unsigned int len = BPF_MAXINSNS;
+	struct bpf_insn *insn;
+	int i = 0;
+
+	insn = kmalloc_array(len, sizeof(*insn), GFP_KERNEL);
+	if (!insn)
+		return -ENOMEM;
+
+	insn[i++] = BPF_MOV64_REG(R6, R1);
+	insn[i++] = BPF_LD_ABS(BPF_B, 0);
+	insn[i] = BPF_JMP_IMM(BPF_JEQ, R0, 10, len - i - 2);
+	i++;
+	while (i < len - 1)
+		insn[i++] = BPF_LD_ABS(BPF_B, 1);
+	insn[i] = BPF_EXIT_INSN();
+
+	self->u.ptr.insns = insn;
+	self->u.ptr.len = len;
+
+	return 0;
+}
+
 static int __bpf_fill_stxdw(struct bpf_test *self, int size)
 {
 	unsigned int len = BPF_MAXINSNS;
@@ -5044,6 +5068,14 @@ static struct bpf_test tests[] = {
 		{ { ETH_HLEN, 0xbef } },
 		.fill_helper = bpf_fill_ld_abs_vlan_push_pop,
 	},
+	{
+		"BPF_MAXINSNS: jump around ld_abs",
+		{ },
+		INTERNAL,
+		{ 10, 11 },
+		{ { 2, 10 } },
+		.fill_helper = bpf_fill_jump_around_ld_abs,
+	},
 	/*
 	 * LD_IND / LD_ABS on fragmented SKBs
 	 */
@@ -5685,7 +5717,7 @@ static struct sk_buff *populate_skb(char *buf, int size)
 	if (!skb)
 		return NULL;
 
-	memcpy(__skb_put(skb, size), buf, size);
+	__skb_put_data(skb, buf, size);
 
 	/* Initialize a fake skb with test pattern. */
 	skb_reset_mac_header(skb);

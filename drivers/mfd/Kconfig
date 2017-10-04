@@ -453,14 +453,12 @@ config LPC_SCH
 
 config INTEL_SOC_PMIC
 	bool "Support for Crystal Cove PMIC"
-	depends on HAS_IOMEM
-	select GPIOLIB
-	select I2C
+	depends on HAS_IOMEM && I2C=y && GPIOLIB && COMMON_CLK
+	depends on X86 || COMPILE_TEST
 	select MFD_CORE
 	select REGMAP_I2C
 	select REGMAP_IRQ
-	select COMMON_CLK
-	select I2C_DESIGNWARE_PLATFORM
+	select I2C_DESIGNWARE_PLATFORM if ACPI
 	help
 	  Select this option to enable support for Crystal Cove PMIC
 	  on some Intel SoC systems. The PMIC provides ADC, GPIO,
@@ -483,13 +481,12 @@ config INTEL_SOC_PMIC_BXTWC
 	  on these systems.
 
 config INTEL_SOC_PMIC_CHTWC
-	bool "Support for Intel Cherry Trail Whiskey Cove PMIC"
-	depends on ACPI && HAS_IOMEM
+	tristate "Support for Intel Cherry Trail Whiskey Cove PMIC"
+	depends on ACPI && HAS_IOMEM && I2C=y && COMMON_CLK
+	depends on X86 || COMPILE_TEST
 	select MFD_CORE
-	select I2C
 	select REGMAP_I2C
 	select REGMAP_IRQ
-	select COMMON_CLK
 	select I2C_DESIGNWARE_PLATFORM
 	help
 	  Select this option to enable support for the Intel Cherry Trail
@@ -1353,6 +1350,20 @@ config MFD_TI_LP873X
 
 	  This driver can also be built as a module. If so, the module
 	  will be called lp873x.
+
+config MFD_TI_LP87565
+	tristate "TI LP87565 Power Management IC"
+	depends on I2C && OF
+	select MFD_CORE
+	select REGMAP_I2C
+	help
+	  If you say yes here then you get support for the LP87565 series of
+	  Power Management Integrated Circuits (PMIC).
+	  These include voltage regulators, thermal protection, configurable
+	  General Purpose Outputs (GPO) that are used in portable devices.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called lp87565.
 
 config MFD_TPS65218
 	tristate "TI TPS65218 Power Management chips"

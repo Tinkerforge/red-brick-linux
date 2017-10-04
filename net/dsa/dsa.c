@@ -112,23 +112,22 @@ const struct dsa_device_ops *dsa_resolve_tag_protocol(int tag_protocol)
 	return ops;
 }
 
-int dsa_cpu_port_ethtool_setup(struct dsa_switch *ds)
+int dsa_cpu_port_ethtool_setup(struct dsa_port *cpu_dp)
 {
+	struct dsa_switch *ds = cpu_dp->ds;
 	struct net_device *master;
 	struct ethtool_ops *cpu_ops;
 
-	master = ds->dst->master_netdev;
-	if (ds->master_netdev)
-		master = ds->master_netdev;
+	master = cpu_dp->netdev;
 
 	cpu_ops = devm_kzalloc(ds->dev, sizeof(*cpu_ops), GFP_KERNEL);
 	if (!cpu_ops)
 		return -ENOMEM;
 
-	memcpy(&ds->dst->master_ethtool_ops, master->ethtool_ops,
+	memcpy(&cpu_dp->ethtool_ops, master->ethtool_ops,
 	       sizeof(struct ethtool_ops));
-	ds->dst->master_orig_ethtool_ops = master->ethtool_ops;
-	memcpy(cpu_ops, &ds->dst->master_ethtool_ops,
+	cpu_dp->orig_ethtool_ops = master->ethtool_ops;
+	memcpy(cpu_ops, &cpu_dp->ethtool_ops,
 	       sizeof(struct ethtool_ops));
 	dsa_cpu_port_ethtool_init(cpu_ops);
 	master->ethtool_ops = cpu_ops;
@@ -136,15 +135,9 @@ int dsa_cpu_port_ethtool_setup(struct dsa_switch *ds)
 	return 0;
 }
 
-void dsa_cpu_port_ethtool_restore(struct dsa_switch *ds)
+void dsa_cpu_port_ethtool_restore(struct dsa_port *cpu_dp)
 {
-	struct net_device *master;
-
-	master = ds->dst->master_netdev;
-	if (ds->master_netdev)
-		master = ds->master_netdev;
-
-	master->ethtool_ops = ds->dst->master_orig_ethtool_ops;
+	cpu_dp->netdev->ethtool_ops = cpu_dp->orig_ethtool_ops;
 }
 
 void dsa_cpu_dsa_destroy(struct dsa_port *port)
@@ -225,6 +218,53 @@ static int dsa_switch_rcv(struct sk_buff *skb, struct net_device *dev,
 
 	return 0;
 }
+
+#ifdef CONFIG_PM_SLEEP
+int dsa_switch_suspend(struct dsa_switch *ds)
+{
+	int i, ret = 0;
+
+	/* Suspend slave network devices */
+	for (i = 0; i < ds->num_ports; i++) {
+		if (!dsa_is_port_initialized(ds, i))
+			continue;
+
+		ret = dsa_slave_suspend(ds->ports[i].netdev);
+		if (ret)
+			return ret;
+	}
+
+	if (ds->ops->suspend)
+		ret = ds->ops->suspend(ds);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(dsa_switch_suspend);
+
+int dsa_switch_resume(struct dsa_switch *ds)
+{
+	int i, ret = 0;
+
+	if (ds->ops->resume)
+		ret = ds->ops->resume(ds);
+
+	if (ret)
+		return ret;
+
+	/* Resume slave network devices */
+	for (i = 0; i < ds->num_ports; i++) {
+		if (!dsa_is_port_initialized(ds, i))
+			continue;
+
+		ret = dsa_slave_resume(ds->ports[i].netdev);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(dsa_switch_resume);
+#endif
 
 static struct packet_type dsa_pack_type __read_mostly = {
 	.type	= cpu_to_be16(ETH_P_XDSA),

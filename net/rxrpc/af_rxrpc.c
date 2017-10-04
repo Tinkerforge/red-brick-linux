@@ -53,7 +53,7 @@ static void rxrpc_sock_destructor(struct sock *);
  */
 static inline int rxrpc_writable(struct sock *sk)
 {
-	return atomic_read(&sk->sk_wmem_alloc) < (size_t) sk->sk_sndbuf;
+	return refcount_read(&sk->sk_wmem_alloc) < (size_t) sk->sk_sndbuf;
 }
 
 /*
@@ -131,9 +131,8 @@ static int rxrpc_validate_address(struct rxrpc_sock *rx,
 static int rxrpc_bind(struct socket *sock, struct sockaddr *saddr, int len)
 {
 	struct sockaddr_rxrpc *srx = (struct sockaddr_rxrpc *)saddr;
-	struct sock *sk = sock->sk;
 	struct rxrpc_local *local;
-	struct rxrpc_sock *rx = rxrpc_sk(sk);
+	struct rxrpc_sock *rx = rxrpc_sk(sock->sk);
 	u16 service_id = srx->srx_service;
 	int ret;
 
@@ -145,31 +144,48 @@ static int rxrpc_bind(struct socket *sock, struct sockaddr *saddr, int len)
 
 	lock_sock(&rx->sk);
 
-	if (rx->sk.sk_state != RXRPC_UNBOUND) {
+	switch (rx->sk.sk_state) {
+	case RXRPC_UNBOUND:
+		rx->srx = *srx;
+		local = rxrpc_lookup_local(sock_net(&rx->sk), &rx->srx);
+		if (IS_ERR(local)) {
+			ret = PTR_ERR(local);
+			goto error_unlock;
+		}
+
+		if (service_id) {
+			write_lock(&local->services_lock);
+			if (rcu_access_pointer(local->service))
+				goto service_in_use;
+			rx->local = local;
+			rcu_assign_pointer(local->service, rx);
+			write_unlock(&local->services_lock);
+
+			rx->sk.sk_state = RXRPC_SERVER_BOUND;
+		} else {
+			rx->local = local;
+			rx->sk.sk_state = RXRPC_CLIENT_BOUND;
+		}
+		break;
+
+	case RXRPC_SERVER_BOUND:
+		ret = -EINVAL;
+		if (service_id == 0)
+			goto error_unlock;
+		ret = -EADDRINUSE;
+		if (service_id == rx->srx.srx_service)
+			goto error_unlock;
+		ret = -EINVAL;
+		srx->srx_service = rx->srx.srx_service;
+		if (memcmp(srx, &rx->srx, sizeof(*srx)) != 0)
+			goto error_unlock;
+		rx->second_service = service_id;
+		rx->sk.sk_state = RXRPC_SERVER_BOUND2;
+		break;
+
+	default:
 		ret = -EINVAL;
 		goto error_unlock;
-	}
-
-	memcpy(&rx->srx, srx, sizeof(rx->srx));
-
-	local = rxrpc_lookup_local(sock_net(sock->sk), &rx->srx);
-	if (IS_ERR(local)) {
-		ret = PTR_ERR(local);
-		goto error_unlock;
-	}
-
-	if (service_id) {
-		write_lock(&local->services_lock);
-		if (rcu_access_pointer(local->service))
-			goto service_in_use;
-		rx->local = local;
-		rcu_assign_pointer(local->service, rx);
-		write_unlock(&local->services_lock);
-
-		rx->sk.sk_state = RXRPC_SERVER_BOUND;
-	} else {
-		rx->local = local;
-		rx->sk.sk_state = RXRPC_CLIENT_BOUND;
 	}
 
 	release_sock(&rx->sk);
@@ -206,6 +222,7 @@ static int rxrpc_listen(struct socket *sock, int backlog)
 		ret = -EADDRNOTAVAIL;
 		break;
 	case RXRPC_SERVER_BOUND:
+	case RXRPC_SERVER_BOUND2:
 		ASSERT(rx->local != NULL);
 		max = READ_ONCE(rxrpc_max_backlog);
 		ret = -EINVAL;
@@ -245,6 +262,7 @@ static int rxrpc_listen(struct socket *sock, int backlog)
  * @srx: The address of the peer to contact
  * @key: The security context to use (defaults to socket setting)
  * @user_call_ID: The ID to use
+ * @tx_total_len: Total length of data to transmit during the call (or -1)
  * @gfp: The allocation constraints
  * @notify_rx: Where to send notifications instead of socket queue
  *
@@ -259,6 +277,7 @@ struct rxrpc_call *rxrpc_kernel_begin_call(struct socket *sock,
 					   struct sockaddr_rxrpc *srx,
 					   struct key *key,
 					   unsigned long user_call_ID,
+					   s64 tx_total_len,
 					   gfp_t gfp,
 					   rxrpc_notify_rx_t notify_rx)
 {
@@ -286,7 +305,8 @@ struct rxrpc_call *rxrpc_kernel_begin_call(struct socket *sock,
 	cp.security_level	= 0;
 	cp.exclusive		= false;
 	cp.service_id		= srx->srx_service;
-	call = rxrpc_new_client_call(rx, &cp, srx, user_call_ID, gfp);
+	call = rxrpc_new_client_call(rx, &cp, srx, user_call_ID, tx_total_len,
+				     gfp);
 	/* The socket has been unlocked. */
 	if (!IS_ERR(call))
 		call->notify_rx = notify_rx;
@@ -473,6 +493,7 @@ static int rxrpc_setsockopt(struct socket *sock, int level, int optname,
 {
 	struct rxrpc_sock *rx = rxrpc_sk(sock->sk);
 	unsigned int min_sec_level;
+	u16 service_upgrade[2];
 	int ret;
 
 	_enter(",%d,%d,,%d", level, optname, optlen);
@@ -529,6 +550,28 @@ static int rxrpc_setsockopt(struct socket *sock, int level, int optname,
 			rx->min_sec_level = min_sec_level;
 			goto success;
 
+		case RXRPC_UPGRADEABLE_SERVICE:
+			ret = -EINVAL;
+			if (optlen != sizeof(service_upgrade) ||
+			    rx->service_upgrade.from != 0)
+				goto error;
+			ret = -EISCONN;
+			if (rx->sk.sk_state != RXRPC_SERVER_BOUND2)
+				goto error;
+			ret = -EFAULT;
+			if (copy_from_user(service_upgrade, optval,
+					   sizeof(service_upgrade)) != 0)
+				goto error;
+			ret = -EINVAL;
+			if ((service_upgrade[0] != rx->srx.srx_service ||
+			     service_upgrade[1] != rx->second_service) &&
+			    (service_upgrade[0] != rx->second_service ||
+			     service_upgrade[1] != rx->srx.srx_service))
+				goto error;
+			rx->service_upgrade.from = service_upgrade[0];
+			rx->service_upgrade.to = service_upgrade[1];
+			goto success;
+
 		default:
 			break;
 		}
@@ -539,6 +582,34 @@ success:
 error:
 	release_sock(&rx->sk);
 	return ret;
+}
+
+/*
+ * Get socket options.
+ */
+static int rxrpc_getsockopt(struct socket *sock, int level, int optname,
+			    char __user *optval, int __user *_optlen)
+{
+	int optlen;
+	
+	if (level != SOL_RXRPC)
+		return -EOPNOTSUPP;
+
+	if (get_user(optlen, _optlen))
+		return -EFAULT;
+	
+	switch (optname) {
+	case RXRPC_SUPPORTED_CMSG:
+		if (optlen < sizeof(int))
+			return -ETOOSMALL;
+		if (put_user(RXRPC__SUPPORTED - 1, (int __user *)optval) ||
+		    put_user(sizeof(int), _optlen))
+			return -EFAULT;
+		return 0;
+		
+	default:
+		return -EOPNOTSUPP;
+	}
 }
 
 /*
@@ -659,7 +730,7 @@ static void rxrpc_sock_destructor(struct sock *sk)
 
 	rxrpc_purge_queue(&sk->sk_receive_queue);
 
-	WARN_ON(atomic_read(&sk->sk_wmem_alloc));
+	WARN_ON(refcount_read(&sk->sk_wmem_alloc));
 	WARN_ON(!sk_unhashed(sk));
 	WARN_ON(sk->sk_socket);
 
@@ -676,7 +747,7 @@ static int rxrpc_release_sock(struct sock *sk)
 {
 	struct rxrpc_sock *rx = rxrpc_sk(sk);
 
-	_enter("%p{%d,%d}", sk, sk->sk_state, atomic_read(&sk->sk_refcnt));
+	_enter("%p{%d,%d}", sk, sk->sk_state, refcount_read(&sk->sk_refcnt));
 
 	/* declare the socket closed for business */
 	sock_orphan(sk);
@@ -744,7 +815,7 @@ static const struct proto_ops rxrpc_rpc_ops = {
 	.listen		= rxrpc_listen,
 	.shutdown	= rxrpc_shutdown,
 	.setsockopt	= rxrpc_setsockopt,
-	.getsockopt	= sock_no_getsockopt,
+	.getsockopt	= rxrpc_getsockopt,
 	.sendmsg	= rxrpc_sendmsg,
 	.recvmsg	= rxrpc_recvmsg,
 	.mmap		= sock_no_mmap,

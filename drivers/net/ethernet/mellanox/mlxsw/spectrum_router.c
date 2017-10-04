@@ -591,7 +591,7 @@ static int mlxsw_sp_lpm_tree_put(struct mlxsw_sp *mlxsw_sp,
 	return 0;
 }
 
-#define MLXSW_SP_LPM_TREE_MIN 2 /* trees 0 and 1 are reserved */
+#define MLXSW_SP_LPM_TREE_MIN 1 /* tree 0 is reserved */
 
 static int mlxsw_sp_lpm_init(struct mlxsw_sp *mlxsw_sp)
 {
@@ -1512,6 +1512,10 @@ mlxsw_sp_nexthop_group_mac_update(struct mlxsw_sp *mlxsw_sp,
 static int mlxsw_sp_fib_entry_update(struct mlxsw_sp *mlxsw_sp,
 				     struct mlxsw_sp_fib_entry *fib_entry);
 
+static bool
+mlxsw_sp_fib_node_entry_is_first(const struct mlxsw_sp_fib_node *fib_node,
+				 const struct mlxsw_sp_fib_entry *fib_entry);
+
 static int
 mlxsw_sp_nexthop_fib_entries_update(struct mlxsw_sp *mlxsw_sp,
 				    struct mlxsw_sp_nexthop_group *nh_grp)
@@ -1520,6 +1524,9 @@ mlxsw_sp_nexthop_fib_entries_update(struct mlxsw_sp *mlxsw_sp,
 	int err;
 
 	list_for_each_entry(fib_entry, &nh_grp->fib_list, nexthop_group_node) {
+		if (!mlxsw_sp_fib_node_entry_is_first(fib_entry->fib_node,
+						      fib_entry))
+			continue;
 		err = mlxsw_sp_fib_entry_update(mlxsw_sp, fib_entry);
 		if (err)
 			return err;
@@ -1790,6 +1797,7 @@ static int mlxsw_sp_nexthop_init(struct mlxsw_sp *mlxsw_sp,
 	return 0;
 
 err_nexthop_neigh_init:
+	mlxsw_sp_nexthop_rif_fini(nh);
 	mlxsw_sp_nexthop_remove(mlxsw_sp, nh);
 	return err;
 }
@@ -1866,6 +1874,7 @@ mlxsw_sp_nexthop_group_create(struct mlxsw_sp *mlxsw_sp, struct fib_info *fi)
 	nh_grp->gateway = fi->fib_nh->nh_scope == RT_SCOPE_LINK;
 	nh_grp->count = fi->fib_nhs;
 	nh_grp->key.fi = fi;
+	fib_info_hold(fi);
 	for (i = 0; i < nh_grp->count; i++) {
 		nh = &nh_grp->nexthops[i];
 		fib_nh = &fi->fib_nh[i];
@@ -1885,6 +1894,7 @@ err_nexthop_init:
 		nh = &nh_grp->nexthops[i];
 		mlxsw_sp_nexthop_fini(mlxsw_sp, nh);
 	}
+	fib_info_put(nh_grp->key.fi);
 	kfree(nh_grp);
 	return ERR_PTR(err);
 }
@@ -1903,6 +1913,7 @@ mlxsw_sp_nexthop_group_destroy(struct mlxsw_sp *mlxsw_sp,
 	}
 	mlxsw_sp_nexthop_group_refresh(mlxsw_sp, nh_grp);
 	WARN_ON_ONCE(nh_grp->adj_index_valid);
+	fib_info_put(nh_grp->key.fi);
 	kfree(nh_grp);
 }
 
@@ -2979,16 +2990,18 @@ mlxsw_sp_dev_rif_type(const struct mlxsw_sp *mlxsw_sp,
 	return mlxsw_sp_fid_type_rif_type(mlxsw_sp, type);
 }
 
-#define MLXSW_SP_INVALID_INDEX_RIF 0xffff
-static int mlxsw_sp_avail_rif_get(struct mlxsw_sp *mlxsw_sp)
+static int mlxsw_sp_rif_index_alloc(struct mlxsw_sp *mlxsw_sp, u16 *p_rif_index)
 {
 	int i;
 
-	for (i = 0; i < MLXSW_CORE_RES_GET(mlxsw_sp->core, MAX_RIFS); i++)
-		if (!mlxsw_sp->router->rifs[i])
-			return i;
+	for (i = 0; i < MLXSW_CORE_RES_GET(mlxsw_sp->core, MAX_RIFS); i++) {
+		if (!mlxsw_sp->router->rifs[i]) {
+			*p_rif_index = i;
+			return 0;
+		}
+	}
 
-	return MLXSW_SP_INVALID_INDEX_RIF;
+	return -ENOBUFS;
 }
 
 static struct mlxsw_sp_rif *mlxsw_sp_rif_alloc(size_t rif_size, u16 rif_index,
@@ -3048,11 +3061,9 @@ mlxsw_sp_rif_create(struct mlxsw_sp *mlxsw_sp,
 	if (IS_ERR(vr))
 		return ERR_CAST(vr);
 
-	rif_index = mlxsw_sp_avail_rif_get(mlxsw_sp);
-	if (rif_index == MLXSW_SP_INVALID_INDEX_RIF) {
-		err = -ERANGE;
-		goto err_avail_rif_get;
-	}
+	err = mlxsw_sp_rif_index_alloc(mlxsw_sp, &rif_index);
+	if (err)
+		goto err_rif_index_alloc;
 
 	rif = mlxsw_sp_rif_alloc(ops->rif_size, rif_index, vr->id, params->dev);
 	if (!rif) {
@@ -3095,7 +3106,7 @@ err_configure:
 err_fid_get:
 	kfree(rif);
 err_rif_alloc:
-err_avail_rif_get:
+err_rif_index_alloc:
 	mlxsw_sp_vr_put(vr);
 	return ERR_PTR(err);
 }
@@ -3300,6 +3311,9 @@ static int mlxsw_sp_inetaddr_vlan_event(struct net_device *vlan_dev,
 {
 	struct net_device *real_dev = vlan_dev_real_dev(vlan_dev);
 	u16 vid = vlan_dev_vlan_id(vlan_dev);
+
+	if (netif_is_bridge_port(vlan_dev))
+		return 0;
 
 	if (mlxsw_sp_port_dev_check(real_dev))
 		return mlxsw_sp_inetaddr_port_vlan_event(vlan_dev, real_dev,

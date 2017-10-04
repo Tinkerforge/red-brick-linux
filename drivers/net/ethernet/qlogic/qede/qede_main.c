@@ -60,7 +60,6 @@
 #include <net/ip6_checksum.h>
 #include <linux/bitops.h>
 #include <linux/vmalloc.h>
-#include <linux/qed/qede_roce.h>
 #include "qede.h"
 #include "qede_ptp.h"
 
@@ -263,7 +262,7 @@ static int qede_netdev_event(struct notifier_block *this, unsigned long event,
 		break;
 	case NETDEV_CHANGEADDR:
 		edev = netdev_priv(ndev);
-		qede_roce_event_changeaddr(edev);
+		qede_rdma_event_changeaddr(edev);
 		break;
 	}
 
@@ -580,6 +579,24 @@ static const struct net_device_ops qede_netdev_vf_ops = {
 	.ndo_features_check = qede_features_check,
 };
 
+static const struct net_device_ops qede_netdev_vf_xdp_ops = {
+	.ndo_open = qede_open,
+	.ndo_stop = qede_close,
+	.ndo_start_xmit = qede_start_xmit,
+	.ndo_set_rx_mode = qede_set_rx_mode,
+	.ndo_set_mac_address = qede_set_mac_addr,
+	.ndo_validate_addr = eth_validate_addr,
+	.ndo_change_mtu = qede_change_mtu,
+	.ndo_vlan_rx_add_vid = qede_vlan_rx_add_vid,
+	.ndo_vlan_rx_kill_vid = qede_vlan_rx_kill_vid,
+	.ndo_set_features = qede_set_features,
+	.ndo_get_stats64 = qede_get_stats64,
+	.ndo_udp_tunnel_add = qede_udp_tunnel_add,
+	.ndo_udp_tunnel_del = qede_udp_tunnel_del,
+	.ndo_features_check = qede_features_check,
+	.ndo_xdp = qede_xdp,
+};
+
 /* -------------------------------------------------------------------------
  * START OF PROBE / REMOVE
  * -------------------------------------------------------------------------
@@ -645,10 +662,14 @@ static void qede_init_ndev(struct qede_dev *edev)
 
 	ndev->watchdog_timeo = TX_TIMEOUT;
 
-	if (IS_VF(edev))
-		ndev->netdev_ops = &qede_netdev_vf_ops;
-	else
+	if (IS_VF(edev)) {
+		if (edev->dev_info.xdp_supported)
+			ndev->netdev_ops = &qede_netdev_vf_xdp_ops;
+		else
+			ndev->netdev_ops = &qede_netdev_vf_ops;
+	} else {
 		ndev->netdev_ops = &qede_netdev_ops;
+	}
 
 	qede_set_ethtool_ops(ndev);
 
@@ -846,6 +867,12 @@ static void qede_update_pf_params(struct qed_dev *cdev)
 	/* 64 rx + 64 tx + 64 XDP */
 	memset(&pf_params, 0, sizeof(struct qed_pf_params));
 	pf_params.eth_pf_params.num_cons = (MAX_SB_PER_PF_MIMD - 1) * 3;
+
+	/* Same for VFs - make sure they'll have sufficient connections
+	 * to support XDP Tx queues.
+	 */
+	pf_params.eth_pf_params.num_vf_cons = 48;
+
 #ifdef CONFIG_RFS_ACCEL
 	pf_params.eth_pf_params.num_arfs_filters = QEDE_RFS_MAX_FLTR;
 #endif
@@ -950,7 +977,7 @@ static int __qede_probe(struct pci_dev *pdev, u32 dp_module, u8 dp_level,
 
 	qede_init_ndev(edev);
 
-	rc = qede_roce_dev_add(edev);
+	rc = qede_rdma_dev_add(edev);
 	if (rc)
 		goto err3;
 
@@ -986,7 +1013,7 @@ static int __qede_probe(struct pci_dev *pdev, u32 dp_module, u8 dp_level,
 	return 0;
 
 err4:
-	qede_roce_dev_remove(edev);
+	qede_rdma_dev_remove(edev);
 err3:
 	free_netdev(edev->ndev);
 err2:
@@ -1037,7 +1064,7 @@ static void __qede_remove(struct pci_dev *pdev, enum qede_remove_mode mode)
 
 	qede_ptp_disable(edev);
 
-	qede_roce_dev_remove(edev);
+	qede_rdma_dev_remove(edev);
 
 	edev->ops->common->set_power_state(cdev, PCI_D0);
 
@@ -1289,8 +1316,7 @@ static int qede_alloc_mem_rxq(struct qede_dev *edev, struct qede_rx_queue *rxq)
 					    QED_CHAIN_CNT_TYPE_U16,
 					    RX_RING_SIZE,
 					    sizeof(struct eth_rx_bd),
-					    &rxq->rx_bd_ring);
-
+					    &rxq->rx_bd_ring, NULL);
 	if (rc)
 		goto err;
 
@@ -1301,7 +1327,7 @@ static int qede_alloc_mem_rxq(struct qede_dev *edev, struct qede_rx_queue *rxq)
 					    QED_CHAIN_CNT_TYPE_U16,
 					    RX_RING_SIZE,
 					    sizeof(union eth_rx_cqe),
-					    &rxq->rx_comp_ring);
+					    &rxq->rx_comp_ring, NULL);
 	if (rc)
 		goto err;
 
@@ -1359,7 +1385,8 @@ static int qede_alloc_mem_txq(struct qede_dev *edev, struct qede_tx_queue *txq)
 					    QED_CHAIN_MODE_PBL,
 					    QED_CHAIN_CNT_TYPE_U16,
 					    txq->num_tx_buffers,
-					    sizeof(*p_virt), &txq->tx_pbl);
+					    sizeof(*p_virt),
+					    &txq->tx_pbl, NULL);
 	if (rc)
 		goto err;
 
@@ -1770,7 +1797,7 @@ static int qede_start_txq(struct qede_dev *edev,
 	else
 		params.queue_id = txq->index;
 
-	params.sb = fp->sb_info->igu_sb_id;
+	params.p_sb = fp->sb_info;
 	params.sb_idx = sb_idx;
 
 	rc = edev->ops->q_tx_start(edev->cdev, rss_id, &params, phys_table,
@@ -1849,7 +1876,7 @@ static int qede_start_queues(struct qede_dev *edev, bool clear_stats)
 			memset(&q_params, 0, sizeof(q_params));
 			q_params.queue_id = rxq->rxq_id;
 			q_params.vport_id = 0;
-			q_params.sb = fp->sb_info->igu_sb_id;
+			q_params.p_sb = fp->sb_info;
 			q_params.sb_idx = RX_PI;
 
 			p_phys_table =
@@ -1937,7 +1964,7 @@ static void qede_unload(struct qede_dev *edev, enum qede_unload_mode mode,
 
 	edev->state = QEDE_STATE_CLOSED;
 
-	qede_roce_dev_event_close(edev);
+	qede_rdma_dev_event_close(edev);
 
 	/* Close OS Tx */
 	netif_tx_disable(edev->ndev);
@@ -2042,7 +2069,7 @@ static int qede_load(struct qede_dev *edev, enum qede_load_mode mode,
 	link_params.link_up = true;
 	edev->ops->common->set_link(edev->cdev, &link_params);
 
-	qede_roce_dev_event_open(edev);
+	qede_rdma_dev_event_open(edev);
 
 	edev->state = QEDE_STATE_OPEN;
 

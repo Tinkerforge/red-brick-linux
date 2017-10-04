@@ -22,6 +22,7 @@ struct route_info {
 #include <net/flow.h>
 #include <net/ip6_fib.h>
 #include <net/sock.h>
+#include <net/lwtunnel.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/route.h>
@@ -116,7 +117,6 @@ struct rt6_info *rt6_lookup(struct net *net, const struct in6_addr *daddr,
 			    const struct in6_addr *saddr, int oif, int flags);
 
 struct dst_entry *icmp6_dst_alloc(struct net_device *dev, struct flowi6 *fl6);
-int icmp6_dst_gc(void);
 
 void fib6_force_start_gc(struct net *net);
 
@@ -233,4 +233,11 @@ static inline struct in6_addr *rt6_nexthop(struct rt6_info *rt,
 		return daddr;
 }
 
+static inline bool rt6_duplicate_nexthop(struct rt6_info *a, struct rt6_info *b)
+{
+	return a->dst.dev == b->dst.dev &&
+	       a->rt6i_idev == b->rt6i_idev &&
+	       ipv6_addr_equal(&a->rt6i_gateway, &b->rt6i_gateway) &&
+	       !lwtunnel_cmp_encap(a->dst.lwtstate, b->dst.lwtstate);
+}
 #endif

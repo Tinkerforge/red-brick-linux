@@ -156,6 +156,11 @@ struct qed_dcbx_get {
 	struct qed_dcbx_admin_params local;
 };
 
+enum qed_nvm_images {
+	QED_NVM_IMAGE_ISCSI_CFG,
+	QED_NVM_IMAGE_FCOE_CFG,
+};
+
 enum qed_led_mode {
 	QED_LED_MODE_OFF,
 	QED_LED_MODE_ON,
@@ -179,6 +184,10 @@ struct qed_eth_pf_params {
 	 * to update_pf_params routine invoked before slowpath start
 	 */
 	u16 num_cons;
+
+	/* per-VF number of CIDs */
+	u8 num_vf_cons;
+#define ETH_PF_PARAMS_VF_CONS_DEFAULT	(32)
 
 	/* To enable arfs, previous to HW-init a positive number needs to be
 	 * set [as filters require allocated searcher ILT memory].
@@ -360,6 +369,8 @@ struct qed_dev_info {
 	bool		vxlan_enable;
 	bool		gre_enable;
 	bool		geneve_enable;
+
+	u8		abs_pf_id;
 };
 
 enum qed_sb_type {
@@ -623,10 +634,24 @@ struct qed_common_ops {
 				       enum qed_chain_cnt_type cnt_type,
 				       u32 num_elems,
 				       size_t elem_size,
-				       struct qed_chain *p_chain);
+				       struct qed_chain *p_chain,
+				       struct qed_chain_ext_pbl *ext_pbl);
 
 	void		(*chain_free)(struct qed_dev *cdev,
 				      struct qed_chain *p_chain);
+
+/**
+ * @brief nvm_get_image - reads an entire image from nvram
+ *
+ * @param cdev
+ * @param type - type of the request nvram image
+ * @param buf - preallocated buffer to fill with the image
+ * @param len - length of the allocated buffer
+ *
+ * @return 0 on success, error otherwise
+ */
+	int (*nvm_get_image)(struct qed_dev *cdev,
+			     enum qed_nvm_images type, u8 *buf, u16 len);
 
 /**
  * @brief get_coalesce - Get coalesce parameters in usec

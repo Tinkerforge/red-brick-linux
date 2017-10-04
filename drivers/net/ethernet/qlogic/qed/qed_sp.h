@@ -104,12 +104,17 @@ union ramrod_data {
 	struct roce_query_qp_req_ramrod_data roce_query_qp_req;
 	struct roce_destroy_qp_resp_ramrod_data roce_destroy_qp_resp;
 	struct roce_destroy_qp_req_ramrod_data roce_destroy_qp_req;
+	struct roce_init_func_ramrod_data roce_init_func;
 	struct rdma_create_cq_ramrod_data rdma_create_cq;
 	struct rdma_destroy_cq_ramrod_data rdma_destroy_cq;
 	struct rdma_srq_create_ramrod_data rdma_create_srq;
 	struct rdma_srq_destroy_ramrod_data rdma_destroy_srq;
 	struct rdma_srq_modify_ramrod_data rdma_modify_srq;
-	struct roce_init_func_ramrod_data roce_init_func;
+	struct iwarp_create_qp_ramrod_data iwarp_create_qp;
+	struct iwarp_tcp_offload_ramrod_data iwarp_tcp_offload;
+	struct iwarp_mpa_offload_ramrod_data iwarp_mpa_offload;
+	struct iwarp_modify_qp_ramrod_data iwarp_modify_qp;
+	struct iwarp_init_func_ramrod_data iwarp_init_func;
 	struct fcoe_init_ramrod_params fcoe_init;
 	struct fcoe_conn_offload_ramrod_params fcoe_conn_ofld;
 	struct fcoe_conn_terminate_ramrod_params fcoe_conn_terminate;
@@ -120,6 +125,7 @@ union ramrod_data {
 	struct iscsi_spe_func_dstry iscsi_destroy;
 	struct iscsi_spe_conn_offload iscsi_conn_offload;
 	struct iscsi_conn_update_ramrod_params iscsi_conn_update;
+	struct iscsi_spe_conn_mac_update iscsi_conn_mac_update;
 	struct iscsi_spe_conn_termination iscsi_conn_terminate;
 
 	struct vf_start_ramrod_data vf_start;
@@ -173,6 +179,22 @@ struct qed_consq {
 	struct qed_chain chain;
 };
 
+typedef int
+(*qed_spq_async_comp_cb)(struct qed_hwfn *p_hwfn,
+			 u8 opcode,
+			 u16 echo,
+			 union event_ring_data *data,
+			 u8 fw_return_code);
+
+int
+qed_spq_register_async_cb(struct qed_hwfn *p_hwfn,
+			  enum protocol_type protocol_id,
+			  qed_spq_async_comp_cb cb);
+
+void
+qed_spq_unregister_async_cb(struct qed_hwfn *p_hwfn,
+			    enum protocol_type protocol_id);
+
 struct qed_spq {
 	spinlock_t		lock; /* SPQ lock */
 
@@ -202,6 +224,7 @@ struct qed_spq {
 	u32			comp_count;
 
 	u32			cid;
+	qed_spq_async_comp_cb async_comp_cb[MAX_PROTOCOL_TYPE];
 };
 
 /**

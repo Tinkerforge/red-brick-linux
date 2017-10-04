@@ -62,6 +62,22 @@
 #include "qed_sriov.h"
 #include "qed_reg_addr.h"
 
+static int
+qed_iscsi_async_event(struct qed_hwfn *p_hwfn,
+		      u8 fw_event_code,
+		      u16 echo, union event_ring_data *data, u8 fw_return_code)
+{
+	if (p_hwfn->p_iscsi_info->event_cb) {
+		struct qed_iscsi_info *p_iscsi = p_hwfn->p_iscsi_info;
+
+		return p_iscsi->event_cb(p_iscsi->event_context,
+					 fw_event_code, data);
+	} else {
+		DP_NOTICE(p_hwfn, "iSCSI async completion is not set\n");
+		return -EINVAL;
+	}
+}
+
 struct qed_iscsi_conn {
 	struct list_head list_entry;
 	bool free_on_delete;
@@ -264,6 +280,9 @@ qed_sp_iscsi_func_start(struct qed_hwfn *p_hwfn,
 
 	p_hwfn->p_iscsi_info->event_context = event_context;
 	p_hwfn->p_iscsi_info->event_cb = async_event_cb;
+
+	qed_spq_register_async_cb(p_hwfn, PROTOCOLID_ISCSI,
+				  qed_iscsi_async_event);
 
 	return qed_spq_post(p_hwfn, p_ent, NULL);
 }
@@ -488,6 +507,54 @@ static int qed_sp_iscsi_conn_update(struct qed_hwfn *p_hwfn,
 	return qed_spq_post(p_hwfn, p_ent, NULL);
 }
 
+static int
+qed_sp_iscsi_mac_update(struct qed_hwfn *p_hwfn,
+			struct qed_iscsi_conn *p_conn,
+			enum spq_mode comp_mode,
+			struct qed_spq_comp_cb *p_comp_addr)
+{
+	struct iscsi_spe_conn_mac_update *p_ramrod = NULL;
+	struct qed_spq_entry *p_ent = NULL;
+	struct qed_sp_init_data init_data;
+	int rc = -EINVAL;
+	u8 ucval;
+
+	/* Get SPQ entry */
+	memset(&init_data, 0, sizeof(init_data));
+	init_data.cid = p_conn->icid;
+	init_data.opaque_fid = p_hwfn->hw_info.opaque_fid;
+	init_data.comp_mode = comp_mode;
+	init_data.p_comp_data = p_comp_addr;
+
+	rc = qed_sp_init_request(p_hwfn, &p_ent,
+				 ISCSI_RAMROD_CMD_ID_MAC_UPDATE,
+				 PROTOCOLID_ISCSI, &init_data);
+	if (rc)
+		return rc;
+
+	p_ramrod = &p_ent->ramrod.iscsi_conn_mac_update;
+	p_ramrod->hdr.op_code = ISCSI_RAMROD_CMD_ID_MAC_UPDATE;
+	SET_FIELD(p_ramrod->hdr.flags,
+		  ISCSI_SLOW_PATH_HDR_LAYER_CODE, p_conn->layer_code);
+
+	p_ramrod->conn_id = cpu_to_le16(p_conn->conn_id);
+	p_ramrod->fw_cid = cpu_to_le32(p_conn->icid);
+	ucval = p_conn->remote_mac[1];
+	((u8 *)(&p_ramrod->remote_mac_addr_hi))[0] = ucval;
+	ucval = p_conn->remote_mac[0];
+	((u8 *)(&p_ramrod->remote_mac_addr_hi))[1] = ucval;
+	ucval = p_conn->remote_mac[3];
+	((u8 *)(&p_ramrod->remote_mac_addr_mid))[0] = ucval;
+	ucval = p_conn->remote_mac[2];
+	((u8 *)(&p_ramrod->remote_mac_addr_mid))[1] = ucval;
+	ucval = p_conn->remote_mac[5];
+	((u8 *)(&p_ramrod->remote_mac_addr_lo))[0] = ucval;
+	ucval = p_conn->remote_mac[4];
+	((u8 *)(&p_ramrod->remote_mac_addr_lo))[1] = ucval;
+
+	return qed_spq_post(p_hwfn, p_ent, NULL);
+}
+
 static int qed_sp_iscsi_conn_terminate(struct qed_hwfn *p_hwfn,
 				       struct qed_iscsi_conn *p_conn,
 				       enum spq_mode comp_mode,
@@ -583,7 +650,10 @@ static int qed_sp_iscsi_func_stop(struct qed_hwfn *p_hwfn,
 	p_ramrod = &p_ent->ramrod.iscsi_destroy;
 	p_ramrod->hdr.op_code = ISCSI_RAMROD_CMD_ID_DESTROY_FUNC;
 
-	return qed_spq_post(p_hwfn, p_ent, NULL);
+	rc = qed_spq_post(p_hwfn, p_ent, NULL);
+
+	qed_spq_unregister_async_cb(p_hwfn, PROTOCOLID_ISCSI);
+	return rc;
 }
 
 static void __iomem *qed_iscsi_get_db_addr(struct qed_hwfn *p_hwfn, u32 cid)
@@ -704,7 +774,7 @@ static int qed_iscsi_allocate_connection(struct qed_hwfn *p_hwfn,
 			     QED_CHAIN_USE_TO_CONSUME_PRODUCE,
 			     QED_CHAIN_MODE_PBL,
 			     QED_CHAIN_CNT_TYPE_U16,
-			     r2tq_num_elements, 0x80, &p_conn->r2tq);
+			     r2tq_num_elements, 0x80, &p_conn->r2tq, NULL);
 	if (rc)
 		goto nomem_r2tq;
 
@@ -715,7 +785,7 @@ static int qed_iscsi_allocate_connection(struct qed_hwfn *p_hwfn,
 			     QED_CHAIN_MODE_PBL,
 			     QED_CHAIN_CNT_TYPE_U16,
 			     uhq_num_elements,
-			     sizeof(struct iscsi_uhqe), &p_conn->uhq);
+			     sizeof(struct iscsi_uhqe), &p_conn->uhq, NULL);
 	if (rc)
 		goto nomem_uhq;
 
@@ -725,7 +795,7 @@ static int qed_iscsi_allocate_connection(struct qed_hwfn *p_hwfn,
 			     QED_CHAIN_MODE_PBL,
 			     QED_CHAIN_CNT_TYPE_U16,
 			     xhq_num_elements,
-			     sizeof(struct iscsi_xhqe), &p_conn->xhq);
+			     sizeof(struct iscsi_xhqe), &p_conn->xhq, NULL);
 	if (rc)
 		goto nomem;
 
@@ -1324,6 +1394,23 @@ static int qed_iscsi_stats(struct qed_dev *cdev, struct qed_iscsi_stats *stats)
 	return qed_iscsi_get_stats(QED_LEADING_HWFN(cdev), stats);
 }
 
+static int qed_iscsi_change_mac(struct qed_dev *cdev,
+				u32 handle, const u8 *mac)
+{
+	struct qed_hash_iscsi_con *hash_con;
+
+	hash_con = qed_iscsi_get_hash(cdev, handle);
+	if (!hash_con) {
+		DP_NOTICE(cdev, "Failed to find connection for handle %d\n",
+			  handle);
+		return -EINVAL;
+	}
+
+	return qed_sp_iscsi_mac_update(QED_LEADING_HWFN(cdev),
+				       hash_con->con,
+				       QED_SPQ_MODE_EBLOCK, NULL);
+}
+
 void qed_get_protocol_stats_iscsi(struct qed_dev *cdev,
 				  struct qed_mcp_iscsi_stats *stats)
 {
@@ -1358,6 +1445,7 @@ static const struct qed_iscsi_ops qed_iscsi_ops_pass = {
 	.destroy_conn = &qed_iscsi_destroy_conn,
 	.clear_sq = &qed_iscsi_clear_conn_sq,
 	.get_stats = &qed_iscsi_stats,
+	.change_mac = &qed_iscsi_change_mac,
 };
 
 const struct qed_iscsi_ops *qed_get_iscsi_ops(void)

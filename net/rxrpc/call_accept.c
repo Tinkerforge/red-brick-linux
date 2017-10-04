@@ -223,6 +223,7 @@ void rxrpc_discard_prealloc(struct rxrpc_sock *rx)
 	tail = b->call_backlog_tail;
 	while (CIRC_CNT(head, tail, size) > 0) {
 		struct rxrpc_call *call = b->call_backlog[tail];
+		call->socket = rx;
 		if (rx->discard_new_call) {
 			_debug("discard %lx", call->user_call_ID);
 			rx->discard_new_call(call, call->user_call_ID);
@@ -296,7 +297,7 @@ static struct rxrpc_call *rxrpc_alloc_incoming_call(struct rxrpc_sock *rx,
 		conn->params.local = local;
 		conn->params.peer = peer;
 		rxrpc_see_connection(conn);
-		rxrpc_new_incoming_connection(conn, skb);
+		rxrpc_new_incoming_connection(rx, conn, skb);
 	} else {
 		rxrpc_get_connection(conn);
 	}
@@ -310,6 +311,7 @@ static struct rxrpc_call *rxrpc_alloc_incoming_call(struct rxrpc_sock *rx,
 	rxrpc_see_call(call);
 	call->conn = conn;
 	call->peer = rxrpc_get_peer(conn->params.peer);
+	call->cong_cwnd = call->peer->cong_cwnd;
 	return call;
 }
 
@@ -341,7 +343,8 @@ struct rxrpc_call *rxrpc_new_incoming_call(struct rxrpc_local *local,
 
 	/* Get the socket providing the service */
 	rx = rcu_dereference(local->service);
-	if (rx && service_id == rx->srx.srx_service)
+	if (rx && (service_id == rx->srx.srx_service ||
+		   service_id == rx->second_service))
 		goto found_service;
 
 	trace_rxrpc_abort("INV", sp->hdr.cid, sp->hdr.callNumber, sp->hdr.seq,

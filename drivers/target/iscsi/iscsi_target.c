@@ -418,6 +418,7 @@ int iscsit_reset_np_thread(
 		return 0;
 	}
 	np->np_thread_state = ISCSI_NP_THREAD_RESET;
+	atomic_inc(&np->np_reset_count);
 
 	if (np->np_thread) {
 		spin_unlock_bh(&np->np_thread_lock);
@@ -488,15 +489,13 @@ EXPORT_SYMBOL(iscsit_queue_rsp);
 
 void iscsit_aborted_task(struct iscsi_conn *conn, struct iscsi_cmd *cmd)
 {
-	bool scsi_cmd = (cmd->iscsi_opcode == ISCSI_OP_SCSI_CMD);
-
 	spin_lock_bh(&conn->cmd_lock);
 	if (!list_empty(&cmd->i_conn_node) &&
 	    !(cmd->se_cmd.transport_state & CMD_T_FABRIC_STOP))
 		list_del_init(&cmd->i_conn_node);
 	spin_unlock_bh(&conn->cmd_lock);
 
-	__iscsit_free_cmd(cmd, scsi_cmd, true);
+	__iscsit_free_cmd(cmd, true);
 }
 EXPORT_SYMBOL(iscsit_aborted_task);
 
@@ -1251,12 +1250,8 @@ int iscsit_process_scsi_cmd(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	 * execution.  These exceptions are processed in CmdSN order using
 	 * iscsit_check_received_cmdsn() in iscsit_get_immediate_data() below.
 	 */
-	if (cmd->sense_reason) {
-		if (cmd->reject_reason)
-			return 0;
-
+	if (cmd->sense_reason)
 		return 1;
-	}
 	/*
 	 * Call directly into transport_generic_new_cmd() to perform
 	 * the backend memory allocation.
@@ -1279,6 +1274,18 @@ iscsit_get_immediate_data(struct iscsi_cmd *cmd, struct iscsi_scsi_req *hdr,
 	 */
 	if (dump_payload)
 		goto after_immediate_data;
+	/*
+	 * Check for underflow case where both EDTL and immediate data payload
+	 * exceeds what is presented by CDB's TRANSFER LENGTH, and what has
+	 * already been set in target_cmd_size_check() as se_cmd->data_length.
+	 *
+	 * For this special case, fail the command and dump the immediate data
+	 * payload.
+	 */
+	if (cmd->first_burst_len > cmd->se_cmd.data_length) {
+		cmd->sense_reason = TCM_INVALID_CDB_FIELD;
+		goto after_immediate_data;
+	}
 
 	immed_ret = iscsit_handle_immediate_data(cmd, hdr,
 					cmd->first_burst_len);
@@ -2161,6 +2168,7 @@ iscsit_setup_text_cmd(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	cmd->cmd_sn		= be32_to_cpu(hdr->cmdsn);
 	cmd->exp_stat_sn	= be32_to_cpu(hdr->exp_statsn);
 	cmd->data_direction	= DMA_NONE;
+	kfree(cmd->text_in_ptr);
 	cmd->text_in_ptr	= NULL;
 
 	return 0;
@@ -3481,9 +3489,9 @@ iscsit_build_text_rsp(struct iscsi_cmd *cmd, struct iscsi_conn *conn,
 		return text_length;
 
 	if (completed) {
-		hdr->flags |= ISCSI_FLAG_CMD_FINAL;
+		hdr->flags = ISCSI_FLAG_CMD_FINAL;
 	} else {
-		hdr->flags |= ISCSI_FLAG_TEXT_CONTINUE;
+		hdr->flags = ISCSI_FLAG_TEXT_CONTINUE;
 		cmd->read_data_done += text_length;
 		if (cmd->targ_xfer_tag == 0xFFFFFFFF)
 			cmd->targ_xfer_tag = session_get_next_ttt(conn->sess);
@@ -4423,8 +4431,11 @@ static void iscsit_logout_post_handler_closesession(
 	 * always sleep waiting for RX/TX thread shutdown to complete
 	 * within iscsit_close_connection().
 	 */
-	if (!conn->conn_transport->rdma_shutdown)
+	if (!conn->conn_transport->rdma_shutdown) {
 		sleep = cmpxchg(&conn->tx_thread_active, true, false);
+		if (!sleep)
+			return;
+	}
 
 	atomic_set(&conn->conn_logout_remove, 0);
 	complete(&conn->conn_logout_comp);
@@ -4440,8 +4451,11 @@ static void iscsit_logout_post_handler_samecid(
 {
 	int sleep = 1;
 
-	if (!conn->conn_transport->rdma_shutdown)
+	if (!conn->conn_transport->rdma_shutdown) {
 		sleep = cmpxchg(&conn->tx_thread_active, true, false);
+		if (!sleep)
+			return;
+	}
 
 	atomic_set(&conn->conn_logout_remove, 0);
 	complete(&conn->conn_logout_comp);

@@ -31,6 +31,7 @@
 
 #include "hyperv_net.h"
 
+static void rndis_set_multicast(struct work_struct *w);
 
 #define RNDIS_EXT_LEN PAGE_SIZE
 struct rndis_request {
@@ -76,6 +77,7 @@ static struct rndis_device *get_rndis_device(void)
 	spin_lock_init(&device->request_lock);
 
 	INIT_LIST_HEAD(&device->req_list);
+	INIT_WORK(&device->mcast_work, rndis_set_multicast);
 
 	device->state = RNDIS_DEV_UNINITIALIZED;
 
@@ -815,7 +817,8 @@ static int rndis_filter_query_link_speed(struct rndis_device *dev)
 	return ret;
 }
 
-int rndis_filter_set_packet_filter(struct rndis_device *dev, u32 new_filter)
+static int rndis_filter_set_packet_filter(struct rndis_device *dev,
+					  u32 new_filter)
 {
 	struct rndis_request *request;
 	struct rndis_set_request *set;
@@ -844,6 +847,28 @@ int rndis_filter_set_packet_filter(struct rndis_device *dev, u32 new_filter)
 	put_rndis_request(dev, request);
 
 	return ret;
+}
+
+static void rndis_set_multicast(struct work_struct *w)
+{
+	struct rndis_device *rdev
+		= container_of(w, struct rndis_device, mcast_work);
+
+	if (rdev->ndev->flags & IFF_PROMISC)
+		rndis_filter_set_packet_filter(rdev,
+					       NDIS_PACKET_TYPE_PROMISCUOUS);
+	else
+		rndis_filter_set_packet_filter(rdev,
+					       NDIS_PACKET_TYPE_BROADCAST |
+					       NDIS_PACKET_TYPE_ALL_MULTICAST |
+					       NDIS_PACKET_TYPE_DIRECTED);
+}
+
+void rndis_filter_update(struct netvsc_device *nvdev)
+{
+	struct rndis_device *rdev = nvdev->extension;
+
+	schedule_work(&rdev->mcast_work);
 }
 
 static int rndis_filter_init_device(struct rndis_device *dev)
@@ -973,6 +998,9 @@ static int rndis_filter_close_device(struct rndis_device *dev)
 	if (dev->state != RNDIS_DEV_DATAINITIALIZED)
 		return 0;
 
+	/* Make sure rndis_set_multicast doesn't re-enable filter! */
+	cancel_work_sync(&dev->mcast_work);
+
 	ret = rndis_filter_set_packet_filter(dev, 0);
 	if (ret == -ENODEV)
 		ret = 0;
@@ -1020,8 +1048,8 @@ static void netvsc_sc_open(struct vmbus_channel *new_sc)
 	else
 		netif_napi_del(&nvchan->napi);
 
-	if (refcount_dec_and_test(&nvscdev->sc_offered))
-		complete(&nvscdev->channel_init_wait);
+	atomic_inc(&nvscdev->open_chn);
+	wake_up(&nvscdev->subchan_open);
 }
 
 int rndis_filter_device_add(struct hv_device *dev,
@@ -1061,8 +1089,6 @@ int rndis_filter_device_add(struct hv_device *dev,
 	net_device = net_device_ctx->nvdev;
 	net_device->max_chn = 1;
 	net_device->num_chn = 1;
-
-	refcount_set(&net_device->sc_offered, 0);
 
 	net_device->extension = rndis_device;
 	rndis_device->ndev = net;
@@ -1157,11 +1183,9 @@ int rndis_filter_device_add(struct hv_device *dev,
 
 	rndis_filter_query_device_link_status(rndis_device);
 
-	device_info->link_state = rndis_device->link_state;
-
 	netdev_dbg(net, "Device MAC %pM link state %s\n",
 		   rndis_device->hw_mac_adr,
-		   device_info->link_state ? "down" : "up");
+		   rndis_device->link_state ? "down" : "up");
 
 	if (net_device->nvsp_version < NVSP_PROTOCOL_VERSION_5)
 		return 0;
@@ -1195,11 +1219,11 @@ int rndis_filter_device_add(struct hv_device *dev,
 		rndis_device->ind_table[i] = ethtool_rxfh_indir_default(i,
 							net_device->num_chn);
 
+	atomic_set(&net_device->open_chn, 1);
 	num_rss_qs = net_device->num_chn - 1;
 	if (num_rss_qs == 0)
 		return 0;
 
-	refcount_set(&net_device->sc_offered, num_rss_qs);
 	vmbus_set_sc_create_callback(dev->channel, netvsc_sc_open);
 
 	init_packet = &net_device->channel_init_pkt;
@@ -1216,14 +1240,18 @@ int rndis_filter_device_add(struct hv_device *dev,
 	if (ret)
 		goto out;
 
+	wait_for_completion(&net_device->channel_init_wait);
 	if (init_packet->msg.v5_msg.subchn_comp.status != NVSP_STAT_SUCCESS) {
 		ret = -ENODEV;
 		goto out;
 	}
-	wait_for_completion(&net_device->channel_init_wait);
 
 	net_device->num_chn = 1 +
 		init_packet->msg.v5_msg.subchn_comp.num_subchannels;
+
+	/* wait for all sub channels to open */
+	wait_event(net_device->subchan_open,
+		   atomic_read(&net_device->open_chn) == net_device->num_chn);
 
 	/* ignore failues from setting rss parameters, still have channels */
 	rndis_filter_set_rss_param(rndis_device, netvsc_hash_key,

@@ -184,7 +184,7 @@ static struct ccu_mux cpu_clk = {
 		.hw.init	= CLK_HW_INIT_PARENTS("cpu",
 						      cpu_parents,
 						      &ccu_mux_ops,
-						      CLK_IS_CRITICAL),
+						      CLK_SET_RATE_PARENT | CLK_IS_CRITICAL),
 	}
 };
 
@@ -243,7 +243,7 @@ static SUNXI_CCU_GATE(ahb_ss_clk,	"ahb-ss",	"ahb",
 static SUNXI_CCU_GATE(ahb_dma_clk,	"ahb-dma",	"ahb",
 		      0x060, BIT(6), 0);
 static SUNXI_CCU_GATE(ahb_bist_clk,	"ahb-bist",	"ahb",
-		      0x060, BIT(6), 0);
+		      0x060, BIT(7), 0);
 static SUNXI_CCU_GATE(ahb_mmc0_clk,	"ahb-mmc0",	"ahb",
 		      0x060, BIT(8), 0);
 static SUNXI_CCU_GATE(ahb_mmc1_clk,	"ahb-mmc1",	"ahb",
