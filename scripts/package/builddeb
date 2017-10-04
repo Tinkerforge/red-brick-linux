@@ -223,10 +223,7 @@ done
 
 set -e
 
-if [ -f /boot/vmlinuz ]; then
-	rm /boot/vmlinuz
-fi
-
+rm -f /boot/vmlinuz &> /dev/null
 ln -s /$installed_image_path /boot/vmlinuz
 
 exit 0
