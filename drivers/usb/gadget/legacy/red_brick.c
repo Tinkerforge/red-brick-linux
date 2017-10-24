@@ -339,6 +339,8 @@ static int red_brick_bind(struct usb_composite_dev *cdev) {
 		goto fail;
 	}
 
+	cdev->use_os_string = true;
+
 	return 0;
 
 fail:
