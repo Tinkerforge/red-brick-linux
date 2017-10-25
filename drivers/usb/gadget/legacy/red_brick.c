@@ -219,7 +219,7 @@ static struct usb_configuration red_brick_config = {
 	.label               = "RED Brick",
 	.bConfigurationValue = 1,
 	.bmAttributes        = USB_CONFIG_ATT_ONE,
-	.MaxPower            = 250, // 250 mA.
+	.MaxPower            = 500, // 500 mA.
 	.setup               = red_brick_config_setup,
 };
 
@@ -338,8 +338,6 @@ static int red_brick_bind(struct usb_composite_dev *cdev) {
 	if (ret < 0) {
 		goto fail;
 	}
-
-	cdev->use_os_string = true;
 
 	return 0;
 

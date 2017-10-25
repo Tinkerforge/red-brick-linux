@@ -1635,8 +1635,15 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 				value = min(w_length, (u16) value);
 			break;
 		case USB_DT_STRING:
-			value = get_string(cdev, req->buf,
-					w_index, w_value & 0xff);
+			#ifdef CONFIG_RED_BRICK
+				if ((w_value & 0xff) == 0xee) // Force language to 0x0409 for "Microsoft OS String Descriptor"
+					value = get_string(cdev, req->buf, 0x0409, w_value & 0xff);
+				else
+					value = get_string(cdev, req->buf, w_index, w_value & 0xff);
+			#else
+				value = get_string(cdev, req->buf, w_index, w_value & 0xff);
+			#endif
+
 			if (value >= 0)
 				value = min(w_length, (u16) value);
 			break;
@@ -2085,6 +2092,12 @@ static void update_unchanged_dev_desc(struct usb_device_descriptor *new,
 		new->bcdDevice = bcdDevice;
 	else
 		new->bcdDevice = cpu_to_le16(get_default_bcdDevice());
+
+		#ifdef CONFIG_RED_BRICK
+			if (old->bcdDevice)
+				new->bcdDevice = old->bcdDevice;
+		#endif
+
 	if (iSerialNumber)
 		new->iSerialNumber = iSerialNumber;
 	if (iManufacturer)
