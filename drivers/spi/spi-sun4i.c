@@ -23,7 +23,10 @@
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/spi/spi.h>
-#include <linux/workqueue.h>
+
+#ifdef CONFIG_RED_BRICK
+	#include <linux/workqueue.h>
+#endif
 
 #define SUN4I_FIFO_DEPTH 64
 #define SUN4I_RXDATA_REG 0x00
