@@ -79,31 +79,30 @@
 struct sun4i_spi {
 	int len;
 	u8 *rx_buf;
-
-	/*
-	 * OK = 0, FAILED = -1.
-	 *
-	 * The value of "result" is updated from the IRQ handler to indicate
-	 * outcome of the SPI transfer to the work queue function.
-	 */
-	int result;
-
-	spinlock_t lock;
 	struct clk *hclk;
 	struct clk *mclk;
 	const u8 *tx_buf;
 	struct completion done;
-
-	/*
-	 * Queue for SPI messages which are handled serially in the
-	 * workqueue function.
-	 */
-	struct list_head queue;
-
 	void __iomem *base_addr;
-	struct work_struct work;
 	struct spi_master *master;
-	struct workqueue_struct *workqueue;
+
+	#ifdef CONFIG_RED_BRICK
+		/*
+		 * OK = 0, FAILED = -1.
+		 *
+		 * The value of "result" is updated from the IRQ handler to indicate
+		 * outcome of the SPI transfer to the work queue function.
+		 */
+		int result;
+		spinlock_t lock;
+		/*
+		* Queue for SPI messages which are handled serially in the
+		* workqueue function.
+		*/
+		struct list_head queue;
+		struct work_struct work;
+		struct workqueue_struct *workqueue;
+	#endif
 };
 
 static inline u32 sun4i_spi_read(struct sun4i_spi *sspi, u32 reg)
@@ -220,261 +219,408 @@ static size_t sun4i_spi_max_transfer_size(struct spi_device *spi)
 	return SUN4I_FIFO_DEPTH - 1;
 }
 
-static int sun4i_spi_transfer_one(struct spi_master *master,
-				  struct spi_device *spi,
-				  struct spi_transfer *tfr)
-{
-	u32 reg;
-	unsigned int tx_len = 0;
-	unsigned int mclk_rate, div;
-	struct sun4i_spi *sspi = spi_master_get_devdata(master);
+#ifdef CONFIG_RED_BRICK
+	static int sun4i_spi_transfer_do(struct spi_master *master,
+					  struct spi_device *spi,
+					  struct spi_transfer *tfr)
+	{
+		u32 reg;
+		unsigned int tx_len = 0;
+		unsigned int mclk_rate, div;
+		struct sun4i_spi *sspi = spi_master_get_devdata(master);
 
-	// We don't support transfer larger than the FIFO.
-	if (tfr->len > SUN4I_MAX_XFER_SIZE)
-		return -EMSGSIZE;
+		// We don't support transfer larger than the FIFO.
+		if (tfr->len > SUN4I_MAX_XFER_SIZE)
+			return -EMSGSIZE;
 
-	if (tfr->tx_buf && tfr->len >= SUN4I_MAX_XFER_SIZE)
-		return -EMSGSIZE;
+		if (tfr->tx_buf && tfr->len >= SUN4I_MAX_XFER_SIZE)
+			return -EMSGSIZE;
 
-	reinit_completion(&sspi->done);
+		reinit_completion(&sspi->done);
 
-	sspi->tx_buf = tfr->tx_buf;
-	sspi->rx_buf = tfr->rx_buf;
-	sspi->len = tfr->len;
+		sspi->tx_buf = tfr->tx_buf;
+		sspi->rx_buf = tfr->rx_buf;
+		sspi->len = tfr->len;
 
-	// Clear pending interrupts.
-	sun4i_spi_write(sspi, SUN4I_INT_STA_REG, ~0);
+		// Clear pending interrupts.
+		sun4i_spi_write(sspi, SUN4I_INT_STA_REG, ~0);
 
-	// Reset FIFOs.
-	reg = sun4i_spi_read(sspi, SUN4I_CTL_REG);
+		// Reset FIFOs.
+		reg = sun4i_spi_read(sspi, SUN4I_CTL_REG);
 
-	sun4i_spi_write(sspi,
-	                SUN4I_CTL_REG,
-	                reg | SUN4I_CTL_RF_RST | SUN4I_CTL_TF_RST);
+		sun4i_spi_write(sspi,
+		                SUN4I_CTL_REG,
+		                reg | SUN4I_CTL_RF_RST | SUN4I_CTL_TF_RST);
 
-	/*
-	 * Setup the transfer control register:
-	 *
-	 * Chip Select, polarities, etc.
-	 */
-	reg = sun4i_spi_read(sspi, SUN4I_CTL_REG);
+		/*
+		 * Setup the transfer control register:
+		 *
+		 * Chip Select, polarities, etc.
+		 */
+		reg = sun4i_spi_read(sspi, SUN4I_CTL_REG);
 
-	if (spi->mode & SPI_CPOL)
-		reg |= SUN4I_CTL_CPOL;
-	else
-		reg &= ~SUN4I_CTL_CPOL;
+		if (spi->mode & SPI_CPOL)
+			reg |= SUN4I_CTL_CPOL;
+		else
+			reg &= ~SUN4I_CTL_CPOL;
 
-	if (spi->mode & SPI_CPHA)
-		reg |= SUN4I_CTL_CPHA;
-	else
-		reg &= ~SUN4I_CTL_CPHA;
+		if (spi->mode & SPI_CPHA)
+			reg |= SUN4I_CTL_CPHA;
+		else
+			reg &= ~SUN4I_CTL_CPHA;
 
-	if (spi->mode & SPI_LSB_FIRST)
-		reg |= SUN4I_CTL_LMTF;
-	else
-		reg &= ~SUN4I_CTL_LMTF;
+		if (spi->mode & SPI_LSB_FIRST)
+			reg |= SUN4I_CTL_LMTF;
+		else
+			reg &= ~SUN4I_CTL_LMTF;
 
-	/*
-	 * If it's a TX only transfer, we don't want to fill the RX
-	 * FIFO with bogus data.
-	 */
-	if (sspi->rx_buf)
-		reg &= ~SUN4I_CTL_DHB;
-	else
-		reg |= SUN4I_CTL_DHB;
+		/*
+		 * If it's a TX only transfer, we don't want to fill the RX
+		 * FIFO with bogus data.
+		 */
+		if (sspi->rx_buf)
+			reg &= ~SUN4I_CTL_DHB;
+		else
+			reg |= SUN4I_CTL_DHB;
 
-	sun4i_spi_write(sspi, SUN4I_CTL_REG, reg);
+		sun4i_spi_write(sspi, SUN4I_CTL_REG, reg);
 
-	/* Ensure that we have a parent clock fast enough */
-	mclk_rate = clk_get_rate(sspi->mclk);
-
-	if (mclk_rate < (2 * tfr->speed_hz)) {
-		clk_set_rate(sspi->mclk, 2 * tfr->speed_hz);
-
+		// Ensure that we have a parent clock fast enough.
 		mclk_rate = clk_get_rate(sspi->mclk);
-	}
 
-	/*
-	 * Setup clock divider.
-	 *
-	 * We have two choices there. Either we can use the clock
-	 * divide rate 1, which is calculated thanks to this formula:
-	 * SPI_CLK = MOD_CLK / (2 ^ (cdr + 1))
-	 * Or we can use CDR2, which is calculated with the formula:
-	 * SPI_CLK = MOD_CLK / (2 * (cdr + 1))
-	 * Wether we use the former or the latter is set through the
-	 * DRS bit.
-	 *
-	 * First try CDR2, and if we can't reach the expected
-	 * frequency, fall back to CDR1.
-	 */
-	reg = sun4i_spi_read(sspi, SUN4I_CTL_REG);
+		if (mclk_rate < (2 * tfr->speed_hz)) {
+			clk_set_rate(sspi->mclk, 2 * tfr->speed_hz);
 
-	div = mclk_rate / (2 * tfr->speed_hz);
-
-	if (div <= (SUN4I_CLK_CTL_CDR2_MASK + 1)) {
-		if (div > 0)
-			div--;
-
-		reg = SUN4I_CLK_CTL_CDR2(div) | SUN4I_CLK_CTL_DRS;
-	} else {
-		div = ilog2(mclk_rate) - ilog2(tfr->speed_hz);
-		reg = SUN4I_CLK_CTL_CDR1(div);
-	}
-
-	sun4i_spi_write(sspi, SUN4I_CLK_CTL_REG, reg);
-
-	// Setup the transfer.
-	if (sspi->tx_buf)
-		tx_len = tfr->len;
-
-	// Setup the counters.
-	sun4i_spi_write(sspi, SUN4I_BURST_CNT_REG, SUN4I_BURST_CNT(tfr->len));
-	sun4i_spi_write(sspi, SUN4I_XMIT_CNT_REG, SUN4I_XMIT_CNT(tx_len));
-
-	/*
-	 * Fill the TX FIFO
-	 * Filling the FIFO fully causes timeout for some reason
-	 * at least on spi2 on A10s
-	 */
-	sun4i_spi_fill_fifo(sspi, SUN4I_FIFO_DEPTH - 1);
-
-	// Enable the interrupts.
-	sun4i_spi_enable_interrupt(sspi, SUN4I_INT_CTL_TC | SUN4I_INT_CTL_RF_F34);
-
-	// Only enable Tx FIFO interrupt if we really need it.
-	if (tx_len > SUN4I_FIFO_DEPTH)
-		sun4i_spi_enable_interrupt(sspi, SUN4I_INT_CTL_TF_E34);
-
-	// Start the transfer.
-	reg = sun4i_spi_read(sspi, SUN4I_CTL_REG);
-
-	sun4i_spi_write(sspi, SUN4I_CTL_REG, reg | SUN4I_CTL_XCH);
-
-	/*
-	 * The transfer complete will be set from the IRQ handler when SPI hardware
-	 * signals transfer complete with interrupt.
-	 */
-	wait_for_completion_interruptible(&sspi->done);
-
-	// Get return code which is updated in the interrupt handler.
-	if(sspi->result != 0)
-		dev_warn(&sspi->master->dev, "SPI transfer failed\n");
-
-	return sspi->result;
-}
-
-static void sun4i_spi_work(struct work_struct *work)
-{
-	int status;
-	struct spi_message *msg = NULL;
-	struct spi_device  *spi = NULL;
-	struct spi_transfer *t  = NULL;
-	struct sun4i_spi *sspi = container_of(work, struct sun4i_spi, work);
-
-	spin_lock_irq(&sspi->lock);
-
-	while (!list_empty(&sspi->queue)) {
-		// Get message from message queue.
-		msg = container_of(sspi->queue.next, struct spi_message, queue);
-
-		// Remove the message from the queue.
-		list_del_init(&msg->queue);
-		spin_unlock_irq(&sspi->lock);
-
-		spi = msg->spi;
-		status = -1;
-
-		// Search for the SPI transfer in this message and deal with it.
-		list_for_each_entry(t, &msg->transfers, transfer_list) {
-			// Power-up the subsystem.
-			pm_runtime_get_sync(sspi->master->dev.parent);
-
-			//Do the transfer.
-			mutex_lock(&sspi->master->io_mutex);
-			status = sun4i_spi_transfer_one(sspi->master, spi, t);
-			mutex_unlock(&sspi->master->io_mutex);
-
-			// Power-down the subsystem.
-			pm_runtime_put_sync(sspi->master->dev.parent);
-
-			if (status != 0)
-				break; // Failed.
-
-			// Accmulate the value in the message.
-			msg->actual_length += t->len;
+			mclk_rate = clk_get_rate(sspi->mclk);
 		}
 
-		msg->status = status;
+		/*
+		 * Setup clock divider.
+		 *
+		 * We have two choices there. Either we can use the clock
+		 * divide rate 1, which is calculated thanks to this formula:
+		 * SPI_CLK = MOD_CLK / (2 ^ (cdr + 1))
+		 * Or we can use CDR2, which is calculated with the formula:
+		 * SPI_CLK = MOD_CLK / (2 * (cdr + 1))
+		 * Wether we use the former or the latter is set through the
+		 * DRS bit.
+		 *
+		 * First try CDR2, and if we can't reach the expected
+		 * frequency, fall back to CDR1.
+		 */
+		reg = sun4i_spi_read(sspi, SUN4I_CTL_REG);
 
-		if (status != 0)
-			break;
+		div = mclk_rate / (2 * tfr->speed_hz);
+
+		if (div <= (SUN4I_CLK_CTL_CDR2_MASK + 1)) {
+			if (div > 0)
+				div--;
+
+			reg = SUN4I_CLK_CTL_CDR2(div) | SUN4I_CLK_CTL_DRS;
+		} else {
+			div = ilog2(mclk_rate) - ilog2(tfr->speed_hz);
+			reg = SUN4I_CLK_CTL_CDR1(div);
+		}
+
+		sun4i_spi_write(sspi, SUN4I_CLK_CTL_REG, reg);
+
+		// Setup the transfer.
+		if (sspi->tx_buf)
+			tx_len = tfr->len;
+
+		// Setup the counters.
+		sun4i_spi_write(sspi, SUN4I_BURST_CNT_REG, SUN4I_BURST_CNT(tfr->len));
+		sun4i_spi_write(sspi, SUN4I_XMIT_CNT_REG, SUN4I_XMIT_CNT(tx_len));
+
+		/*
+		 * Fill the TX FIFO
+		 * Filling the FIFO fully causes timeout for some reason
+		 * at least on spi2 on A10s
+		 */
+		sun4i_spi_fill_fifo(sspi, SUN4I_FIFO_DEPTH - 1);
+
+		// Enable the interrupts.
+		sun4i_spi_enable_interrupt(sspi, SUN4I_INT_CTL_TC | SUN4I_INT_CTL_RF_F34);
+
+		// Only enable Tx FIFO interrupt if we really need it.
+		if (tx_len > SUN4I_FIFO_DEPTH)
+			sun4i_spi_enable_interrupt(sspi, SUN4I_INT_CTL_TF_E34);
+
+		// Start the transfer.
+		reg = sun4i_spi_read(sspi, SUN4I_CTL_REG);
+
+		sun4i_spi_write(sspi, SUN4I_CTL_REG, reg | SUN4I_CTL_XCH);
+
+		/*
+		 * The transfer complete will be set from the IRQ handler when SPI hardware
+		 * signals transfer complete with interrupt.
+		 */
+		wait_for_completion_interruptible(&sspi->done);
+
+		// Get return code which is updated in the interrupt handler.
+		if(sspi->result != 0)
+			dev_warn(&sspi->master->dev, "SPI transfer failed\n");
+
+		return sspi->result;
 	}
 
-	// Wake up the caller.
-	msg->complete(msg->context);
-}
+	static void sun4i_spi_work(struct work_struct *work)
+	{
+		int status;
+		struct spi_message *msg = NULL;
+		struct spi_device  *spi = NULL;
+		struct spi_transfer *t  = NULL;
+		struct sun4i_spi *sspi = container_of(work, struct sun4i_spi, work);
 
-static int sun4i_spi_transfer(struct spi_device *spi, struct spi_message *msg)
+		while (!list_empty(&sspi->queue)) {
+			spin_lock_irq(&sspi->lock);
+
+			// Get message from message queue.
+			msg = container_of(sspi->queue.next, struct spi_message, queue);
+			// Remove the message from the queue.
+			list_del_init(&msg->queue);
+
+			spin_unlock_irq(&sspi->lock);
+
+			status = -1;
+			spi = msg->spi;
+
+			// Search for the SPI transfer in this message and deal with it.
+			list_for_each_entry(t, &msg->transfers, transfer_list) {
+				// Power-up the subsystem.
+				pm_runtime_get_sync(sspi->master->dev.parent);
+
+				// Do the transfer.
+				mutex_lock(&sspi->master->io_mutex);
+				status = sun4i_spi_transfer_do(sspi->master, spi, t);
+				mutex_unlock(&sspi->master->io_mutex);
+
+				// Power-down the subsystem.
+				pm_runtime_put_sync(sspi->master->dev.parent);
+
+				if (status != 0)
+					break; // Failed.
+
+				// Accmulate the value in the message.
+				msg->actual_length += t->len;
+			}
+
+			msg->status = status;
+
+			if (status != 0)
+				break;
+		}
+
+		// Wake up the caller.
+		msg->complete(msg->context);
+	}
+
+	static int sun4i_spi_transfer(struct spi_device *spi, struct spi_message *msg)
+	{
+		unsigned long flags = 0;
+		struct sun4i_spi *sspi = spi_master_get_devdata(spi->master);
+		msg->actual_length = 0;
+		msg->status = -EINPROGRESS;
+		sspi = spi_master_get_devdata(spi->master);
+
+		spin_lock_irqsave(&sspi->lock, flags);
+
+		// Enqueue SPI message.
+		list_add_tail(&msg->queue, &sspi->queue);
+		// Add work to the work queue.
+		queue_work(sspi->workqueue, &sspi->work);
+
+		spin_unlock_irqrestore(&sspi->lock, flags);
+
+		return 0;
+	}
+#else
+	static int sun4i_spi_transfer_one(struct spi_master *master,
+					  struct spi_device *spi,
+					  struct spi_transfer *tfr)
+	{
+		struct sun4i_spi *sspi = spi_master_get_devdata(master);
+		unsigned int mclk_rate, div, timeout;
+		unsigned int start, end, tx_time;
+		unsigned int tx_len = 0;
+		int ret = 0;
+		u32 reg;
+
+		/* We don't support transfer larger than the FIFO */
+		if (tfr->len > SUN4I_MAX_XFER_SIZE)
+			return -EMSGSIZE;
+
+		if (tfr->tx_buf && tfr->len >= SUN4I_MAX_XFER_SIZE)
+			return -EMSGSIZE;
+
+		reinit_completion(&sspi->done);
+		sspi->tx_buf = tfr->tx_buf;
+		sspi->rx_buf = tfr->rx_buf;
+		sspi->len = tfr->len;
+
+		/* Clear pending interrupts */
+		sun4i_spi_write(sspi, SUN4I_INT_STA_REG, ~0);
+
+
+		reg = sun4i_spi_read(sspi, SUN4I_CTL_REG);
+
+		/* Reset FIFOs */
+		sun4i_spi_write(sspi, SUN4I_CTL_REG,
+				reg | SUN4I_CTL_RF_RST | SUN4I_CTL_TF_RST);
+
+		/*
+		 * Setup the transfer control register: Chip Select,
+		 * polarities, etc.
+		 */
+		if (spi->mode & SPI_CPOL)
+			reg |= SUN4I_CTL_CPOL;
+		else
+			reg &= ~SUN4I_CTL_CPOL;
+
+		if (spi->mode & SPI_CPHA)
+			reg |= SUN4I_CTL_CPHA;
+		else
+			reg &= ~SUN4I_CTL_CPHA;
+
+		if (spi->mode & SPI_LSB_FIRST)
+			reg |= SUN4I_CTL_LMTF;
+		else
+			reg &= ~SUN4I_CTL_LMTF;
+
+
+		/*
+		 * If it's a TX only transfer, we don't want to fill the RX
+		 * FIFO with bogus data
+		 */
+		if (sspi->rx_buf)
+			reg &= ~SUN4I_CTL_DHB;
+		else
+			reg |= SUN4I_CTL_DHB;
+
+		sun4i_spi_write(sspi, SUN4I_CTL_REG, reg);
+
+		/* Ensure that we have a parent clock fast enough */
+		mclk_rate = clk_get_rate(sspi->mclk);
+		if (mclk_rate < (2 * tfr->speed_hz)) {
+			clk_set_rate(sspi->mclk, 2 * tfr->speed_hz);
+			mclk_rate = clk_get_rate(sspi->mclk);
+		}
+
+		/*
+		 * Setup clock divider.
+		 *
+		 * We have two choices there. Either we can use the clock
+		 * divide rate 1, which is calculated thanks to this formula:
+		 * SPI_CLK = MOD_CLK / (2 ^ (cdr + 1))
+		 * Or we can use CDR2, which is calculated with the formula:
+		 * SPI_CLK = MOD_CLK / (2 * (cdr + 1))
+		 * Wether we use the former or the latter is set through the
+		 * DRS bit.
+		 *
+		 * First try CDR2, and if we can't reach the expected
+		 * frequency, fall back to CDR1.
+		 */
+		div = mclk_rate / (2 * tfr->speed_hz);
+		if (div <= (SUN4I_CLK_CTL_CDR2_MASK + 1)) {
+			if (div > 0)
+				div--;
+
+			reg = SUN4I_CLK_CTL_CDR2(div) | SUN4I_CLK_CTL_DRS;
+		} else {
+			div = ilog2(mclk_rate) - ilog2(tfr->speed_hz);
+			reg = SUN4I_CLK_CTL_CDR1(div);
+		}
+
+		sun4i_spi_write(sspi, SUN4I_CLK_CTL_REG, reg);
+
+		/* Setup the transfer now... */
+		if (sspi->tx_buf)
+			tx_len = tfr->len;
+
+		/* Setup the counters */
+		sun4i_spi_write(sspi, SUN4I_BURST_CNT_REG, SUN4I_BURST_CNT(tfr->len));
+		sun4i_spi_write(sspi, SUN4I_XMIT_CNT_REG, SUN4I_XMIT_CNT(tx_len));
+
+		/*
+		 * Fill the TX FIFO
+		 * Filling the FIFO fully causes timeout for some reason
+		 * at least on spi2 on A10s
+		 */
+		sun4i_spi_fill_fifo(sspi, SUN4I_FIFO_DEPTH - 1);
+
+		/* Enable the interrupts */
+		sun4i_spi_enable_interrupt(sspi, SUN4I_INT_CTL_TC |
+						 SUN4I_INT_CTL_RF_F34);
+		/* Only enable Tx FIFO interrupt if we really need it */
+		if (tx_len > SUN4I_FIFO_DEPTH)
+			sun4i_spi_enable_interrupt(sspi, SUN4I_INT_CTL_TF_E34);
+
+		/* Start the transfer */
+		reg = sun4i_spi_read(sspi, SUN4I_CTL_REG);
+		sun4i_spi_write(sspi, SUN4I_CTL_REG, reg | SUN4I_CTL_XCH);
+
+		tx_time = max(tfr->len * 8 * 2 / (tfr->speed_hz / 1000), 100U);
+		start = jiffies;
+		timeout = wait_for_completion_timeout(&sspi->done,
+						      msecs_to_jiffies(tx_time));
+		end = jiffies;
+		if (!timeout) {
+			dev_warn(&master->dev,
+				 "%s: timeout transferring %u bytes@%iHz for %i(%i)ms",
+				 dev_name(&spi->dev), tfr->len, tfr->speed_hz,
+				 jiffies_to_msecs(end - start), tx_time);
+			ret = -ETIMEDOUT;
+			goto out;
+		}
+
+
+	out:
+		sun4i_spi_write(sspi, SUN4I_INT_CTL_REG, 0);
+
+		return ret;
+	}
+#endif
+
+static irqreturn_t sun4i_spi_handler(int irq, void *dev_id)
 {
-	unsigned long flags = 0;
-	struct sun4i_spi *sspi = NULL;spi_master_get_devdata(spi->master);
-
-	msg->actual_length = 0;
-	msg->status = -EINPROGRESS;
-	sspi = spi_master_get_devdata(spi->master);
-
-	spin_lock_irqsave(&sspi->lock, flags);
-
-	// Enqueue SPI message.
-	list_add_tail(&msg->queue, &sspi->queue);
-
-	// Add work to the work queue.
-	queue_work(sspi->workqueue, &sspi->work);
-
-	spin_unlock_irqrestore(&sspi->lock, flags);
-
-	return 0;
-}
-
-static irqreturn_t sun4i_spi_isr(int irq, void *dev_id)
-{
-	struct sun4i_spi *sspi = (struct sun4i_spi *)dev_id;
+	struct sun4i_spi *sspi = dev_id;
 	u32 status = sun4i_spi_read(sspi, SUN4I_INT_STA_REG);
 
-	sspi->result = -1;
+	#ifdef CONFIG_RED_BRICK
+		sspi->result = -1;
+	#endif
 
-	// Transfer complete.
+	/* Transfer complete */
 	if (status & SUN4I_INT_CTL_TC) {
 		sun4i_spi_write(sspi, SUN4I_INT_STA_REG, SUN4I_INT_CTL_TC);
 		sun4i_spi_drain_fifo(sspi, SUN4I_FIFO_DEPTH);
 
-		sspi->result = 0;
+		#ifdef CONFIG_RED_BRICK
+			sspi->result = 0;
+		#endif
 
 		complete(&sspi->done);
 
 		return IRQ_HANDLED;
 	}
 
-	// Receive FIFO 3/4 full.
+	/* Receive FIFO 3/4 full */
 	if (status & SUN4I_INT_CTL_RF_F34) {
 		sun4i_spi_drain_fifo(sspi, SUN4I_FIFO_DEPTH);
-
-		// Only clear the interrupt _after_ draining the FIFO.
+		/* Only clear the interrupt _after_ draining the FIFO */
 		sun4i_spi_write(sspi, SUN4I_INT_STA_REG, SUN4I_INT_CTL_RF_F34);
-
 		return IRQ_HANDLED;
 	}
 
-	// Transmit FIFO 3/4 empty.
+	/* Transmit FIFO 3/4 empty */
 	if (status & SUN4I_INT_CTL_TF_E34) {
 		sun4i_spi_fill_fifo(sspi, SUN4I_FIFO_DEPTH);
 
 		if (!sspi->len)
-			// Nothing left to transmit.
+			/* nothing left to transmit */
 			sun4i_spi_disable_interrupt(sspi, SUN4I_INT_CTL_TF_E34);
 
-		// Only clear the interrupt _after_ re-seeding the FIFO.
+		/* Only clear the interrupt _after_ re-seeding the FIFO */
 		sun4i_spi_write(sspi, SUN4I_INT_STA_REG, SUN4I_INT_CTL_TF_E34);
 
 		return IRQ_HANDLED;
@@ -554,7 +700,7 @@ static int sun4i_spi_probe(struct platform_device *pdev)
 		goto err_free_master;
 	}
 
-	ret = devm_request_irq(&pdev->dev, irq, sun4i_spi_isr, 0, "sun4i-spi", sspi);
+	ret = devm_request_irq(&pdev->dev, irq, sun4i_spi_handler, 0, "sun4i-spi", sspi);
 	if (ret) {
 		dev_err(&pdev->dev, "Cannot request IRQ\n");
 		goto err_free_master;
@@ -564,7 +710,13 @@ static int sun4i_spi_probe(struct platform_device *pdev)
 	master->max_speed_hz = 100 * 1000 * 1000;
 	master->min_speed_hz = 3 * 1000;
 	master->set_cs = sun4i_spi_set_cs;
-	master->transfer = sun4i_spi_transfer;
+
+	#ifdef CONFIG_RED_BRICK
+		master->transfer = sun4i_spi_transfer;
+	#else
+		master->transfer_one = sun4i_spi_transfer_one;
+	#endif
+
 	master->num_chipselect = 4;
 	master->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH | SPI_LSB_FIRST;
 	master->bits_per_word_mask = SPI_BPW_MASK(8);
@@ -602,16 +754,18 @@ static int sun4i_spi_probe(struct platform_device *pdev)
 	pm_runtime_enable(&pdev->dev);
 	pm_runtime_idle(&pdev->dev);
 
-	sspi->workqueue = create_singlethread_workqueue(dev_name(master->dev.parent));
-	if (sspi->workqueue == NULL) {
-		dev_err(&pdev->dev, "Unable to create work queue\n");
-		ret = -ENOMEM;
-		goto err_pm_disable;
-	}
+	#ifdef CONFIG_RED_BRICK
+		sspi->workqueue = create_singlethread_workqueue(dev_name(master->dev.parent));
+		if (sspi->workqueue == NULL) {
+			dev_err(&pdev->dev, "Unable to create work queue\n");
+			ret = -ENOMEM;
+			goto err_pm_disable;
+		}
 
-	spin_lock_init(&sspi->lock);
-	INIT_WORK(&sspi->work, sun4i_spi_work);
-	INIT_LIST_HEAD(&sspi->queue);
+		spin_lock_init(&sspi->lock);
+		INIT_WORK(&sspi->work, sun4i_spi_work);
+		INIT_LIST_HEAD(&sspi->queue);
+	#endif
 
 	ret = devm_spi_register_master(&pdev->dev, master);
 	if (ret) {
