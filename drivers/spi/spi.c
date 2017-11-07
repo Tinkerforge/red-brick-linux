@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2005 David Brownell
  * Copyright (C) 2008 Secret Lab Technologies Ltd.
+ * Copyright (C) 2017 Ishraq Ibne Ashraf
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -3012,8 +3013,12 @@ static int __spi_sync(struct spi_device *spi, struct spi_message *message)
 {
 	DECLARE_COMPLETION_ONSTACK(done);
 	int status;
+
+	#ifndef CONFIG_RED_BRICK
+		unsigned long flags;
+	#endif
+
 	struct spi_controller *ctlr = spi->controller;
-	unsigned long flags;
 
 	status = __spi_validate(spi, message);
 	if (status != 0)
@@ -3026,40 +3031,51 @@ static int __spi_sync(struct spi_device *spi, struct spi_message *message)
 	SPI_STATISTICS_INCREMENT_FIELD(&ctlr->statistics, spi_sync);
 	SPI_STATISTICS_INCREMENT_FIELD(&spi->statistics, spi_sync);
 
-	/* If we're not using the legacy transfer method then we will
-	 * try to transfer in the calling context so special case.
-	 * This code would be less tricky if we could remove the
-	 * support for driver implemented message queues.
-	 */
-	if (ctlr->transfer == spi_queued_transfer) {
-		spin_lock_irqsave(&ctlr->bus_lock_spinlock, flags);
+	#ifdef CONFIG_RED_BRICK
+		ctlr->transfer(spi, message);
+		wait_for_completion_interruptible(&done);
 
-		trace_spi_message_submit(message);
+		status = message->status;
+		message->context = NULL;
 
-		status = __spi_queued_transfer(spi, message, false);
-
-		spin_unlock_irqrestore(&ctlr->bus_lock_spinlock, flags);
-	} else {
-		status = spi_async_locked(spi, message);
-	}
-
-	if (status == 0) {
-		/* Push out the messages in the calling context if we
-		 * can.
+		return status;
+	#else
+		/* If we're not using the legacy transfer method then we will
+		 * try to transfer in the calling context so special case.
+		 * This code would be less tricky if we could remove the
+		 * support for driver implemented message queues.
 		 */
 		if (ctlr->transfer == spi_queued_transfer) {
-			SPI_STATISTICS_INCREMENT_FIELD(&ctlr->statistics,
-						       spi_sync_immediate);
-			SPI_STATISTICS_INCREMENT_FIELD(&spi->statistics,
-						       spi_sync_immediate);
-			__spi_pump_messages(ctlr, false);
+			spin_lock_irqsave(&ctlr->bus_lock_spinlock, flags);
+
+			trace_spi_message_submit(message);
+
+			status = __spi_queued_transfer(spi, message, false);
+
+			spin_unlock_irqrestore(&ctlr->bus_lock_spinlock, flags);
+		} else {
+			status = spi_async_locked(spi, message);
 		}
 
-		wait_for_completion(&done);
-		status = message->status;
-	}
-	message->context = NULL;
-	return status;
+		if (status == 0) {
+			/* Push out the messages in the calling context if we
+			 * can.
+			 */
+			if (ctlr->transfer == spi_queued_transfer) {
+				SPI_STATISTICS_INCREMENT_FIELD(&ctlr->statistics,
+							       spi_sync_immediate);
+				SPI_STATISTICS_INCREMENT_FIELD(&spi->statistics,
+							       spi_sync_immediate);
+				__spi_pump_messages(ctlr, false);
+			}
+
+			wait_for_completion(&done);
+			status = message->status;
+		}
+
+		message->context = NULL;
+		return status;
+	#endif
 }
 
 /**
@@ -3470,4 +3486,3 @@ err0:
  * include needing to have boardinfo data structures be much more public.
  */
 postcore_initcall(spi_init);
-
