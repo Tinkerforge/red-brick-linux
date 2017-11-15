@@ -3009,73 +3009,94 @@ static void spi_complete(void *arg)
 	complete(arg);
 }
 
-static int __spi_sync(struct spi_device *spi, struct spi_message *message)
-{
-	DECLARE_COMPLETION_ONSTACK(done);
-	int status;
+#ifdef CONFIG_RED_BRICK
+	static int __spi_sync_red_brick(struct spi_device *spi, struct spi_message *message)
+	{
+		DECLARE_COMPLETION_ONSTACK(done);
 
-	#ifndef CONFIG_RED_BRICK
-		unsigned long flags;
-	#endif
+		int status;
+		struct spi_controller *ctlr = spi->controller;
 
-	struct spi_controller *ctlr = spi->controller;
+		status = __spi_validate(spi, message);
 
-	status = __spi_validate(spi, message);
-	if (status != 0)
-		return status;
+		if (status != 0)
+			return status;
 
-	message->complete = spi_complete;
-	message->context = &done;
-	message->spi = spi;
+		message->spi = spi;
+		message->context = &done;
+		message->complete = spi_complete;
 
-	SPI_STATISTICS_INCREMENT_FIELD(&ctlr->statistics, spi_sync);
-	SPI_STATISTICS_INCREMENT_FIELD(&spi->statistics, spi_sync);
+		SPI_STATISTICS_INCREMENT_FIELD(&ctlr->statistics, spi_sync);
+		SPI_STATISTICS_INCREMENT_FIELD(&spi->statistics, spi_sync);
+		SPI_STATISTICS_INCREMENT_FIELD(&ctlr->statistics, spi_sync_immediate);
+		SPI_STATISTICS_INCREMENT_FIELD(&spi->statistics, spi_sync_immediate);
+		trace_spi_message_submit(message);
 
-	#ifdef CONFIG_RED_BRICK
-		ctlr->transfer(spi, message);
+		ctlr->transfer_red_brick(spi, message);
 		wait_for_completion_interruptible(&done);
 
 		status = message->status;
 		message->context = NULL;
 
 		return status;
-	#else
-		/* If we're not using the legacy transfer method then we will
-		 * try to transfer in the calling context so special case.
-		 * This code would be less tricky if we could remove the
-		 * support for driver implemented message queues.
+	}
+#endif
+
+static int __spi_sync(struct spi_device *spi, struct spi_message *message)
+{
+	DECLARE_COMPLETION_ONSTACK(done);
+
+	int status;
+	unsigned long flags;
+	struct spi_controller *ctlr = spi->controller;
+
+	status = __spi_validate(spi, message);
+
+	if (status != 0)
+		return status;
+
+	message->spi = spi;
+	message->context = &done;
+	message->complete = spi_complete;
+
+	SPI_STATISTICS_INCREMENT_FIELD(&ctlr->statistics, spi_sync);
+	SPI_STATISTICS_INCREMENT_FIELD(&spi->statistics, spi_sync);
+
+	/* If we're not using the legacy transfer method then we will
+	 * try to transfer in the calling context so special case.
+	 * This code would be less tricky if we could remove the
+	 * support for driver implemented message queues.
+	 */
+	if (ctlr->transfer == spi_queued_transfer) {
+		spin_lock_irqsave(&ctlr->bus_lock_spinlock, flags);
+
+		trace_spi_message_submit(message);
+		status = __spi_queued_transfer(spi, message, false);
+
+		spin_unlock_irqrestore(&ctlr->bus_lock_spinlock, flags);
+	} else {
+		status = spi_async_locked(spi, message);
+	}
+
+	if (status == 0) {
+		/* Push out the messages in the calling context if we
+		 * can.
 		 */
 		if (ctlr->transfer == spi_queued_transfer) {
-			spin_lock_irqsave(&ctlr->bus_lock_spinlock, flags);
+			SPI_STATISTICS_INCREMENT_FIELD(&ctlr->statistics,
+						       spi_sync_immediate);
+			SPI_STATISTICS_INCREMENT_FIELD(&spi->statistics,
+						       spi_sync_immediate);
 
-			trace_spi_message_submit(message);
-
-			status = __spi_queued_transfer(spi, message, false);
-
-			spin_unlock_irqrestore(&ctlr->bus_lock_spinlock, flags);
-		} else {
-			status = spi_async_locked(spi, message);
+			__spi_pump_messages(ctlr, false);
 		}
 
-		if (status == 0) {
-			/* Push out the messages in the calling context if we
-			 * can.
-			 */
-			if (ctlr->transfer == spi_queued_transfer) {
-				SPI_STATISTICS_INCREMENT_FIELD(&ctlr->statistics,
-							       spi_sync_immediate);
-				SPI_STATISTICS_INCREMENT_FIELD(&spi->statistics,
-							       spi_sync_immediate);
-				__spi_pump_messages(ctlr, false);
-			}
+		wait_for_completion(&done);
+		status = message->status;
+	}
 
-			wait_for_completion(&done);
-			status = message->status;
-		}
-
-		message->context = NULL;
-		return status;
-	#endif
+	message->context = NULL;
+	return status;
 }
 
 /**
@@ -3111,6 +3132,19 @@ int spi_sync(struct spi_device *spi, struct spi_message *message)
 }
 EXPORT_SYMBOL_GPL(spi_sync);
 
+#ifdef CONFIG_RED_BRICK
+	int spi_sync_red_brick(struct spi_device *spi, struct spi_message *message)
+	{
+		int ret;
+
+		mutex_lock(&spi->controller->bus_lock_mutex);
+		ret = __spi_sync_red_brick(spi, message);
+		mutex_unlock(&spi->controller->bus_lock_mutex);
+
+		return ret;
+	}
+	EXPORT_SYMBOL_GPL(spi_sync_red_brick);
+#endif
 /**
  * spi_sync_locked - version of spi_sync with exclusive bus usage
  * @spi: device with which data will be exchanged

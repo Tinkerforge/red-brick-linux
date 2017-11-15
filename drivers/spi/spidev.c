@@ -106,10 +106,16 @@ spidev_sync(struct spidev_data *spidev, struct spi_message *message)
 	spi = spidev->spi;
 	spin_unlock_irq(&spidev->spi_lock);
 
-	if (spi == NULL)
+	if (spi == NULL) {
 		status = -ESHUTDOWN;
-	else
-		status = spi_sync(spi, message);
+	}
+	else {
+		#ifdef CONFIG_RED_BRICK
+			status = spi_sync_red_brick(spi, message);
+		#else
+			status = spi_sync(spi, message);
+		#endif
+	}
 
 	if (status == 0)
 		status = message->actual_length;
