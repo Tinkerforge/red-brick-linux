@@ -3073,13 +3073,11 @@ static iw_handler rtw_handlers[] = {
 		 * power saving. So we just check hw_init_completed.
 		 */
 
-		if (!padapter->hw_init_completed) {
+		if (!padapter->hw_init_completed)
 			return -EPERM;
-		}
 
-		if (!wrqu->data.pointer) {
+		if (!wrqu->data.pointer)
 			return -EINVAL;
-		}
 
 		/*
 		 * Since we don't allocate memory for param in this function, we assume
@@ -3141,14 +3139,13 @@ static iw_handler rtw_handlers[] = {
 			return -EINVAL;
 
 		if (param->sta_addr[0] == 0xff && param->sta_addr[1] == 0xff &&
-			param->sta_addr[2] == 0xff && param->sta_addr[3] == 0xff &&
-			param->sta_addr[4] == 0xff && param->sta_addr[5] == 0xff)
-			return -EINVAL;
+		    param->sta_addr[2] == 0xff && param->sta_addr[3] == 0xff &&
+		    param->sta_addr[4] == 0xff && param->sta_addr[5] == 0xff)
+		      return -EINVAL;
 
 		psta = rtw_get_stainfo(pstapriv, param->sta_addr);
 		if (psta) {
 			int flags = param->u.add_sta.flags;
-
 			psta->aid = param->u.add_sta.aid;/* aid = 1~2007 */
 
 			memcpy(psta->bssrateset, param->u.add_sta.tx_supp_rates, 16);
@@ -3166,8 +3163,9 @@ static iw_handler rtw_handlers[] = {
 			if (WLAN_STA_HT&flags) {
 				psta->htpriv.ht_option = true;
 				psta->qos_option = 1;
-				memcpy(&psta->htpriv.ht_cap, &param->u.add_sta.ht_cap,
-						 sizeof(struct ieee80211_ht_cap));
+				memcpy(&psta->htpriv.ht_cap,
+				       &param->u.add_sta.ht_cap,
+				       sizeof(struct ieee80211_ht_cap));
 			} else {
 				psta->htpriv.ht_option = false;
 			}
@@ -3222,9 +3220,9 @@ static iw_handler rtw_handlers[] = {
 			return -EINVAL;
 
 		if (param->sta_addr[0] == 0xff && param->sta_addr[1] == 0xff &&
-			param->sta_addr[2] == 0xff && param->sta_addr[3] == 0xff &&
-			param->sta_addr[4] == 0xff && param->sta_addr[5] == 0xff)
-			return -EINVAL;
+		    param->sta_addr[2] == 0xff && param->sta_addr[3] == 0xff &&
+		    param->sta_addr[4] == 0xff && param->sta_addr[5] == 0xff)
+		      return -EINVAL;
 
 		psta = rtw_get_stainfo(pstapriv, param->sta_addr);
 		if (psta) {
@@ -3248,18 +3246,17 @@ static iw_handler rtw_handlers[] = {
 	}
 
 	static int rtw_set_beacon_pvt(struct net_device *dev,
-                                struct iw_request_info *info,
-                                union iwreq_data *wrqu,
-                                char *extra)
+	                              struct iw_request_info *info,
+	                              union iwreq_data *wrqu,
+	                              char *extra)
 	{
 		int ret = 0;
 		int len = 0;
 		unsigned char *pbuf = NULL;
+		struct ieee_param *param = NULL;
 		struct adapter *padapter = (struct adapter *)rtw_netdev_priv(dev);
 		struct mlme_priv *pmlmepriv = &(padapter->mlmepriv);
 		struct sta_priv *pstapriv = &padapter->stapriv;
-
-		struct ieee_param *param = NULL;
 
 		param = (struct ieee_param *)rtw_malloc(wrqu->data.length);
 
@@ -3303,9 +3300,9 @@ static iw_handler rtw_handlers[] = {
 	}
 
 	static int rtw_set_encryption_pvt(struct net_device *dev,
-                                    struct iw_request_info *info,
-                                    union iwreq_data *wrqu,
-                                    char *extra)
+	                                  struct iw_request_info *info,
+	                                  union iwreq_data *wrqu,
+	                                  char *extra)
 	{
 		int ret = 0;
 		int param_len = 0;
@@ -3409,7 +3406,9 @@ static iw_handler rtw_handlers[] = {
 
 				psecuritypriv->dot11PrivacyKeyIndex = wep_key_idx;
 
-				memcpy(&(psecuritypriv->dot11DefKey[wep_key_idx].skey[0]), pwep->KeyMaterial, pwep->KeyLength);
+				memcpy(&(psecuritypriv->dot11DefKey[wep_key_idx].skey[0]),
+				       pwep->KeyMaterial,
+				       pwep->KeyLength);
 
 				psecuritypriv->dot11DefKeylen[wep_key_idx] = pwep->KeyLength;
 
@@ -3420,7 +3419,9 @@ static iw_handler rtw_handlers[] = {
 				/* don't update "psecuritypriv->dot11PrivacyAlgrthm" and */
 				/* psecuritypriv->dot11PrivacyKeyIndex = keyid", but can rtw_set_key to cam */
 
-			      memcpy(&(psecuritypriv->dot11DefKey[wep_key_idx].skey[0]), pwep->KeyMaterial, pwep->KeyLength);
+				memcpy(&(psecuritypriv->dot11DefKey[wep_key_idx].skey[0]),
+				       pwep->KeyMaterial,
+				       pwep->KeyLength);
 
 				psecuritypriv->dot11DefKeylen[wep_key_idx] = pwep->KeyLength;
 
@@ -3436,7 +3437,9 @@ static iw_handler rtw_handlers[] = {
 					DBG_88E("%s, set group_key, WEP\n", __func__);
 
 					memcpy(psecuritypriv->dot118021XGrpKey[param->u.crypt.idx].skey,
-						    param->u.crypt.key, min_t(u16, param->u.crypt.key_len, 16));
+					       param->u.crypt.key,
+					       min_t(u16, param->u.crypt.key_len,
+					       16));
 
 					psecuritypriv->dot118021XGrpPrivacy = _WEP40_;
 					if (param->u.crypt.key_len == 13)
@@ -3445,17 +3448,24 @@ static iw_handler rtw_handlers[] = {
 					DBG_88E("%s, set group_key, TKIP\n", __func__);
 					psecuritypriv->dot118021XGrpPrivacy = _TKIP_;
 					memcpy(psecuritypriv->dot118021XGrpKey[param->u.crypt.idx].skey,
-						    param->u.crypt.key, min_t(u16, param->u.crypt.key_len, 16));
+					       param->u.crypt.key,
+					       min_t(u16, param->u.crypt.key_len,
+					       16));
 					/* set mic key */
-					memcpy(psecuritypriv->dot118021XGrptxmickey[param->u.crypt.idx].skey, &(param->u.crypt.key[16]), 8);
-					memcpy(psecuritypriv->dot118021XGrprxmickey[param->u.crypt.idx].skey, &(param->u.crypt.key[24]), 8);
+					memcpy(psecuritypriv->dot118021XGrptxmickey[param->u.crypt.idx].skey,
+					       &(param->u.crypt.key[16]),
+					       8);
+					memcpy(psecuritypriv->dot118021XGrprxmickey[param->u.crypt.idx].skey,
+					       &(param->u.crypt.key[24]),
+					       8);
 
 					psecuritypriv->busetkipkey = true;
 				} else if (strcmp(param->u.crypt.alg, "CCMP") == 0) {
 					DBG_88E("%s, set group_key, CCMP\n", __func__);
 					psecuritypriv->dot118021XGrpPrivacy = _AES_;
 					memcpy(psecuritypriv->dot118021XGrpKey[param->u.crypt.idx].skey,
-						    param->u.crypt.key, min_t(u16, param->u.crypt.key_len, 16));
+					       param->u.crypt.key,
+					       min_t(u16, param->u.crypt.key_len, 16));
 				} else {
 					DBG_88E("%s, set group_key, none\n", __func__);
 					psecuritypriv->dot118021XGrpPrivacy = _NO_PRIVACY_;
@@ -3510,7 +3520,8 @@ static iw_handler rtw_handlers[] = {
 				} else { /* group key??? */
 					if (strcmp(param->u.crypt.alg, "WEP") == 0) {
 						memcpy(psecuritypriv->dot118021XGrpKey[param->u.crypt.idx].skey,
-							    param->u.crypt.key, min_t(u16, param->u.crypt.key_len, 16));
+						       param->u.crypt.key,
+						       min_t(u16, param->u.crypt.key_len, 16));
 						psecuritypriv->dot118021XGrpPrivacy = _WEP40_;
 						if (param->u.crypt.key_len == 13)
 							psecuritypriv->dot118021XGrpPrivacy = _WEP104_;
@@ -3518,29 +3529,34 @@ static iw_handler rtw_handlers[] = {
 						psecuritypriv->dot118021XGrpPrivacy = _TKIP_;
 
 						memcpy(psecuritypriv->dot118021XGrpKey[param->u.crypt.idx].skey,
-							    param->u.crypt.key, min_t(u16, param->u.crypt.key_len, 16));
+						       param->u.crypt.key,
+						       min_t(u16, param->u.crypt.key_len, 16));
 
 						/* set mic key */
-						memcpy(psecuritypriv->dot118021XGrptxmickey[param->u.crypt.idx].skey, &(param->u.crypt.key[16]), 8);
-						memcpy(psecuritypriv->dot118021XGrprxmickey[param->u.crypt.idx].skey, &(param->u.crypt.key[24]), 8);
+						memcpy(psecuritypriv->dot118021XGrptxmickey[param->u.crypt.idx].skey,
+						       &(param->u.crypt.key[16]), 8);
+						memcpy(psecuritypriv->dot118021XGrprxmickey[param->u.crypt.idx].skey,
+						       &(param->u.crypt.key[24]), 8);
 
 						psecuritypriv->busetkipkey = true;
 					} else if (strcmp(param->u.crypt.alg, "CCMP") == 0) {
 						psecuritypriv->dot118021XGrpPrivacy = _AES_;
 
 						memcpy(psecuritypriv->dot118021XGrpKey[param->u.crypt.idx].skey,
-							    param->u.crypt.key, min_t(u16, param->u.crypt.key_len, 16));
+						       param->u.crypt.key,
+						       min_t(u16, param->u.crypt.key_len, 16));
 					} else {
 						psecuritypriv->dot118021XGrpPrivacy = _NO_PRIVACY_;
 					}
 
 					psecuritypriv->dot118021XGrpKeyid = param->u.crypt.idx;
-
 					psecuritypriv->binstallGrpkey = true;
+					psecuritypriv->dot11PrivacyAlgrthm = psecuritypriv->dot118021XGrpPrivacy;
 
-					psecuritypriv->dot11PrivacyAlgrthm = psecuritypriv->dot118021XGrpPrivacy;/*  */
-
-					set_group_key(padapter, param->u.crypt.key, psecuritypriv->dot118021XGrpPrivacy, param->u.crypt.idx);
+					set_group_key(padapter,
+					              param->u.crypt.key,
+					              psecuritypriv->dot118021XGrpPrivacy,
+					              param->u.crypt.idx);
 
 					pbcmc_sta = rtw_get_bcmc_stainfo(padapter);
 					if (pbcmc_sta) {
@@ -3562,9 +3578,9 @@ static iw_handler rtw_handlers[] = {
 	}
 
 	static int rtw_get_sta_wpaie_pvt(struct net_device *dev,
-                                   struct iw_request_info *info,
-                                   union iwreq_data *wrqu,
-                                   char *extra)
+	                                 struct iw_request_info *info,
+	                                 union iwreq_data *wrqu,
+	                                 char *extra)
 	{
 		int ret = 0;
 		struct sta_info *psta = NULL;
@@ -3598,19 +3614,19 @@ static iw_handler rtw_handlers[] = {
 		if (param->sta_addr[0] == 0xff && param->sta_addr[1] == 0xff &&
 		    param->sta_addr[2] == 0xff && param->sta_addr[3] == 0xff &&
 		    param->sta_addr[4] == 0xff && param->sta_addr[5] == 0xff)
-			return -EINVAL;
+		      return -EINVAL;
 
 		psta = rtw_get_stainfo(pstapriv, param->sta_addr);
 		if (psta) {
 			if (psta->wpa_ie[0] == WLAN_EID_RSN ||
 			    psta->wpa_ie[0] == WLAN_EID_VENDOR_SPECIFIC) {
-				int wpa_ie_len;
-				int copy_len;
+			      int wpa_ie_len;
+			      int copy_len;
 
-				wpa_ie_len = psta->wpa_ie[1];
-				copy_len = min_t(int, wpa_ie_len + 2, sizeof(psta->wpa_ie));
-				param->u.wpa_ie.len = copy_len;
-				memcpy(param->u.wpa_ie.reserved, psta->wpa_ie, copy_len);
+			      wpa_ie_len = psta->wpa_ie[1];
+			      copy_len = min_t(int, wpa_ie_len + 2, sizeof(psta->wpa_ie));
+			      param->u.wpa_ie.len = copy_len;
+			      memcpy(param->u.wpa_ie.reserved, psta->wpa_ie, copy_len);
 			} else {
 				DBG_88E("sta's wpa_ie is NONE\n");
 			}
@@ -3625,9 +3641,9 @@ static iw_handler rtw_handlers[] = {
 	}
 
 	static int rtw_set_wps_beacon_pvt(struct net_device *dev,
-                                    struct iw_request_info *info,
-                                    union iwreq_data *wrqu,
-                                    char *extra)
+	                                  struct iw_request_info *info,
+	                                  union iwreq_data *wrqu,
+	                                  char *extra)
 	{
 		int ret = 0;
 		struct ieee_param *param = NULL;
@@ -3675,7 +3691,6 @@ static iw_handler rtw_handlers[] = {
 			}
 
 			memcpy(pmlmepriv->wps_beacon_ie, param->u.bcn_ie.buf, ie_len);
-
 			update_beacon(padapter, _VENDOR_SPECIFIC_IE_, wps_oui, true);
 
 			pmlmeext->bstart_bss = true;
@@ -3688,9 +3703,9 @@ static iw_handler rtw_handlers[] = {
 	}
 
 	static int rtw_set_wps_probe_resp_pvt(struct net_device *dev,
-                                        struct iw_request_info *info,
-                                        union iwreq_data *wrqu,
-                                        char *extra)
+	                                      struct iw_request_info *info,
+	                                      union iwreq_data *wrqu,
+	                                      char *extra)
 	{
 		int ret = 0;
 		struct ieee_param *param = NULL;
@@ -3888,9 +3903,9 @@ static iw_handler rtw_handlers[] = {
 			return -EINVAL;
 
 		if (param_ex->sta_addr[0] == 0xff && param_ex->sta_addr[1] == 0xff &&
-			param_ex->sta_addr[2] == 0xff && param_ex->sta_addr[3] == 0xff &&
-			param_ex->sta_addr[4] == 0xff && param_ex->sta_addr[5] == 0xff)
-			return -EINVAL;
+		    param_ex->sta_addr[2] == 0xff && param_ex->sta_addr[3] == 0xff &&
+		    param_ex->sta_addr[4] == 0xff && param_ex->sta_addr[5] == 0xff)
+		      return -EINVAL;
 
 		psta = rtw_get_stainfo(pstapriv, param_ex->sta_addr);
 		if (psta) {
@@ -3898,25 +3913,26 @@ static iw_handler rtw_handlers[] = {
 			psta_data->capability = psta->capability;
 			psta_data->flags = psta->flags;
 
-	/*
+			/*
 			nonerp_set : BIT(0)
 			no_short_slot_time_set : BIT(1)
 			no_short_preamble_set : BIT(2)
 			no_ht_gf_set : BIT(3)
 			no_ht_set : BIT(4)
 			ht_20mhz_set : BIT(5)
-	*/
+			*/
 
 			psta_data->sta_set = ((psta->nonerp_set) |
-						  (psta->no_short_slot_time_set << 1) |
-						  (psta->no_short_preamble_set << 2) |
-						  (psta->no_ht_gf_set << 3) |
-						  (psta->no_ht_set << 4) |
-						  (psta->ht_20mhz_set << 5));
+			                      (psta->no_short_slot_time_set << 1) |
+			                      (psta->no_short_preamble_set << 2) |
+			                      (psta->no_ht_gf_set << 3) |
+			                      (psta->no_ht_set << 4) |
+			                      (psta->ht_20mhz_set << 5));
 			psta_data->tx_supp_rates_len =  psta->bssratelen;
 			memcpy(psta_data->tx_supp_rates, psta->bssrateset, psta->bssratelen);
 			memcpy(&psta_data->ht_cap,
-				   &psta->htpriv.ht_cap, sizeof(struct ieee80211_ht_cap));
+			       &psta->htpriv.ht_cap,
+			       sizeof(struct ieee80211_ht_cap));
 			psta_data->rx_pkts = psta->sta_stats.rx_data_pkts;
 			psta_data->rx_bytes = psta->sta_stats.rx_bytes;
 			psta_data->rx_drops = psta->sta_stats.rx_drops;
@@ -4002,9 +4018,9 @@ static iw_handler rtw_handlers[] = {
 			return -EINVAL;
 
 		if (param->sta_addr[0] == 0xff && param->sta_addr[1] == 0xff &&
-			param->sta_addr[2] == 0xff && param->sta_addr[3] == 0xff &&
-			param->sta_addr[4] == 0xff && param->sta_addr[5] == 0xff)
-			return -EINVAL;
+		    param->sta_addr[2] == 0xff && param->sta_addr[3] == 0xff &&
+		    param->sta_addr[4] == 0xff && param->sta_addr[5] == 0xff)
+		      return -EINVAL;
 
 		ret = rtw_acl_add_sta(padapter, param->sta_addr);
 
@@ -4045,9 +4061,9 @@ static iw_handler rtw_handlers[] = {
 			return -EINVAL;
 
 		if (param->sta_addr[0] == 0xff && param->sta_addr[1] == 0xff &&
-			param->sta_addr[2] == 0xff && param->sta_addr[3] == 0xff &&
-			param->sta_addr[4] == 0xff && param->sta_addr[5] == 0xff)
-			return -EINVAL;
+		    param->sta_addr[2] == 0xff && param->sta_addr[3] == 0xff &&
+		    param->sta_addr[4] == 0xff && param->sta_addr[5] == 0xff)
+		      return -EINVAL;
 
 		ret = rtw_acl_remove_sta(padapter, param->sta_addr);
 
