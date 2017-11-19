@@ -17,20 +17,4 @@ if R8188EU
 		This option enables Access Point mode. Unless you know that your system
 		will never be used as an AP, or the target system has limited memory,
 		"Y" should be selected.
-
-	if 88EU_AP_MODE
-
-		config 88EU_NEW_WEXT_PRIVATE_IOCTL_INTERFACE
-			bool "Use new WEXT private IOCTL interface for this driver"
-			default n
-			---help---
-			In kernel versions 4.12 and lower WEXT private IOCTL calls were invoked
-			through netdevice's ndo_do_ioctl() interface. In newer kernels private
-			handler table is used for private IOCTL calls.
-			Enable this option if the driver is intended to be used in a kernel which
-			doesn't use netdevice's ndo_do_ioctl() interface for private IOCTLs and
-			AP mode is desired.
-
-	endif
-
 endif
