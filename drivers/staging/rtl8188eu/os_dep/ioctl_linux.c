@@ -468,7 +468,7 @@ static int wpa_set_encryption(struct net_device *dev, struct ieee_param *param, 
 
 					rtw_setstakey_cmd(padapter, (unsigned char *)psta, true);
 				} else { /* group key */
-					memcpy(padapter->securitypriv.dot118021XGrpKey[param->u.crypt.idx].skey,  param->u.crypt.key, min_t(u16, param->u.crypt.key_len, 16 ));
+					memcpy(padapter->securitypriv.dot118021XGrpKey[param->u.crypt.idx].skey,  param->u.crypt.key, min_t(u16, param->u.crypt.key_len, 16));
 					memcpy(padapter->securitypriv.dot118021XGrptxmickey[param->u.crypt.idx].skey, &(param->u.crypt.key[16]), 8);
 					memcpy(padapter->securitypriv.dot118021XGrprxmickey[param->u.crypt.idx].skey, &(param->u.crypt.key[24]), 8);
 					padapter->securitypriv.binstallGrpkey = true;
@@ -3064,8 +3064,8 @@ static iw_handler rtw_handlers[] = {
 };
 
 static int get_private_handler_ieee_param(struct adapter *padapter,
-                                          union iwreq_data *wrqu,
-                                          void *param)
+	union iwreq_data *wrqu,
+	void *param)
 {
 	/*
 	 * This function is expected to be called in master mode, which allows no
@@ -3090,9 +3090,9 @@ static int get_private_handler_ieee_param(struct adapter *padapter,
 }
 
 static int rtw_hostapd_sta_flush_pvt(struct net_device *dev,
-                                     struct iw_request_info *info,
-                                     union iwreq_data *wrqu,
-                                     char *extra)
+	struct iw_request_info *info,
+	union iwreq_data *wrqu,
+	char *extra)
 {
 	struct adapter *padapter = (struct adapter *)rtw_netdev_priv(dev);
 
@@ -3104,9 +3104,9 @@ static int rtw_hostapd_sta_flush_pvt(struct net_device *dev,
 }
 
 static int rtw_add_sta_pvt(struct net_device *dev,
-                           struct iw_request_info *info,
-                           union iwreq_data *wrqu,
-                           char *extra)
+	struct iw_request_info *info,
+	union iwreq_data *wrqu,
+	char *extra)
 {
 	int ret = 0;
 	struct sta_info *psta = NULL;
@@ -3177,16 +3177,16 @@ static int rtw_add_sta_pvt(struct net_device *dev,
 		ret = -ENOMEM;
 	}
 
-	if(ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
+	if (ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
 		ret = -EFAULT;
 
 	return ret;
 }
 
 static int rtw_del_sta_pvt(struct net_device *dev,
-                           struct iw_request_info *info,
-                           union iwreq_data *wrqu,
-                           char *extra)
+	struct iw_request_info *info,
+	union iwreq_data *wrqu,
+	char *extra)
 {
 	int ret = 0;
 	struct sta_info *psta = NULL;
@@ -3238,16 +3238,16 @@ static int rtw_del_sta_pvt(struct net_device *dev,
 		DBG_88E("rtw_del_sta(), sta has already been removed or never been added\n");
 	}
 
-	if(ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
+	if (ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
 		ret = -EFAULT;
 
 	return ret;
 }
 
 static int rtw_set_beacon_pvt(struct net_device *dev,
-                              struct iw_request_info *info,
-                              union iwreq_data *wrqu,
-                              char *extra)
+	struct iw_request_info *info,
+	union iwreq_data *wrqu,
+	char *extra)
 {
 	int ret = 0;
 	int len = 0;
@@ -3292,16 +3292,16 @@ static int rtw_set_beacon_pvt(struct net_device *dev,
 	else
 		ret = -EINVAL;
 
-	if(ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
+	if (ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
 		ret = -EFAULT;
 
 	return ret;
 }
 
 static int rtw_set_encryption_pvt(struct net_device *dev,
-                                  struct iw_request_info *info,
-                                  union iwreq_data *wrqu,
-                                  char *extra)
+	struct iw_request_info *info,
+	union iwreq_data *wrqu,
+	char *extra)
 {
 	int ret = 0;
 	int param_len = 0;
@@ -3556,9 +3556,9 @@ static int rtw_set_encryption_pvt(struct net_device *dev,
 				psecuritypriv->dot11PrivacyAlgrthm = psecuritypriv->dot118021XGrpPrivacy;
 
 				set_group_key(padapter,
-				              param->u.crypt.key,
-				              psecuritypriv->dot118021XGrpPrivacy,
-				              param->u.crypt.idx);
+					param->u.crypt.key,
+					psecuritypriv->dot118021XGrpPrivacy,
+					param->u.crypt.idx);
 
 				pbcmc_sta = rtw_get_bcmc_stainfo(padapter);
 				if (pbcmc_sta) {
@@ -3573,16 +3573,16 @@ exit:
 
 	kfree(pwep);
 
-	if(ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
+	if (ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
 		ret = -EFAULT;
 
 	return ret;
 }
 
 static int rtw_get_sta_wpaie_pvt(struct net_device *dev,
-                                 struct iw_request_info *info,
-                                 union iwreq_data *wrqu,
-                                 char *extra)
+	struct iw_request_info *info,
+	union iwreq_data *wrqu,
+	char *extra)
 {
 	int ret = 0;
 	struct sta_info *psta = NULL;
@@ -3636,16 +3636,16 @@ static int rtw_get_sta_wpaie_pvt(struct net_device *dev,
 		ret = -1;
 	}
 
-	if(ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
+	if (ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
 		ret = -EFAULT;
 
 	return ret;
 }
 
 static int rtw_set_wps_beacon_pvt(struct net_device *dev,
-                                  struct iw_request_info *info,
-                                  union iwreq_data *wrqu,
-                                  char *extra)
+	struct iw_request_info *info,
+	union iwreq_data *wrqu,
+	char *extra)
 {
 	int ret = 0;
 	struct ieee_param *param = NULL;
@@ -3698,16 +3698,16 @@ static int rtw_set_wps_beacon_pvt(struct net_device *dev,
 		pmlmeext->bstart_bss = true;
 	}
 
-	if(ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
+	if (ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
 		ret = -EFAULT;
 
 	return ret;
 }
 
 static int rtw_set_wps_probe_resp_pvt(struct net_device *dev,
-                                      struct iw_request_info *info,
-                                      union iwreq_data *wrqu,
-                                      char *extra)
+	struct iw_request_info *info,
+	union iwreq_data *wrqu,
+	char *extra)
 {
 	int ret = 0;
 	struct ieee_param *param = NULL;
@@ -3754,16 +3754,16 @@ static int rtw_set_wps_probe_resp_pvt(struct net_device *dev,
 		memcpy(pmlmepriv->wps_probe_resp_ie, param->u.bcn_ie.buf, ie_len);
 	}
 
-	if(ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
+	if (ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
 		ret = -EFAULT;
 
 	return ret;
 }
 
 static int rtw_set_wps_assoc_resp_pvt(struct net_device *dev,
-                                      struct iw_request_info *info,
-                                      union iwreq_data *wrqu,
-                                      char *extra)
+	struct iw_request_info *info,
+	union iwreq_data *wrqu,
+	char *extra)
 {
 	int ret = 0;
 	struct ieee_param *param = NULL;
@@ -3811,16 +3811,16 @@ static int rtw_set_wps_assoc_resp_pvt(struct net_device *dev,
 		memcpy(pmlmepriv->wps_assoc_resp_ie, param->u.bcn_ie.buf, ie_len);
 	}
 
-	if(ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
+	if (ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
 		ret = -EFAULT;
 
 	return ret;
 }
 
 static int rtw_set_hidden_ssid_pvt(struct net_device *dev,
-                                   struct iw_request_info *info,
-                                   union iwreq_data *wrqu,
-                                   char *extra)
+	struct iw_request_info *info,
+	union iwreq_data *wrqu,
+	char *extra)
 {
 	int ret = 0;
 	struct ieee_param *param = NULL;
@@ -3861,16 +3861,16 @@ static int rtw_set_hidden_ssid_pvt(struct net_device *dev,
 	DBG_88E("%s value(%u)\n", __func__, value);
 	pmlmeinfo->hidden_ssid_mode = value;
 
-	if(ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
+	if (ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
 		ret = -EFAULT;
 
 	return ret;
 }
 
 static int rtw_ioctl_get_sta_data_pvt(struct net_device *dev,
-                                      struct iw_request_info *info,
-                                      union iwreq_data *wrqu,
-                                      char *extra)
+	struct iw_request_info *info,
+	union iwreq_data *wrqu,
+	char *extra)
 {
 	int ret = 0;
 	struct sta_info *psta = NULL;
@@ -3924,12 +3924,13 @@ static int rtw_ioctl_get_sta_data_pvt(struct net_device *dev,
 		ht_20mhz_set : BIT(5)
 		*/
 
-		psta_data->sta_set = ((psta->nonerp_set) |
-		                      (psta->no_short_slot_time_set << 1) |
-		                      (psta->no_short_preamble_set << 2) |
-		                      (psta->no_ht_gf_set << 3) |
-		                      (psta->no_ht_set << 4) |
-		                      (psta->ht_20mhz_set << 5));
+		psta_data->sta_set = \
+			((psta->nonerp_set) |
+			(psta->no_short_slot_time_set << 1) |
+			(psta->no_short_preamble_set << 2) |
+			(psta->no_ht_gf_set << 3) |
+			(psta->no_ht_set << 4) |
+			(psta->ht_20mhz_set << 5));
 		psta_data->tx_supp_rates_len =  psta->bssratelen;
 		memcpy(psta_data->tx_supp_rates, psta->bssrateset, psta->bssratelen);
 		memcpy(&psta_data->ht_cap,
@@ -3945,16 +3946,16 @@ static int rtw_ioctl_get_sta_data_pvt(struct net_device *dev,
 		ret = -1;
 	}
 
-	if(ret == 0 && (copy_to_user(wrqu->data.pointer, param_ex, wrqu->data.length)))
+	if (ret == 0 && (copy_to_user(wrqu->data.pointer, param_ex, wrqu->data.length)))
 		ret = -EFAULT;
 
 	return ret;
 }
 
 static int rtw_ioctl_set_macaddr_acl_pvt(struct net_device *dev,
-                                         struct iw_request_info *info,
-                                         union iwreq_data *wrqu,
-                                         char *extra)
+	struct iw_request_info *info,
+	union iwreq_data *wrqu,
+	char *extra)
 {
 	int ret = 0;
 	struct ieee_param *param = NULL;
@@ -3983,16 +3984,16 @@ static int rtw_ioctl_set_macaddr_acl_pvt(struct net_device *dev,
 
 	rtw_set_macaddr_acl(padapter, param->u.mlme.command);
 
-	if(ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
+	if (ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
 		ret = -EFAULT;
 
 	return ret;
 }
 
 static int rtw_ioctl_acl_add_sta_pvt(struct net_device *dev,
-                                     struct iw_request_info *info,
-                                     union iwreq_data *wrqu,
-                                     char *extra)
+	struct iw_request_info *info,
+	union iwreq_data *wrqu,
+	char *extra)
 {
 	int ret = 0;
 	struct ieee_param *param = NULL;
@@ -4026,16 +4027,16 @@ static int rtw_ioctl_acl_add_sta_pvt(struct net_device *dev,
 
 	ret = rtw_acl_add_sta(padapter, param->sta_addr);
 
-	if(ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
+	if (ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
 		ret = -EFAULT;
 
 	return ret;
 }
 
 static int rtw_ioctl_acl_remove_sta_pvt(struct net_device *dev,
-                                        struct iw_request_info *info,
-                                        union iwreq_data *wrqu,
-                                        char *extra)
+	struct iw_request_info *info,
+	union iwreq_data *wrqu,
+	char *extra)
 {
 	int ret = 0;
 	struct ieee_param *param = NULL;
@@ -4069,7 +4070,7 @@ static int rtw_ioctl_acl_remove_sta_pvt(struct net_device *dev,
 
 	ret = rtw_acl_remove_sta(padapter, param->sta_addr);
 
-	if(ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
+	if (ret == 0 && (copy_to_user(wrqu->data.pointer, param, wrqu->data.length)))
 		ret = -EFAULT;
 
 	return ret;
