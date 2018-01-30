@@ -223,9 +223,9 @@ static size_t sun4i_spi_max_transfer_size(struct spi_device *spi)
 }
 
 #ifdef CONFIG_RED_BRICK
-	static int sun4i_spi_transfer_red_brick_do(struct spi_master *master,
-	                                           struct spi_device *spi,
-	                                           struct spi_transfer *tfr)
+	static int sun4i_spi_work_do_red_brick(struct spi_master *master,
+	                                       struct spi_device *spi,
+	                                       struct spi_transfer *tfr)
 	{
 		u32 reg;
 		unsigned int tx_len = 0;
@@ -375,8 +375,6 @@ static size_t sun4i_spi_max_transfer_size(struct spi_device *spi)
 			         tx_time);
 
 			sspi->result = -ETIMEDOUT;
-
-			return sspi->result;
 		}
 
 		// Get return code which is updated in the interrupt handler.
@@ -414,7 +412,7 @@ static size_t sun4i_spi_max_transfer_size(struct spi_device *spi)
 
 				// Do the transfer.
 				mutex_lock(&sspi->master->io_mutex);
-				status = sun4i_spi_transfer_red_brick_do(sspi->master, spi, t);
+				status = sun4i_spi_work_do_red_brick(sspi->master, spi, t);
 				mutex_unlock(&sspi->master->io_mutex);
 
 				// Power-down the subsystem.
@@ -432,6 +430,19 @@ static size_t sun4i_spi_max_transfer_size(struct spi_device *spi)
 			if (status != 0)
 				break;
 		}
+
+		/*
+		 * Sleep a fixed amount of time before waking up the calling process.
+		 * The idea is to have a sleep long enough that will cause a reschedule
+		 * of the current process.
+		 *
+		 * This approach seems to improve system performance for single core CPUs.
+		 *
+		 * How long is good enough and what are the effects?
+		 *
+		 * Also checkout, https://www.kernel.org/doc/Documentation/timers/timers-howto.txt
+		 */
+		usleep_range(400, 500);
 
 		// Wake up the caller.
 		msg->complete(msg->context);

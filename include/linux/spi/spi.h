@@ -1039,8 +1039,9 @@ extern int spi_bus_lock(struct spi_controller *ctlr);
 extern int spi_bus_unlock(struct spi_controller *ctlr);
 
 #ifdef CONFIG_RED_BRICK
-	extern int spi_sync_red_brick(struct spi_device *spi, struct spi_message *message);
+	extern int spi_sync_spidev_red_brick(struct spi_device *spi, struct spi_message *message);
 #endif
+
 /**
  * spi_sync_transfer - synchronous SPI data transfer
  * @spi: device with which data will be exchanged

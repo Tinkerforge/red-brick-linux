@@ -3003,17 +3003,9 @@ EXPORT_SYMBOL_GPL(spi_flash_read);
  * top of the core.  Some other utility methods are defined as
  * inline functions.
  */
-
-static void spi_complete(void *arg)
-{
-	complete(arg);
-}
-
 #ifdef CONFIG_RED_BRICK
-	static int __spi_sync_red_brick(struct spi_device *spi, struct spi_message *message)
+	static int __spi_sync_spidev_red_brick(struct spi_device *spi, struct spi_message *message)
 	{
-		DECLARE_COMPLETION_ONSTACK(done);
-
 		int status;
 		struct spi_controller *ctlr = spi->controller;
 
@@ -3023,24 +3015,31 @@ static void spi_complete(void *arg)
 			return status;
 
 		message->spi = spi;
-		message->context = &done;
-		message->complete = spi_complete;
 
 		SPI_STATISTICS_INCREMENT_FIELD(&ctlr->statistics, spi_sync);
 		SPI_STATISTICS_INCREMENT_FIELD(&spi->statistics, spi_sync);
-		SPI_STATISTICS_INCREMENT_FIELD(&ctlr->statistics, spi_sync_immediate);
-		SPI_STATISTICS_INCREMENT_FIELD(&spi->statistics, spi_sync_immediate);
 		trace_spi_message_submit(message);
 
-		ctlr->transfer_red_brick(spi, message);
-		wait_for_completion_interruptible(&done);
-
-		status = message->status;
-		message->context = NULL;
-
-		return status;
+		return ctlr->transfer_red_brick(spi, message);
 	}
+
+	int spi_sync_spidev_red_brick(struct spi_device *spi, struct spi_message *message)
+	{
+		int ret;
+
+		mutex_lock(&spi->controller->bus_lock_mutex);
+		ret = __spi_sync_spidev_red_brick(spi, message);
+		mutex_unlock(&spi->controller->bus_lock_mutex);
+
+		return ret;
+	}
+	EXPORT_SYMBOL_GPL(spi_sync_spidev_red_brick);
 #endif
+
+static void spi_complete(void *arg)
+{
+	complete(arg);
+}
 
 static int __spi_sync(struct spi_device *spi, struct spi_message *message)
 {
@@ -3132,19 +3131,6 @@ int spi_sync(struct spi_device *spi, struct spi_message *message)
 }
 EXPORT_SYMBOL_GPL(spi_sync);
 
-#ifdef CONFIG_RED_BRICK
-	int spi_sync_red_brick(struct spi_device *spi, struct spi_message *message)
-	{
-		int ret;
-
-		mutex_lock(&spi->controller->bus_lock_mutex);
-		ret = __spi_sync_red_brick(spi, message);
-		mutex_unlock(&spi->controller->bus_lock_mutex);
-
-		return ret;
-	}
-	EXPORT_SYMBOL_GPL(spi_sync_red_brick);
-#endif
 /**
  * spi_sync_locked - version of spi_sync with exclusive bus usage
  * @spi: device with which data will be exchanged

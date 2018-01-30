@@ -96,32 +96,72 @@ MODULE_PARM_DESC(bufsiz, "data bytes in biggest supported SPI message");
 
 /*-------------------------------------------------------------------------*/
 
-static ssize_t
-spidev_sync(struct spidev_data *spidev, struct spi_message *message)
-{
-	int status;
-	struct spi_device *spi;
-
-	spin_lock_irq(&spidev->spi_lock);
-	spi = spidev->spi;
-	spin_unlock_irq(&spidev->spi_lock);
-
-	if (spi == NULL) {
-		status = -ESHUTDOWN;
+#ifdef CONFIG_RED_BRICK
+	/*
+	 * We can't use the standard synchronous wrappers for file I/O; we
+	 * need to protect against async removal of the underlying spi_device.
+	 */
+	static void spidev_complete(void *arg)
+	{
+		complete(arg);
 	}
-	else {
-		#ifdef CONFIG_RED_BRICK
-			status = spi_sync_red_brick(spi, message);
-		#else
+
+	static ssize_t
+	spidev_sync(struct spidev_data *spidev, struct spi_message *message)
+	{
+		DECLARE_COMPLETION_ONSTACK(done);
+
+		int status;
+
+		message->context = &done;
+		message->complete = spidev_complete;
+
+		spin_lock_irq(&spidev->spi_lock);
+
+		if (spidev->spi == NULL) {
+			status = -ESHUTDOWN;
+		}
+		else {
+			status = spi_sync_spidev_red_brick(spidev->spi, message);
+		}
+
+		spin_unlock_irq(&spidev->spi_lock);
+
+		if (status == 0) {
+			wait_for_completion_interruptible(&done);
+
+			status = message->status;
+
+			if (status == 0)
+				status = message->actual_length;
+		}
+
+		return status;
+	}
+#else
+	static ssize_t
+	spidev_sync(struct spidev_data *spidev, struct spi_message *message)
+	{
+		int status;
+		struct spi_device *spi;
+
+		spin_lock_irq(&spidev->spi_lock);
+		spi = spidev->spi;
+		spin_unlock_irq(&spidev->spi_lock);
+
+		if (spi == NULL) {
+			status = -ESHUTDOWN;
+		}
+		else {
 			status = spi_sync(spi, message);
-		#endif
+		}
+
+		if (status == 0)
+			status = message->actual_length;
+
+		return status;
 	}
-
-	if (status == 0)
-		status = message->actual_length;
-
-	return status;
-}
+#endif
 
 static inline ssize_t
 spidev_sync_write(struct spidev_data *spidev, size_t len)
