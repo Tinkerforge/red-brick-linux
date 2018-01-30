@@ -188,6 +188,18 @@
 		allwinner,drive = <SUN4I_PINCTRL_10_MA>;
 		allwinner,pull = <SUN4I_PINCTRL_PULL_DOWN>;
 	};
+
+  /*
+   * On RED Brick I2C-2 is used by Brickd. With kernel image 1.10 it was observed
+   * that a stack upon RED Brick with 5 master bricks and on the top an ethernet
+   * extension causes the extension not being properly detected.
+   *
+   * The following explicit I2C-2 pin configuration seems to fix that problem.
+   */
+  i2c2_pins_a: i2c2@0 {
+    allwinner,drive = <SUN4I_PINCTRL_40_MA>;
+    allwinner,pull = <SUN4I_PINCTRL_PULL_UP>;
+  };
 };
 
 &reg_usb1_vbus {
