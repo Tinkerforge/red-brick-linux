@@ -407,16 +407,10 @@ static size_t sun4i_spi_max_transfer_size(struct spi_device *spi)
 
 			// Search for the SPI transfer in this message and deal with it.
 			list_for_each_entry(t, &msg->transfers, transfer_list) {
-				// Power-up the subsystem.
-				pm_runtime_get_sync(sspi->master->dev.parent);
-
 				// Do the transfer.
 				mutex_lock(&sspi->master->io_mutex);
 				status = sun4i_spi_work_do_red_brick(sspi->master, spi, t);
 				mutex_unlock(&sspi->master->io_mutex);
-
-				// Power-down the subsystem.
-				pm_runtime_put_sync(sspi->master->dev.parent);
 
 				if (status != 0)
 					break; // Failed.
@@ -811,6 +805,9 @@ static int sun4i_spi_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Can't register SPI master\n");
 		goto err_pm_disable;
 	}
+
+	// Power-up the subsystem.
+	pm_runtime_get_sync(sspi->master->dev.parent);
 
 	return 0;
 
