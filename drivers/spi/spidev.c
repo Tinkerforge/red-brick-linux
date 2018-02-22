@@ -2,8 +2,12 @@
  * Simple synchronous userspace interface to SPI devices
  *
  * Copyright (C) 2006 SWAPP
- *	Andrea Paterniani <a.paterniani@swapp-eng.it>
+ * Andrea Paterniani <a.paterniani@swapp-eng.it>
+ *
  * Copyright (C) 2007 David Brownell (simplification, cleanup)
+ *
+ * Copyright (C) 2018 Ishraq Ibne Ashraf
+ * Ishraq Ibne Ashraf <ishraq@tinkerforge.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -96,72 +100,26 @@ MODULE_PARM_DESC(bufsiz, "data bytes in biggest supported SPI message");
 
 /*-------------------------------------------------------------------------*/
 
-#ifdef CONFIG_RED_BRICK
-	/*
-	 * We can't use the standard synchronous wrappers for file I/O; we
-	 * need to protect against async removal of the underlying spi_device.
-	 */
-	static void spidev_complete(void *arg)
-	{
-		complete(arg);
-	}
+static ssize_t
+spidev_sync(struct spidev_data *spidev, struct spi_message *message)
+{
+	int status;
+	struct spi_device *spi;
 
-	static ssize_t
-	spidev_sync(struct spidev_data *spidev, struct spi_message *message)
-	{
-		DECLARE_COMPLETION_ONSTACK(done);
+	spin_lock_irq(&spidev->spi_lock);
+	spi = spidev->spi;
+	spin_unlock_irq(&spidev->spi_lock);
 
-		int status;
+	if (spi == NULL)
+		status = -ESHUTDOWN;
+	else
+		status = spi_sync(spi, message);
 
-		message->context = &done;
-		message->complete = spidev_complete;
+	if (status == 0)
+		status = message->actual_length;
 
-		spin_lock_irq(&spidev->spi_lock);
-
-		if (spidev->spi == NULL) {
-			status = -ESHUTDOWN;
-		}
-		else {
-			status = spi_sync_spidev_red_brick(spidev->spi, message);
-		}
-
-		spin_unlock_irq(&spidev->spi_lock);
-
-		if (status == 0) {
-			wait_for_completion_interruptible(&done);
-
-			status = message->status;
-
-			if (status == 0)
-				status = message->actual_length;
-		}
-
-		return status;
-	}
-#else
-	static ssize_t
-	spidev_sync(struct spidev_data *spidev, struct spi_message *message)
-	{
-		int status;
-		struct spi_device *spi;
-
-		spin_lock_irq(&spidev->spi_lock);
-		spi = spidev->spi;
-		spin_unlock_irq(&spidev->spi_lock);
-
-		if (spi == NULL) {
-			status = -ESHUTDOWN;
-		}
-		else {
-			status = spi_sync(spi, message);
-		}
-
-		if (status == 0)
-			status = message->actual_length;
-
-		return status;
-	}
-#endif
+	return status;
+}
 
 static inline ssize_t
 spidev_sync_write(struct spidev_data *spidev, size_t len)

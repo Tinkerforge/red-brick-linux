@@ -502,10 +502,6 @@ struct spi_controller {
 	int			(*transfer)(struct spi_device *spi,
 						struct spi_message *mesg);
 
-	#ifdef CONFIG_RED_BRICK
-		int (*transfer_red_brick)(struct spi_device *spi, struct spi_message *mesg);
-	#endif
-
 	/* called on release() to free memory provided by spi_controller */
 	void			(*cleanup)(struct spi_device *spi);
 
@@ -1037,10 +1033,6 @@ extern int spi_sync(struct spi_device *spi, struct spi_message *message);
 extern int spi_sync_locked(struct spi_device *spi, struct spi_message *message);
 extern int spi_bus_lock(struct spi_controller *ctlr);
 extern int spi_bus_unlock(struct spi_controller *ctlr);
-
-#ifdef CONFIG_RED_BRICK
-	extern int spi_sync_spidev_red_brick(struct spi_device *spi, struct spi_message *message);
-#endif
 
 /**
  * spi_sync_transfer - synchronous SPI data transfer

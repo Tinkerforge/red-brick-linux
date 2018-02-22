@@ -3,7 +3,6 @@
  *
  * Copyright (C) 2005 David Brownell
  * Copyright (C) 2008 Secret Lab Technologies Ltd.
- * Copyright (C) 2017 Ishraq Ibne Ashraf
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -3003,38 +3002,6 @@ EXPORT_SYMBOL_GPL(spi_flash_read);
  * top of the core.  Some other utility methods are defined as
  * inline functions.
  */
-#ifdef CONFIG_RED_BRICK
-	static int __spi_sync_spidev_red_brick(struct spi_device *spi, struct spi_message *message)
-	{
-		int status;
-		struct spi_controller *ctlr = spi->controller;
-
-		status = __spi_validate(spi, message);
-
-		if (status != 0)
-			return status;
-
-		message->spi = spi;
-
-		SPI_STATISTICS_INCREMENT_FIELD(&ctlr->statistics, spi_sync);
-		SPI_STATISTICS_INCREMENT_FIELD(&spi->statistics, spi_sync);
-		trace_spi_message_submit(message);
-
-		return ctlr->transfer_red_brick(spi, message);
-	}
-
-	int spi_sync_spidev_red_brick(struct spi_device *spi, struct spi_message *message)
-	{
-		int ret;
-
-		mutex_lock(&spi->controller->bus_lock_mutex);
-		ret = __spi_sync_spidev_red_brick(spi, message);
-		mutex_unlock(&spi->controller->bus_lock_mutex);
-
-		return ret;
-	}
-	EXPORT_SYMBOL_GPL(spi_sync_spidev_red_brick);
-#endif
 
 static void spi_complete(void *arg)
 {
@@ -3044,19 +3011,17 @@ static void spi_complete(void *arg)
 static int __spi_sync(struct spi_device *spi, struct spi_message *message)
 {
 	DECLARE_COMPLETION_ONSTACK(done);
-
 	int status;
-	unsigned long flags;
 	struct spi_controller *ctlr = spi->controller;
+	unsigned long flags;
 
 	status = __spi_validate(spi, message);
-
 	if (status != 0)
 		return status;
 
-	message->spi = spi;
-	message->context = &done;
 	message->complete = spi_complete;
+	message->context = &done;
+	message->spi = spi;
 
 	SPI_STATISTICS_INCREMENT_FIELD(&ctlr->statistics, spi_sync);
 	SPI_STATISTICS_INCREMENT_FIELD(&spi->statistics, spi_sync);
@@ -3070,6 +3035,7 @@ static int __spi_sync(struct spi_device *spi, struct spi_message *message)
 		spin_lock_irqsave(&ctlr->bus_lock_spinlock, flags);
 
 		trace_spi_message_submit(message);
+
 		status = __spi_queued_transfer(spi, message, false);
 
 		spin_unlock_irqrestore(&ctlr->bus_lock_spinlock, flags);
@@ -3086,14 +3052,12 @@ static int __spi_sync(struct spi_device *spi, struct spi_message *message)
 						       spi_sync_immediate);
 			SPI_STATISTICS_INCREMENT_FIELD(&spi->statistics,
 						       spi_sync_immediate);
-
 			__spi_pump_messages(ctlr, false);
 		}
 
 		wait_for_completion(&done);
 		status = message->status;
 	}
-
 	message->context = NULL;
 	return status;
 }
@@ -3506,3 +3470,4 @@ err0:
  * include needing to have boardinfo data structures be much more public.
  */
 postcore_initcall(spi_init);
+
