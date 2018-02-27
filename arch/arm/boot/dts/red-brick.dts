@@ -162,7 +162,7 @@
 		drive-strength = <20>;
 	};
 
-	usb1_vbus_pin_olinuxino_m: usb1_vbus_pin@0 {
+	usb1_vbus_pin_red_brick: usb1_vbus_pin@0 {
 		pins = "PB10";
 		function = "gpio_out";
 	};
@@ -203,7 +203,7 @@
 };
 
 &reg_usb1_vbus {
-	pinctrl-0 = <&usb1_vbus_pin_olinuxino_m>;
+	pinctrl-0 = <&usb1_vbus_pin_red_brick>;
 	gpio = <&pio 1 10 GPIO_ACTIVE_HIGH>;
 	status = "okay";
 };
