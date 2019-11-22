@@ -1,4 +1,11 @@
-.. -*- coding: utf-8; mode: rst -*-
+.. Permission is granted to copy, distribute and/or modify this
+.. document under the terms of the GNU Free Documentation License,
+.. Version 1.1 or any later version published by the Free Software
+.. Foundation, with no Invariant Sections, no Front-Cover Texts
+.. and no Back-Cover Texts. A copy of the license is included at
+.. Documentation/media/uapi/fdl-appendix.rst.
+..
+.. TODO: replace it to GFDL-1.1-or-later WITH no-invariant-sections
 
 .. _VIDIOC_G_TUNER:
 
@@ -29,6 +36,7 @@ Arguments
     File descriptor returned by :ref:`open() <func-open>`.
 
 ``argp``
+    Pointer to struct :c:type:`v4l2_tuner`.
 
 
 Description
@@ -392,22 +400,25 @@ To change the radio frequency the
 
 .. raw:: latex
 
-    \begin{adjustbox}{width=\columnwidth}
+    \scriptsize
+
+.. tabularcolumns:: |p{1.5cm}|p{1.5cm}|p{2.9cm}|p{2.9cm}|p{2.9cm}|p{2.9cm}|
 
 .. _tuner-matrix:
 
 .. flat-table:: Tuner Audio Matrix
     :header-rows:  2
     :stub-columns: 0
+    :widths: 7 7 14 14 14 14
 
     * -
-      - :cspan:`5` Selected ``V4L2_TUNER_MODE_``
+      - :cspan:`4` Selected ``V4L2_TUNER_MODE_``
     * - Received ``V4L2_TUNER_SUB_``
       - ``MONO``
       - ``STEREO``
       - ``LANG1``
       - ``LANG2 = SAP``
-      - ``LANG1_LANG2``\  [#f1]_
+      - ``LANG1_LANG2``\ [#f1]_
     * - ``MONO``
       - Mono
       - Mono/Mono
@@ -434,14 +445,14 @@ To change the radio frequency the
       - L+R/SAP (preferred) or L/R or L+R/L+R
     * - ``LANG1 | LANG2``
       - Language 1
-      - Lang1/Lang2 (deprecated [#f2]_) or Lang1/Lang1
+      - Lang1/Lang2 (deprecated\ [#f2]_) or Lang1/Lang1
       - Language 1
       - Language 2
       - Lang1/Lang2 (preferred) or Lang1/Lang1
 
 .. raw:: latex
 
-    \end{adjustbox}\newline\newline
+    \normalsize
 
 Return Value
 ============

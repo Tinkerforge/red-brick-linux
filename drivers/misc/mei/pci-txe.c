@@ -1,17 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- *
+ * Copyright (c) 2013-2017, Intel Corporation. All rights reserved.
  * Intel Management Engine Interface (Intel MEI) Linux driver
- * Copyright (c) 2013-2014, Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
  */
 
 #include <linux/module.h>
@@ -141,15 +131,17 @@ static int mei_txe_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	 * MEI requires to resume from runtime suspend mode
 	 * in order to perform link reset flow upon system suspend.
 	 */
-	pdev->dev_flags |= PCI_DEV_FLAGS_NEEDS_RESUME;
+	dev_pm_set_driver_flags(&pdev->dev, DPM_FLAG_NEVER_SKIP);
 
 	/*
-	* For not wake-able HW runtime pm framework
-	* can't be used on pci device level.
-	* Use domain runtime pm callbacks instead.
-	*/
-	if (!pci_dev_run_wake(pdev))
-		mei_txe_set_pm_domain(dev);
+	 * TXE maps runtime suspend/resume to own power gating states,
+	 * hence we need to go around native PCI runtime service which
+	 * eventually brings the device into D3cold/hot state.
+	 * But the TXE device cannot wake up from D3 unlike from own
+	 * power gating. To get around PCI device native runtime pm,
+	 * TXE uses runtime pm domain handlers which take precedence.
+	 */
+	mei_txe_set_pm_domain(dev);
 
 	pm_runtime_put_noidle(&pdev->dev);
 
@@ -186,8 +178,7 @@ static void mei_txe_shutdown(struct pci_dev *pdev)
 	dev_dbg(&pdev->dev, "shutdown\n");
 	mei_stop(dev);
 
-	if (!pci_dev_run_wake(pdev))
-		mei_txe_unset_pm_domain(dev);
+	mei_txe_unset_pm_domain(dev);
 
 	mei_disable_interrupts(dev);
 	free_irq(pdev->irq, dev);
@@ -215,8 +206,7 @@ static void mei_txe_remove(struct pci_dev *pdev)
 
 	mei_stop(dev);
 
-	if (!pci_dev_run_wake(pdev))
-		mei_txe_unset_pm_domain(dev);
+	mei_txe_unset_pm_domain(dev);
 
 	mei_disable_interrupts(dev);
 	free_irq(pdev->irq, dev);
@@ -318,15 +308,7 @@ static int mei_txe_pm_runtime_suspend(struct device *device)
 	else
 		ret = -EAGAIN;
 
-	/*
-	 * If everything is okay we're about to enter PCI low
-	 * power state (D3) therefor we need to disable the
-	 * interrupts towards host.
-	 * However if device is not wakeable we do not enter
-	 * D-low state and we need to keep the interrupt kicking
-	 */
-	if (!ret && pci_dev_run_wake(pdev))
-		mei_disable_interrupts(dev);
+	/* keep irq on we are staying in D0 */
 
 	dev_dbg(&pdev->dev, "rpm: txe: runtime suspend ret=%d\n", ret);
 

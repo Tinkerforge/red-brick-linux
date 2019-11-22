@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #ifndef __NVKM_ICCSENSE_H__
 #define __NVKM_ICCSENSE_H__
 

@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * builtin-ftrace.c
  *
  * Copyright (c) 2013  LG Electronics,  Namhyung Kim <namhyung@kernel.org>
- *
- * Released under the GPL v2.
  */
 
 #include "builtin.h"
@@ -72,6 +71,7 @@ static int __write_tracing_file(const char *name, const char *val, bool append)
 	ssize_t size = strlen(val);
 	int flags = O_WRONLY;
 	char errbuf[512];
+	char *val_copy;
 
 	file = get_tracing_file(name);
 	if (!file) {
@@ -91,12 +91,23 @@ static int __write_tracing_file(const char *name, const char *val, bool append)
 		goto out;
 	}
 
-	if (write(fd, val, size) == size)
+	/*
+	 * Copy the original value and append a '\n'. Without this,
+	 * the kernel can hide possible errors.
+	 */
+	val_copy = strdup(val);
+	if (!val_copy)
+		goto out_close;
+	val_copy[size] = '\n';
+
+	if (write(fd, val_copy, size + 1) == size + 1)
 		ret = 0;
 	else
 		pr_debug("write '%s' to tracing/%s failed: %s\n",
 			 val, name, str_error_r(errno, errbuf, sizeof(errbuf)));
 
+	free(val_copy);
+out_close:
 	close(fd);
 out:
 	put_tracing_file(file);
@@ -162,7 +173,7 @@ static int set_tracing_cpumask(struct cpu_map *cpumap)
 	int last_cpu;
 
 	last_cpu = cpu_map__cpu(cpumap, cpumap->nr - 1);
-	mask_size = (last_cpu + 3) / 4 + 1;
+	mask_size = last_cpu / 4 + 2; /* one more byte for EOS */
 	mask_size += last_cpu / 32; /* ',' is needed for every 32th cpus */
 
 	cpumask = malloc(mask_size);
@@ -280,8 +291,10 @@ static int __cmd_ftrace(struct perf_ftrace *ftrace, int argc, const char **argv)
 	signal(SIGCHLD, sig_handler);
 	signal(SIGPIPE, sig_handler);
 
-	if (reset_tracing_files(ftrace) < 0)
+	if (reset_tracing_files(ftrace) < 0) {
+		pr_err("failed to reset ftrace\n");
 		goto out;
+	}
 
 	/* reset ftrace buffer */
 	if (write_tracing_file("trace", "0") < 0)
@@ -381,7 +394,7 @@ static int perf_ftrace_config(const char *var, const char *value, void *cb)
 {
 	struct perf_ftrace *ftrace = cb;
 
-	if (prefixcmp(var, "ftrace."))
+	if (!strstarts(var, "ftrace."))
 		return 0;
 
 	if (strcmp(var, "ftrace.tracer"))
@@ -418,7 +431,7 @@ static void delete_filter_func(struct list_head *head)
 	struct filter_entry *pos, *tmp;
 
 	list_for_each_entry_safe(pos, tmp, head, list) {
-		list_del(&pos->list);
+		list_del_init(&pos->list);
 		free(pos);
 	}
 }

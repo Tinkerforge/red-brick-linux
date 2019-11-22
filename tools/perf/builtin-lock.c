@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <errno.h>
 #include <inttypes.h>
 #include "builtin.h"
@@ -5,7 +6,6 @@
 
 #include "util/evlist.h"
 #include "util/evsel.h"
-#include "util/util.h"
 #include "util/cache.h"
 #include "util/symbol.h"
 #include "util/thread.h"
@@ -29,6 +29,7 @@
 #include <linux/list.h>
 #include <linux/hash.h>
 #include <linux/kernel.h>
+#include <linux/zalloc.h>
 
 static struct perf_session *session;
 
@@ -453,7 +454,7 @@ broken:
 		/* broken lock sequence, discard it */
 		ls->discard = 1;
 		bad_hist[BROKEN_ACQUIRE]++;
-		list_del(&seq->list);
+		list_del_init(&seq->list);
 		free(seq);
 		goto end;
 	default:
@@ -514,7 +515,7 @@ static int report_lock_acquired_event(struct perf_evsel *evsel,
 		/* broken lock sequence, discard it */
 		ls->discard = 1;
 		bad_hist[BROKEN_ACQUIRED]++;
-		list_del(&seq->list);
+		list_del_init(&seq->list);
 		free(seq);
 		goto end;
 	default:
@@ -569,7 +570,7 @@ static int report_lock_contended_event(struct perf_evsel *evsel,
 		/* broken lock sequence, discard it */
 		ls->discard = 1;
 		bad_hist[BROKEN_CONTENDED]++;
-		list_del(&seq->list);
+		list_del_init(&seq->list);
 		free(seq);
 		goto end;
 	default:
@@ -638,7 +639,7 @@ static int report_lock_release_event(struct perf_evsel *evsel,
 
 	ls->nr_release++;
 free_seq:
-	list_del(&seq->list);
+	list_del_init(&seq->list);
 	free(seq);
 end:
 	return 0;
@@ -864,13 +865,13 @@ static int __cmd_report(bool display_info)
 		.namespaces	 = perf_event__process_namespaces,
 		.ordered_events	 = true,
 	};
-	struct perf_data_file file = {
-		.path = input_name,
-		.mode = PERF_DATA_MODE_READ,
+	struct perf_data data = {
+		.path  = input_name,
+		.mode  = PERF_DATA_MODE_READ,
 		.force = force,
 	};
 
-	session = perf_session__new(&file, false, &eops);
+	session = perf_session__new(&data, false, &eops);
 	if (!session) {
 		pr_err("Initializing perf session failed\n");
 		return -1;

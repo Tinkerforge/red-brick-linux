@@ -96,7 +96,6 @@ static irqreturn_t mconsole_interrupt(int irq, void *dev_id)
 	}
 	if (!list_empty(&mc_requests))
 		schedule_work(&mconsole_work);
-	reactivate_fd(fd, MCONSOLE_IRQ);
 	return IRQ_HANDLED;
 }
 
@@ -130,6 +129,7 @@ void mconsole_proc(struct mc_request *req)
 	struct file *file;
 	int first_chunk = 1;
 	char *ptr = req->request.data;
+	loff_t pos = 0;
 
 	ptr += strlen("proc");
 	ptr = skip_spaces(ptr);
@@ -148,12 +148,7 @@ void mconsole_proc(struct mc_request *req)
 	}
 
 	do {
-		loff_t pos = file->f_pos;
-		mm_segment_t old_fs = get_fs();
-		set_fs(KERNEL_DS);
-		len = vfs_read(file, buf, PAGE_SIZE - 1, &pos);
-		set_fs(old_fs);
-		file->f_pos = pos;
+		len = kernel_read(file, buf, PAGE_SIZE - 1, &pos);
 		if (len < 0) {
 			mconsole_reply(req, "Read of file failed", 1, 0);
 			goto out_free;
@@ -244,7 +239,6 @@ void mconsole_stop(struct mc_request *req)
 		(*req->cmd->handler)(req);
 	}
 	os_set_fd_block(req->originating_fd, 0);
-	reactivate_fd(req->originating_fd, MCONSOLE_IRQ);
 	mconsole_reply(req, "", 0, 0);
 }
 

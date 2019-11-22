@@ -1,12 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Samsung SoC USB 1.1/2.0 PHY driver
  *
  * Copyright (C) 2013 Samsung Electronics Co., Ltd.
  * Author: Kamil Debski <k.debski@samsung.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/clk.h>
@@ -14,6 +11,7 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
+#include <linux/of_device.h>
 #include <linux/phy/phy.h>
 #include <linux/platform_device.h>
 #include <linux/spinlock.h>
@@ -142,7 +140,6 @@ MODULE_DEVICE_TABLE(of, samsung_usb2_phy_of_match);
 
 static int samsung_usb2_phy_probe(struct platform_device *pdev)
 {
-	const struct of_device_id *match;
 	const struct samsung_usb2_phy_config *cfg;
 	struct device *dev = &pdev->dev;
 	struct phy_provider *phy_provider;
@@ -155,16 +152,12 @@ static int samsung_usb2_phy_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	match = of_match_node(samsung_usb2_phy_of_match, pdev->dev.of_node);
-	if (!match) {
-		dev_err(dev, "of_match_node() failed\n");
+	cfg = of_device_get_match_data(dev);
+	if (!cfg)
 		return -EINVAL;
-	}
-	cfg = match->data;
 
-	drv = devm_kzalloc(dev, sizeof(struct samsung_usb2_phy_driver) +
-		cfg->num_phys * sizeof(struct samsung_usb2_phy_instance),
-								GFP_KERNEL);
+	drv = devm_kzalloc(dev, struct_size(drv, instances, cfg->num_phys),
+			   GFP_KERNEL);
 	if (!drv)
 		return -ENOMEM;
 

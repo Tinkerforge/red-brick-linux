@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef GPIO_REG_H
 #define GPIO_REG_H
 
@@ -10,4 +11,4 @@ struct gpio_chip *gpio_reg_init(struct device *dev, void __iomem *reg,
 
 int gpio_reg_resume(struct gpio_chip *gc);
 
-#endif
+#endif /* GPIO_REG_H */

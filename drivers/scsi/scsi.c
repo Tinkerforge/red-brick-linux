@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  scsi.c Copyright (C) 1992 Drew Eckhardt
  *         Copyright (C) 1993, 1994, 1995, 1999 Eric Youngdale
@@ -85,15 +86,10 @@ unsigned int scsi_logging_level;
 EXPORT_SYMBOL(scsi_logging_level);
 #endif
 
-/* sd, scsi core and power management need to coordinate flushing async actions */
-ASYNC_DOMAIN(scsi_sd_probe_domain);
-EXPORT_SYMBOL(scsi_sd_probe_domain);
-
 /*
- * Separate domain (from scsi_sd_probe_domain) to maximize the benefit of
- * asynchronous system resume operations.  It is marked 'exclusive' to avoid
- * being included in the async_synchronize_full() that is invoked by
- * dpm_resume()
+ * Domain for asynchronous system resume operations.  It is marked 'exclusive'
+ * to avoid being included in the async_synchronize_full() that is invoked by
+ * dpm_resume().
  */
 ASYNC_DOMAIN_EXCLUSIVE(scsi_sd_pm_domain);
 EXPORT_SYMBOL(scsi_sd_pm_domain);
@@ -162,33 +158,17 @@ void scsi_log_completion(struct scsi_cmnd *cmd, int disposition)
 		    (level > 1)) {
 			scsi_print_result(cmd, "Done", disposition);
 			scsi_print_command(cmd);
-			if (status_byte(cmd->result) & CHECK_CONDITION)
+			if (status_byte(cmd->result) == CHECK_CONDITION)
 				scsi_print_sense(cmd);
 			if (level > 3)
 				scmd_printk(KERN_INFO, cmd,
 					    "scsi host busy %d failed %d\n",
-					    atomic_read(&cmd->device->host->host_busy),
+					    scsi_host_busy(cmd->device->host),
 					    cmd->device->host->host_failed);
 		}
 	}
 }
 #endif
-
-/**
- * scsi_cmd_get_serial - Assign a serial number to a command
- * @host: the scsi host
- * @cmd: command to assign serial number to
- *
- * Description: a serial number identifies a request for error recovery
- * and debugging purposes.  Protected by the Host_Lock of host.
- */
-void scsi_cmd_get_serial(struct Scsi_Host *host, struct scsi_cmnd *cmd)
-{
-	cmd->serial_number = host->cmd_serial_number++;
-	if (cmd->serial_number == 0) 
-		cmd->serial_number = host->cmd_serial_number++;
-}
-EXPORT_SYMBOL(scsi_cmd_get_serial);
 
 /**
  * scsi_finish_command - cleanup and pass command back to upper layer
@@ -231,7 +211,7 @@ void scsi_finish_command(struct scsi_cmnd *cmd)
 				"(result %x)\n", cmd->result));
 
 	good_bytes = scsi_bufflen(cmd);
-        if (!blk_rq_is_passthrough(cmd->request)) {
+	if (!blk_rq_is_passthrough(cmd->request)) {
 		int old_good_bytes = good_bytes;
 		drv = scsi_cmd_to_driver(cmd);
 		if (drv->done)
@@ -412,6 +392,57 @@ int scsi_get_vpd_page(struct scsi_device *sdev, u8 page, unsigned char *buf,
 EXPORT_SYMBOL_GPL(scsi_get_vpd_page);
 
 /**
+ * scsi_get_vpd_buf - Get Vital Product Data from a SCSI device
+ * @sdev: The device to ask
+ * @page: Which Vital Product Data to return
+ *
+ * Returns %NULL upon failure.
+ */
+static struct scsi_vpd *scsi_get_vpd_buf(struct scsi_device *sdev, u8 page)
+{
+	struct scsi_vpd *vpd_buf;
+	int vpd_len = SCSI_VPD_PG_LEN, result;
+
+retry_pg:
+	vpd_buf = kmalloc(sizeof(*vpd_buf) + vpd_len, GFP_KERNEL);
+	if (!vpd_buf)
+		return NULL;
+
+	result = scsi_vpd_inquiry(sdev, vpd_buf->data, page, vpd_len);
+	if (result < 0) {
+		kfree(vpd_buf);
+		return NULL;
+	}
+	if (result > vpd_len) {
+		vpd_len = result;
+		kfree(vpd_buf);
+		goto retry_pg;
+	}
+
+	vpd_buf->len = result;
+
+	return vpd_buf;
+}
+
+static void scsi_update_vpd_page(struct scsi_device *sdev, u8 page,
+				 struct scsi_vpd __rcu **sdev_vpd_buf)
+{
+	struct scsi_vpd *vpd_buf;
+
+	vpd_buf = scsi_get_vpd_buf(sdev, page);
+	if (!vpd_buf)
+		return;
+
+	mutex_lock(&sdev->inquiry_mutex);
+	rcu_swap_protected(*sdev_vpd_buf, vpd_buf,
+			   lockdep_is_held(&sdev->inquiry_mutex));
+	mutex_unlock(&sdev->inquiry_mutex);
+
+	if (vpd_buf)
+		kfree_rcu(vpd_buf, rcu);
+}
+
+/**
  * scsi_attach_vpd - Attach Vital Product Data to a SCSI device structure
  * @sdev: The device to ask
  *
@@ -422,95 +453,24 @@ EXPORT_SYMBOL_GPL(scsi_get_vpd_page);
  */
 void scsi_attach_vpd(struct scsi_device *sdev)
 {
-	int result, i;
-	int vpd_len = SCSI_VPD_PG_LEN;
-	int pg80_supported = 0;
-	int pg83_supported = 0;
-	unsigned char __rcu *vpd_buf, *orig_vpd_buf = NULL;
+	int i;
+	struct scsi_vpd *vpd_buf;
 
 	if (!scsi_device_supports_vpd(sdev))
 		return;
 
-retry_pg0:
-	vpd_buf = kmalloc(vpd_len, GFP_KERNEL);
+	/* Ask for all the pages supported by this device */
+	vpd_buf = scsi_get_vpd_buf(sdev, 0);
 	if (!vpd_buf)
 		return;
 
-	/* Ask for all the pages supported by this device */
-	result = scsi_vpd_inquiry(sdev, vpd_buf, 0, vpd_len);
-	if (result < 0) {
-		kfree(vpd_buf);
-		return;
-	}
-	if (result > vpd_len) {
-		vpd_len = result;
-		kfree(vpd_buf);
-		goto retry_pg0;
-	}
-
-	for (i = 4; i < result; i++) {
-		if (vpd_buf[i] == 0x80)
-			pg80_supported = 1;
-		if (vpd_buf[i] == 0x83)
-			pg83_supported = 1;
+	for (i = 4; i < vpd_buf->len; i++) {
+		if (vpd_buf->data[i] == 0x80)
+			scsi_update_vpd_page(sdev, 0x80, &sdev->vpd_pg80);
+		if (vpd_buf->data[i] == 0x83)
+			scsi_update_vpd_page(sdev, 0x83, &sdev->vpd_pg83);
 	}
 	kfree(vpd_buf);
-	vpd_len = SCSI_VPD_PG_LEN;
-
-	if (pg80_supported) {
-retry_pg80:
-		vpd_buf = kmalloc(vpd_len, GFP_KERNEL);
-		if (!vpd_buf)
-			return;
-
-		result = scsi_vpd_inquiry(sdev, vpd_buf, 0x80, vpd_len);
-		if (result < 0) {
-			kfree(vpd_buf);
-			return;
-		}
-		if (result > vpd_len) {
-			vpd_len = result;
-			kfree(vpd_buf);
-			goto retry_pg80;
-		}
-		mutex_lock(&sdev->inquiry_mutex);
-		orig_vpd_buf = sdev->vpd_pg80;
-		sdev->vpd_pg80_len = result;
-		rcu_assign_pointer(sdev->vpd_pg80, vpd_buf);
-		mutex_unlock(&sdev->inquiry_mutex);
-		synchronize_rcu();
-		if (orig_vpd_buf) {
-			kfree(orig_vpd_buf);
-			orig_vpd_buf = NULL;
-		}
-		vpd_len = SCSI_VPD_PG_LEN;
-	}
-
-	if (pg83_supported) {
-retry_pg83:
-		vpd_buf = kmalloc(vpd_len, GFP_KERNEL);
-		if (!vpd_buf)
-			return;
-
-		result = scsi_vpd_inquiry(sdev, vpd_buf, 0x83, vpd_len);
-		if (result < 0) {
-			kfree(vpd_buf);
-			return;
-		}
-		if (result > vpd_len) {
-			vpd_len = result;
-			kfree(vpd_buf);
-			goto retry_pg83;
-		}
-		mutex_lock(&sdev->inquiry_mutex);
-		orig_vpd_buf = sdev->vpd_pg83;
-		sdev->vpd_pg83_len = result;
-		rcu_assign_pointer(sdev->vpd_pg83, vpd_buf);
-		mutex_unlock(&sdev->inquiry_mutex);
-		synchronize_rcu();
-		if (orig_vpd_buf)
-			kfree(orig_vpd_buf);
-	}
 }
 
 /**
@@ -800,11 +760,8 @@ MODULE_LICENSE("GPL");
 module_param(scsi_logging_level, int, S_IRUGO|S_IWUSR);
 MODULE_PARM_DESC(scsi_logging_level, "a bit mask of logging levels");
 
-#ifdef CONFIG_SCSI_MQ_DEFAULT
+/* This should go away in the future, it doesn't do anything anymore */
 bool scsi_use_blk_mq = true;
-#else
-bool scsi_use_blk_mq = false;
-#endif
 module_param_named(use_blk_mq, scsi_use_blk_mq, bool, S_IWUSR | S_IRUGO);
 
 static int __init init_scsi(void)
@@ -859,7 +816,6 @@ static void __exit exit_scsi(void)
 	scsi_exit_devinfo();
 	scsi_exit_procfs();
 	scsi_exit_queue();
-	async_unregister_domain(&scsi_sd_probe_domain);
 }
 
 subsys_initcall(init_scsi);

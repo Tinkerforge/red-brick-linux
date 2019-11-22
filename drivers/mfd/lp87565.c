@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2017 Texas Instruments Incorporated - http://www.ti.com/
  *
  * Author: Keerthy <j-keerthy@ti.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation version 2.
  */
 
 #include <linux/interrupt.h>
@@ -32,6 +29,10 @@ static const struct of_device_id of_lp87565_match_table[] = {
 	{
 		.compatible = "ti,lp87565-q1",
 		.data = (void *)LP87565_DEVICE_TYPE_LP87565_Q1,
+	},
+	{
+		.compatible = "ti,lp87561-q1",
+		.data = (void *)LP87565_DEVICE_TYPE_LP87561_Q1,
 	},
 	{}
 };
@@ -73,10 +74,9 @@ static int lp87565_probe(struct i2c_client *client,
 
 	i2c_set_clientdata(client, lp87565);
 
-	ret = mfd_add_devices(lp87565->dev, PLATFORM_DEVID_AUTO, lp87565_cells,
-			      ARRAY_SIZE(lp87565_cells), NULL, 0, NULL);
-
-	return ret;
+	return devm_mfd_add_devices(lp87565->dev, PLATFORM_DEVID_AUTO,
+				    lp87565_cells, ARRAY_SIZE(lp87565_cells),
+				    NULL, 0, NULL);
 }
 
 static const struct i2c_device_id lp87565_id_table[] = {

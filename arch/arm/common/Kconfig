@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 config SA1111
 	bool
 	select DMABOUNCE if !ARCH_PXA
@@ -5,6 +6,9 @@ config SA1111
 config DMABOUNCE
 	bool
 	select ZONE_DMA
+
+config KRAIT_L2_ACCESSORS
+	bool
 
 config SHARP_LOCOMO
 	bool

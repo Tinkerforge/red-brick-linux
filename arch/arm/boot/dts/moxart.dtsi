@@ -1,14 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /* moxart.dtsi - Device Tree Include file for MOXA ART family SoC
  *
  * Copyright (C) 2013 Jonas Jensen <jonas.jensen@gmail.com>
- *
- * Licensed under GPLv2 or later.
  */
 
-/include/ "skeleton.dtsi"
 #include <dt-bindings/interrupt-controller/irq.h>
 
 / {
+	#address-cells = <1>;
+	#size-cells = <1>;
 	compatible = "moxa,moxart";
 	model = "MOXART";
 	interrupt-parent = <&intc>;
@@ -87,9 +87,10 @@
 		};
 
 		watchdog: watchdog@98500000 {
-			compatible = "moxa,moxart-watchdog";
+			compatible = "moxa,moxart-watchdog", "faraday,ftwdt010";
 			reg = <0x98500000 0x10>;
 			clocks = <&clk_apb>;
+			clock-names = "PCLK";
 		};
 
 		sdhci: sdhci@98e00000 {

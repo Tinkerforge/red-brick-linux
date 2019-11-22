@@ -1,11 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ZTE's zx2967 family thermal sensor driver
  *
  * Copyright (C) 2017 ZTE Ltd.
  *
  * Author: Baoyou Xie <baoyou.xie@linaro.org>
- *
- * License terms: GNU General Public License (GPL) version 2
  */
 
 #include <linux/clk.h>
@@ -111,7 +110,7 @@ unlock:
 	return ret;
 }
 
-static struct thermal_zone_of_device_ops zx2967_of_thermal_ops = {
+static const struct thermal_zone_of_device_ops zx2967_of_thermal_ops = {
 	.get_temp = zx2967_thermal_get_temp,
 };
 
@@ -207,8 +206,7 @@ MODULE_DEVICE_TABLE(of, zx2967_thermal_id_table);
 #ifdef CONFIG_PM_SLEEP
 static int zx2967_thermal_suspend(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct zx2967_thermal_priv *priv = platform_get_drvdata(pdev);
+	struct zx2967_thermal_priv *priv = dev_get_drvdata(dev);
 
 	if (priv && priv->clk_topcrm)
 		clk_disable_unprepare(priv->clk_topcrm);
@@ -221,8 +219,7 @@ static int zx2967_thermal_suspend(struct device *dev)
 
 static int zx2967_thermal_resume(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct zx2967_thermal_priv *priv = platform_get_drvdata(pdev);
+	struct zx2967_thermal_priv *priv = dev_get_drvdata(dev);
 	int error;
 
 	error = clk_prepare_enable(priv->clk_topcrm);

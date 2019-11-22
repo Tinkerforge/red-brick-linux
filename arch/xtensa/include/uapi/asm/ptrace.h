@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
  * include/asm-xtensa/ptrace.h
  *
@@ -10,6 +11,8 @@
 
 #ifndef _UAPI_XTENSA_PTRACE_H
 #define _UAPI_XTENSA_PTRACE_H
+
+#include <linux/types.h>
 
 /* Registers used by strace */
 
@@ -35,5 +38,21 @@
 #define PTRACE_GETHBPREGS	20
 #define PTRACE_SETHBPREGS	21
 
+#ifndef __ASSEMBLY__
 
+struct user_pt_regs {
+	__u32 pc;
+	__u32 ps;
+	__u32 lbeg;
+	__u32 lend;
+	__u32 lcount;
+	__u32 sar;
+	__u32 windowstart;
+	__u32 windowbase;
+	__u32 threadptr;
+	__u32 reserved[7 + 48];
+	__u32 a[64];
+};
+
+#endif
 #endif /* _UAPI_XTENSA_PTRACE_H */

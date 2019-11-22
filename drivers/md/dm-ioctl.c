@@ -477,9 +477,13 @@ static int remove_all(struct file *filp, struct dm_ioctl *param, size_t param_si
  * Round up the ptr to an 8-byte boundary.
  */
 #define ALIGN_MASK 7
+static inline size_t align_val(size_t val)
+{
+	return (val + ALIGN_MASK) & ~ALIGN_MASK;
+}
 static inline void *align_ptr(void *ptr)
 {
-	return (void *) (((size_t) (ptr + ALIGN_MASK)) & ~ALIGN_MASK);
+	return (void *)align_val((size_t)ptr);
 }
 
 /*
@@ -505,7 +509,7 @@ static int list_devices(struct file *filp, struct dm_ioctl *param, size_t param_
 	struct hash_cell *hc;
 	size_t len, needed = 0;
 	struct gendisk *disk;
-	struct dm_name_list *nl, *old_nl = NULL;
+	struct dm_name_list *orig_nl, *nl, *old_nl = NULL;
 	uint32_t *event_nr;
 
 	down_write(&_hash_lock);
@@ -516,17 +520,15 @@ static int list_devices(struct file *filp, struct dm_ioctl *param, size_t param_
 	 */
 	for (i = 0; i < NUM_BUCKETS; i++) {
 		list_for_each_entry (hc, _name_buckets + i, name_list) {
-			needed += sizeof(struct dm_name_list);
-			needed += strlen(hc->name) + 1;
-			needed += ALIGN_MASK;
-			needed += (sizeof(uint32_t) + ALIGN_MASK) & ~ALIGN_MASK;
+			needed += align_val(offsetof(struct dm_name_list, name) + strlen(hc->name) + 1);
+			needed += align_val(sizeof(uint32_t));
 		}
 	}
 
 	/*
 	 * Grab our output buffer.
 	 */
-	nl = get_result_buffer(param, param_size, &len);
+	nl = orig_nl = get_result_buffer(param, param_size, &len);
 	if (len < needed) {
 		param->flags |= DM_BUFFER_FULL_FLAG;
 		goto out;
@@ -549,11 +551,16 @@ static int list_devices(struct file *filp, struct dm_ioctl *param, size_t param_
 			strcpy(nl->name, hc->name);
 
 			old_nl = nl;
-			event_nr = align_ptr(((void *) (nl + 1)) + strlen(hc->name) + 1);
+			event_nr = align_ptr(nl->name + strlen(hc->name) + 1);
 			*event_nr = dm_get_event_nr(hc->md);
 			nl = align_ptr(event_nr + 1);
 		}
 	}
+	/*
+	 * If mismatch happens, security may be compromised due to buffer
+	 * overflow, so it's better to crash.
+	 */
+	BUG_ON((char *)nl - (char *)orig_nl != needed);
 
  out:
 	up_write(&_hash_lock);
@@ -1337,7 +1344,8 @@ static int table_load(struct file *filp, struct dm_ioctl *param, size_t param_si
 			goto err_unlock_md_type;
 		}
 	} else if (!is_valid_type(dm_get_md_type(md), dm_table_get_type(t))) {
-		DMWARN("can't change device type after initial table load.");
+		DMWARN("can't change device type (old=%u vs new=%u) after initial table load.",
+		       dm_get_md_type(md), dm_table_get_type(t));
 		r = -EINVAL;
 		goto err_unlock_md_type;
 	}
@@ -1588,7 +1596,7 @@ static int target_message(struct file *filp, struct dm_ioctl *param, size_t para
 		DMWARN("Target message sector outside device.");
 		r = -EINVAL;
 	} else if (ti->type->message)
-		r = ti->type->message(ti, argc, argv);
+		r = ti->type->message(ti, argc, argv, result, maxlen);
 	else {
 		DMWARN("Target type does not support messages");
 		r = -EINVAL;
@@ -1621,7 +1629,8 @@ static int target_message(struct file *filp, struct dm_ioctl *param, size_t para
  * which has a variable size, is not used by the function processing
  * the ioctl.
  */
-#define IOCTL_FLAGS_NO_PARAMS	1
+#define IOCTL_FLAGS_NO_PARAMS		1
+#define IOCTL_FLAGS_ISSUE_GLOBAL_EVENT	2
 
 /*-----------------------------------------------------------------
  * Implementation of open/close/ioctl on the special char
@@ -1629,18 +1638,18 @@ static int target_message(struct file *filp, struct dm_ioctl *param, size_t para
  *---------------------------------------------------------------*/
 static ioctl_fn lookup_ioctl(unsigned int cmd, int *ioctl_flags)
 {
-	static struct {
+	static const struct {
 		int cmd;
 		int flags;
 		ioctl_fn fn;
 	} _ioctls[] = {
 		{DM_VERSION_CMD, 0, NULL}, /* version is dealt with elsewhere */
-		{DM_REMOVE_ALL_CMD, IOCTL_FLAGS_NO_PARAMS, remove_all},
+		{DM_REMOVE_ALL_CMD, IOCTL_FLAGS_NO_PARAMS | IOCTL_FLAGS_ISSUE_GLOBAL_EVENT, remove_all},
 		{DM_LIST_DEVICES_CMD, 0, list_devices},
 
-		{DM_DEV_CREATE_CMD, IOCTL_FLAGS_NO_PARAMS, dev_create},
-		{DM_DEV_REMOVE_CMD, IOCTL_FLAGS_NO_PARAMS, dev_remove},
-		{DM_DEV_RENAME_CMD, 0, dev_rename},
+		{DM_DEV_CREATE_CMD, IOCTL_FLAGS_NO_PARAMS | IOCTL_FLAGS_ISSUE_GLOBAL_EVENT, dev_create},
+		{DM_DEV_REMOVE_CMD, IOCTL_FLAGS_NO_PARAMS | IOCTL_FLAGS_ISSUE_GLOBAL_EVENT, dev_remove},
+		{DM_DEV_RENAME_CMD, IOCTL_FLAGS_ISSUE_GLOBAL_EVENT, dev_rename},
 		{DM_DEV_SUSPEND_CMD, IOCTL_FLAGS_NO_PARAMS, dev_suspend},
 		{DM_DEV_STATUS_CMD, IOCTL_FLAGS_NO_PARAMS, dev_status},
 		{DM_DEV_WAIT_CMD, 0, dev_wait},
@@ -1711,8 +1720,7 @@ static void free_params(struct dm_ioctl *param, size_t param_size, int param_fla
 }
 
 static int copy_params(struct dm_ioctl __user *user, struct dm_ioctl *param_kernel,
-		       int ioctl_flags,
-		       struct dm_ioctl **param, int *param_flags)
+		       int ioctl_flags, struct dm_ioctl **param, int *param_flags)
 {
 	struct dm_ioctl *dmi;
 	int secure_data;
@@ -1753,18 +1761,13 @@ static int copy_params(struct dm_ioctl __user *user, struct dm_ioctl *param_kern
 
 	*param_flags |= DM_PARAMS_MALLOC;
 
-	if (copy_from_user(dmi, user, param_kernel->data_size))
-		goto bad;
+	/* Copy from param_kernel (which was already copied from user) */
+	memcpy(dmi, param_kernel, minimum_data_size);
 
+	if (copy_from_user(&dmi->data, (char __user *)user + minimum_data_size,
+			   param_kernel->data_size - minimum_data_size))
+		goto bad;
 data_copied:
-	/*
-	 * Abort if something changed the ioctl data while it was being copied.
-	 */
-	if (dmi->data_size != param_kernel->data_size) {
-		DMERR("rejecting ioctl: data size modified while processing parameters");
-		goto bad;
-	}
-
 	/* Wipe the user buffer so we do not return it to userspace */
 	if (secure_data && clear_user(user, param_kernel->data_size))
 		goto bad;
@@ -1869,6 +1872,9 @@ static int ctl_ioctl(struct file *file, uint command, struct dm_ioctl __user *us
 	    unlikely(ioctl_flags & IOCTL_FLAGS_NO_PARAMS))
 		DMERR("ioctl %d tried to output some data but has IOCTL_FLAGS_NO_PARAMS set", cmd);
 
+	if (!r && ioctl_flags & IOCTL_FLAGS_ISSUE_GLOBAL_EVENT)
+		dm_issue_global_event();
+
 	/*
 	 * Copy the results back to userland.
 	 */
@@ -1918,15 +1924,15 @@ static int dm_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-static unsigned dm_poll(struct file *filp, poll_table *wait)
+static __poll_t dm_poll(struct file *filp, poll_table *wait)
 {
 	struct dm_file *priv = filp->private_data;
-	unsigned mask = 0;
+	__poll_t mask = 0;
 
 	poll_wait(filp, &dm_global_eventq, wait);
 
 	if ((int)(atomic_read(&dm_global_event_nr) - priv->global_event_nr) > 0)
-		mask |= POLLIN;
+		mask |= EPOLLIN;
 
 	return mask;
 }
@@ -2010,5 +2016,112 @@ int dm_copy_name_and_uuid(struct mapped_device *md, char *name, char *uuid)
 out:
 	mutex_unlock(&dm_hash_cells_mutex);
 
+	return r;
+}
+
+
+/**
+ * dm_early_create - create a mapped device in early boot.
+ *
+ * @dmi: Contains main information of the device mapping to be created.
+ * @spec_array: array of pointers to struct dm_target_spec. Describes the
+ * mapping table of the device.
+ * @target_params_array: array of strings with the parameters to a specific
+ * target.
+ *
+ * Instead of having the struct dm_target_spec and the parameters for every
+ * target embedded at the end of struct dm_ioctl (as performed in a normal
+ * ioctl), pass them as arguments, so the caller doesn't need to serialize them.
+ * The size of the spec_array and target_params_array is given by
+ * @dmi->target_count.
+ * This function is supposed to be called in early boot, so locking mechanisms
+ * to protect against concurrent loads are not required.
+ */
+int __init dm_early_create(struct dm_ioctl *dmi,
+			   struct dm_target_spec **spec_array,
+			   char **target_params_array)
+{
+	int r, m = DM_ANY_MINOR;
+	struct dm_table *t, *old_map;
+	struct mapped_device *md;
+	unsigned int i;
+
+	if (!dmi->target_count)
+		return -EINVAL;
+
+	r = check_name(dmi->name);
+	if (r)
+		return r;
+
+	if (dmi->flags & DM_PERSISTENT_DEV_FLAG)
+		m = MINOR(huge_decode_dev(dmi->dev));
+
+	/* alloc dm device */
+	r = dm_create(m, &md);
+	if (r)
+		return r;
+
+	/* hash insert */
+	r = dm_hash_insert(dmi->name, *dmi->uuid ? dmi->uuid : NULL, md);
+	if (r)
+		goto err_destroy_dm;
+
+	/* alloc table */
+	r = dm_table_create(&t, get_mode(dmi), dmi->target_count, md);
+	if (r)
+		goto err_hash_remove;
+
+	/* add targets */
+	for (i = 0; i < dmi->target_count; i++) {
+		r = dm_table_add_target(t, spec_array[i]->target_type,
+					(sector_t) spec_array[i]->sector_start,
+					(sector_t) spec_array[i]->length,
+					target_params_array[i]);
+		if (r) {
+			DMWARN("error adding target to table");
+			goto err_destroy_table;
+		}
+	}
+
+	/* finish table */
+	r = dm_table_complete(t);
+	if (r)
+		goto err_destroy_table;
+
+	md->type = dm_table_get_type(t);
+	/* setup md->queue to reflect md's type (may block) */
+	r = dm_setup_md_queue(md, t);
+	if (r) {
+		DMWARN("unable to set up device queue for new table.");
+		goto err_destroy_table;
+	}
+
+	/* Set new map */
+	dm_suspend(md, 0);
+	old_map = dm_swap_table(md, t);
+	if (IS_ERR(old_map)) {
+		r = PTR_ERR(old_map);
+		goto err_destroy_table;
+	}
+	set_disk_ro(dm_disk(md), !!(dmi->flags & DM_READONLY_FLAG));
+
+	/* resume device */
+	r = dm_resume(md);
+	if (r)
+		goto err_destroy_table;
+
+	DMINFO("%s (%s) is ready", md->disk->disk_name, dmi->name);
+	dm_put(md);
+	return 0;
+
+err_destroy_table:
+	dm_table_destroy(t);
+err_hash_remove:
+	(void) __hash_remove(__get_name_cell(dmi->name));
+	/* release reference from __get_name_cell */
+	dm_put(md);
+err_destroy_dm:
+	dm_put(md);
+	dm_destroy(md);
 	return r;
 }

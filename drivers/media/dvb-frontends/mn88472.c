@@ -1,17 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Panasonic MN88472 DVB-T/T2/C demodulator driver
  *
  * Copyright (C) 2013 Antti Palosaari <crope@iki.fi>
- *
- *    This program is free software; you can redistribute it and/or modify
- *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation; either version 2 of the License, or
- *    (at your option) any later version.
- *
- *    This program is distributed in the hope that it will be useful,
- *    but WITHOUT ANY WARRANTY; without even the implied warranty of
- *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *    GNU General Public License for more details.
  */
 
 #include "mn88472_priv.h"
@@ -377,7 +368,9 @@ static int mn88472_set_frontend(struct dvb_frontend *fe)
 		ret = regmap_write(dev->regmap[1], 0xf6, 0x05);
 		if (ret)
 			goto err;
-		ret = regmap_write(dev->regmap[2], 0x32, c->stream_id);
+		ret = regmap_write(dev->regmap[2], 0x32,
+				(c->stream_id == NO_STREAM_ID_FILTER) ? 0 :
+				c->stream_id );
 		if (ret)
 			goto err;
 		break;

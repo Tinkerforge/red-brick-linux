@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * config.c
  *
@@ -10,17 +11,19 @@
  */
 #include <errno.h>
 #include <sys/param.h>
-#include "util.h"
 #include "cache.h"
+#include "callchain.h"
 #include <subcmd/exec-cmd.h>
+#include "util/event.h"  /* proc_map_timeout */
 #include "util/hist.h"  /* perf_hist_config */
 #include "util/llvm-utils.h"   /* perf_llvm_config */
 #include "config.h"
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#include "sane_ctype.h"
+#include <linux/string.h>
+#include <linux/zalloc.h>
+#include <linux/ctype.h>
 
 #define MAXNAME (256)
 
@@ -417,6 +420,9 @@ static int perf_buildid_config(const char *var, const char *value)
 static int perf_default_core_config(const char *var __maybe_unused,
 				    const char *value __maybe_unused)
 {
+	if (!strcmp(var, "core.proc-map-timeout"))
+		proc_map_timeout = strtoul(value, NULL, 10);
+
 	/* Add other config variables here. */
 	return 0;
 }
@@ -433,22 +439,22 @@ static int perf_ui_config(const char *var, const char *value)
 int perf_default_config(const char *var, const char *value,
 			void *dummy __maybe_unused)
 {
-	if (!prefixcmp(var, "core."))
+	if (strstarts(var, "core."))
 		return perf_default_core_config(var, value);
 
-	if (!prefixcmp(var, "hist."))
+	if (strstarts(var, "hist."))
 		return perf_hist_config(var, value);
 
-	if (!prefixcmp(var, "ui."))
+	if (strstarts(var, "ui."))
 		return perf_ui_config(var, value);
 
-	if (!prefixcmp(var, "call-graph."))
+	if (strstarts(var, "call-graph."))
 		return perf_callchain_config(var, value);
 
-	if (!prefixcmp(var, "llvm."))
+	if (strstarts(var, "llvm."))
 		return perf_llvm_config(var, value);
 
-	if (!prefixcmp(var, "buildid."))
+	if (strstarts(var, "buildid."))
 		return perf_buildid_config(var, value);
 
 	/* Add other config variables here. */
@@ -626,11 +632,10 @@ static int collect_config(const char *var, const char *value,
 	}
 
 	ret = set_value(item, value);
-	return ret;
 
 out_free:
 	free(key);
-	return -1;
+	return ret;
 }
 
 int perf_config_set__collect(struct perf_config_set *set, const char *file_name,
@@ -699,13 +704,18 @@ struct perf_config_set *perf_config_set__new(void)
 
 	if (set) {
 		INIT_LIST_HEAD(&set->sections);
-		if (perf_config_set__init(set) < 0) {
-			perf_config_set__delete(set);
-			set = NULL;
-		}
+		perf_config_set__init(set);
 	}
 
 	return set;
+}
+
+static int perf_config__init(void)
+{
+	if (config_set == NULL)
+		config_set = perf_config_set__new();
+
+	return config_set == NULL;
 }
 
 int perf_config(config_fn_t fn, void *data)
@@ -715,7 +725,7 @@ int perf_config(config_fn_t fn, void *data)
 	struct perf_config_section *section;
 	struct perf_config_item *item;
 
-	if (config_set == NULL)
+	if (config_set == NULL && perf_config__init())
 		return -1;
 
 	perf_config_set__for_each_entry(config_set, section, item) {
@@ -728,18 +738,16 @@ int perf_config(config_fn_t fn, void *data)
 			if (ret < 0) {
 				pr_err("Error: wrong config key-value pair %s=%s\n",
 				       key, value);
-				break;
+				/*
+				 * Can't be just a 'break', as perf_config_set__for_each_entry()
+				 * expands to two nested for() loops.
+				 */
+				goto out;
 			}
 		}
 	}
-
+out:
 	return ret;
-}
-
-void perf_config__init(void)
-{
-	if (config_set == NULL)
-		config_set = perf_config_set__new();
 }
 
 void perf_config__exit(void)
@@ -810,14 +818,14 @@ int config_error_nonbool(const char *var)
 void set_buildid_dir(const char *dir)
 {
 	if (dir)
-		scnprintf(buildid_dir, MAXPATHLEN-1, "%s", dir);
+		scnprintf(buildid_dir, MAXPATHLEN, "%s", dir);
 
 	/* default to $HOME/.debug */
 	if (buildid_dir[0] == '\0') {
 		char *home = getenv("HOME");
 
 		if (home) {
-			snprintf(buildid_dir, MAXPATHLEN-1, "%s/%s",
+			snprintf(buildid_dir, MAXPATHLEN, "%s/%s",
 				 home, DEBUG_CACHE_DIR);
 		} else {
 			strncpy(buildid_dir, DEBUG_CACHE_DIR, MAXPATHLEN-1);

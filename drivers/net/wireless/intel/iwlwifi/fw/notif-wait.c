@@ -6,7 +6,7 @@
  * GPL LICENSE SUMMARY
  *
  * Copyright(c) 2007 - 2014 Intel Corporation. All rights reserved.
- * Copyright(c) 2015 Intel Deutschland GmbH
+ * Copyright(c) 2015 - 2017 Intel Deutschland GmbH
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -16,11 +16,6 @@
  * WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110,
- * USA
  *
  * The full GNU General Public License is included in this distribution
  * in the file called COPYING.
@@ -32,6 +27,7 @@
  * BSD LICENSE
  *
  * Copyright(c) 2005 - 2014 Intel Corporation. All rights reserved.
+ * Copyright(c) 2015 - 2017 Intel Deutschland GmbH
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -161,6 +157,15 @@ iwl_init_notification_wait(struct iwl_notif_wait_data *notif_wait,
 }
 IWL_EXPORT_SYMBOL(iwl_init_notification_wait);
 
+void iwl_remove_notification(struct iwl_notif_wait_data *notif_wait,
+			     struct iwl_notification_wait *wait_entry)
+{
+	spin_lock_bh(&notif_wait->notif_wait_lock);
+	list_del(&wait_entry->list);
+	spin_unlock_bh(&notif_wait->notif_wait_lock);
+}
+IWL_EXPORT_SYMBOL(iwl_remove_notification);
+
 int iwl_wait_notification(struct iwl_notif_wait_data *notif_wait,
 			  struct iwl_notification_wait *wait_entry,
 			  unsigned long timeout)
@@ -171,9 +176,7 @@ int iwl_wait_notification(struct iwl_notif_wait_data *notif_wait,
 				 wait_entry->triggered || wait_entry->aborted,
 				 timeout);
 
-	spin_lock_bh(&notif_wait->notif_wait_lock);
-	list_del(&wait_entry->list);
-	spin_unlock_bh(&notif_wait->notif_wait_lock);
+	iwl_remove_notification(notif_wait, wait_entry);
 
 	if (wait_entry->aborted)
 		return -EIO;
@@ -184,12 +187,3 @@ int iwl_wait_notification(struct iwl_notif_wait_data *notif_wait,
 	return 0;
 }
 IWL_EXPORT_SYMBOL(iwl_wait_notification);
-
-void iwl_remove_notification(struct iwl_notif_wait_data *notif_wait,
-			     struct iwl_notification_wait *wait_entry)
-{
-	spin_lock_bh(&notif_wait->notif_wait_lock);
-	list_del(&wait_entry->list);
-	spin_unlock_bh(&notif_wait->notif_wait_lock);
-}
-IWL_EXPORT_SYMBOL(iwl_remove_notification);

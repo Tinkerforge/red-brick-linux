@@ -1,19 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * BPF JIT compiler for ARM64
  *
  * Copyright (C) 2014-2016 Zi Shen Lim <zlim.lnx@gmail.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #ifndef _BPF_JIT_H
 #define _BPF_JIT_H
@@ -44,8 +33,12 @@
 #define A64_COND_NE	AARCH64_INSN_COND_NE /* != */
 #define A64_COND_CS	AARCH64_INSN_COND_CS /* unsigned >= */
 #define A64_COND_HI	AARCH64_INSN_COND_HI /* unsigned > */
+#define A64_COND_LS	AARCH64_INSN_COND_LS /* unsigned <= */
+#define A64_COND_CC	AARCH64_INSN_COND_CC /* unsigned < */
 #define A64_COND_GE	AARCH64_INSN_COND_GE /* signed >= */
 #define A64_COND_GT	AARCH64_INSN_COND_GT /* signed > */
+#define A64_COND_LE	AARCH64_INSN_COND_LE /* signed <= */
+#define A64_COND_LT	AARCH64_INSN_COND_LT /* signed < */
 #define A64_B_(cond, imm19) A64_COND_BRANCH(cond, (imm19) << 2)
 
 /* Unconditional branch (immediate) */
@@ -96,11 +89,9 @@
 #define A64_STXR(sf, Rt, Rn, Rs) \
 	A64_LSX(sf, Rt, Rn, Rs, STORE_EX)
 
-/* Prefetch */
-#define A64_PRFM(Rn, type, target, policy) \
-	aarch64_insn_gen_prefetch(Rn, AARCH64_INSN_PRFM_TYPE_##type, \
-				  AARCH64_INSN_PRFM_TARGET_##target, \
-				  AARCH64_INSN_PRFM_POLICY_##policy)
+/* LSE atomics */
+#define A64_STADD(sf, Rn, Rs) \
+	aarch64_insn_gen_stadd(Rn, Rs, A64_SIZE(sf))
 
 /* Add/subtract (immediate) */
 #define A64_ADDSUB_IMM(sf, Rd, Rn, imm12, type) \

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #if defined(__i386__) || defined(__x86_64__)
 
 #include "helpers/helpers.h"
@@ -13,7 +14,7 @@ int cpufreq_has_boost_support(unsigned int cpu, int *support, int *active,
 
 	*support = *active = *states = 0;
 
-	ret = get_cpu_info(0, &cpu_info);
+	ret = get_cpu_info(&cpu_info);
 	if (ret)
 		return ret;
 
@@ -25,7 +26,7 @@ int cpufreq_has_boost_support(unsigned int cpu, int *support, int *active,
 		 * has Hardware determined variable increments instead.
 		 */
 
-		if (cpu_info.family == 0x17) {
+		if (cpu_info.family == 0x17 || cpu_info.family == 0x18) {
 			if (!read_msr(cpu, MSR_AMD_HWCR, &val)) {
 				if (!(val & CPUPOWER_AMD_CPBDIS))
 					*active = 1;

@@ -1,6 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2012 The Chromium OS Authors. All rights reserved.
- * Use of this source code is governed by the GPLv2 license.
  *
  * kselftest_harness.h: simple C unit test helper.
  *
@@ -51,6 +51,9 @@
 #define __KSELFTEST_HARNESS_H
 
 #define _GNU_SOURCE
+#include <asm/types.h>
+#include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,6 +62,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#define TEST_TIMEOUT_DEFAULT 30
 
 /* Utilities exposed to the test definitions */
 #ifndef TH_LOG_STREAM
@@ -84,6 +88,14 @@
  * E.g., #define TH_LOG_ENABLED 1
  *
  * If no definition is provided, logging is enabled by default.
+ *
+ * If there is no way to print an error message for the process running the
+ * test (e.g. not allowed to write to stderr), it is still possible to get the
+ * ASSERT_* number for which the test failed.  This behavior can be enabled by
+ * writing `_metadata->no_print = true;` before the check sequence that is
+ * unable to print.  When an error occur, instead of printing an error message
+ * and calling `abort(3)`, the test process call `_exit(2)` with the assert
+ * number as argument, which is then printed by the parent process.
  */
 #define TH_LOG(fmt, ...) do { \
 	if (TH_LOG_ENABLED) \
@@ -94,6 +106,27 @@
 #define __TH_LOG(fmt, ...) \
 		fprintf(TH_LOG_STREAM, "%s:%d:%s:" fmt "\n", \
 			__FILE__, __LINE__, _metadata->name, ##__VA_ARGS__)
+
+/**
+ * XFAIL(statement, fmt, ...)
+ *
+ * @statement: statement to run after reporting XFAIL
+ * @fmt: format string
+ * @...: optional arguments
+ *
+ * This forces a "pass" after reporting a failure with an XFAIL prefix,
+ * and runs "statement", which is usually "return" or "goto skip".
+ */
+#define XFAIL(statement, fmt, ...) do { \
+	if (TH_LOG_ENABLED) { \
+		fprintf(TH_LOG_STREAM, "[  XFAIL!  ] " fmt "\n", \
+			##__VA_ARGS__); \
+	} \
+	/* TODO: find a way to pass xfail to test runner process. */ \
+	_metadata->passed = 1; \
+	_metadata->trigger = 0; \
+	statement; \
+} while (0)
 
 /**
  * TEST(test_name) - Defines the test function and creates the registration
@@ -136,8 +169,9 @@
 #define __TEST_IMPL(test_name, _signal) \
 	static void test_name(struct __test_metadata *_metadata); \
 	static struct __test_metadata _##test_name##_object = \
-		{ name: "global." #test_name, \
-		  fn: &test_name, termsig: _signal }; \
+		{ .name = "global." #test_name, \
+		  .fn = &test_name, .termsig = _signal, \
+		  .timeout = TEST_TIMEOUT_DEFAULT, }; \
 	static void __attribute__((constructor)) _register_##test_name(void) \
 	{ \
 		__register_test(&_##test_name##_object); \
@@ -187,7 +221,7 @@
 
 /**
  * FIXTURE_SETUP(fixture_name) - Prepares the setup function for the fixture.
- * *_metadata* is included so that ASSERT_* work as a convenience
+ * *_metadata* is included so that EXPECT_* and ASSERT_* work correctly.
  *
  * @fixture_name: fixture name
  *
@@ -210,6 +244,7 @@
 		FIXTURE_DATA(fixture_name) __attribute__((unused)) *self)
 /**
  * FIXTURE_TEARDOWN(fixture_name)
+ * *_metadata* is included so that EXPECT_* and ASSERT_* work correctly.
  *
  * @fixture_name: fixture name
  *
@@ -242,15 +277,20 @@
  * Defines a test that depends on a fixture (e.g., is part of a test case).
  * Very similar to TEST() except that *self* is the setup instance of fixture's
  * datatype exposed for use by the implementation.
+ *
+ * Warning: use of ASSERT_* here will skip TEARDOWN.
  */
 /* TODO(wad) register fixtures on dedicated test lists. */
 #define TEST_F(fixture_name, test_name) \
-	__TEST_F_IMPL(fixture_name, test_name, -1)
+	__TEST_F_IMPL(fixture_name, test_name, -1, TEST_TIMEOUT_DEFAULT)
 
 #define TEST_F_SIGNAL(fixture_name, test_name, signal) \
-	__TEST_F_IMPL(fixture_name, test_name, signal)
+	__TEST_F_IMPL(fixture_name, test_name, signal, TEST_TIMEOUT_DEFAULT)
 
-#define __TEST_F_IMPL(fixture_name, test_name, signal) \
+#define TEST_F_TIMEOUT(fixture_name, test_name, timeout) \
+	__TEST_F_IMPL(fixture_name, test_name, -1, timeout)
+
+#define __TEST_F_IMPL(fixture_name, test_name, signal, tmout) \
 	static void fixture_name##_##test_name( \
 		struct __test_metadata *_metadata, \
 		FIXTURE_DATA(fixture_name) *self); \
@@ -269,9 +309,10 @@
 	} \
 	static struct __test_metadata \
 		      _##fixture_name##_##test_name##_object = { \
-		name: #fixture_name "." #test_name, \
-		fn: &wrapper_##fixture_name##_##test_name, \
-		termsig: signal, \
+		.name = #fixture_name "." #test_name, \
+		.fn = &wrapper_##fixture_name##_##test_name, \
+		.termsig = signal, \
+		.timeout = tmout, \
 	 }; \
 	static void __attribute__((constructor)) \
 			_register_##fixture_name##_##test_name(void) \
@@ -319,7 +360,7 @@
  * ASSERT_EQ(expected, measured): expected == measured
  */
 #define ASSERT_EQ(expected, seen) \
-	__EXPECT(expected, seen, ==, 1)
+	__EXPECT(expected, #expected, seen, #seen, ==, 1)
 
 /**
  * ASSERT_NE(expected, seen)
@@ -330,7 +371,7 @@
  * ASSERT_NE(expected, measured): expected != measured
  */
 #define ASSERT_NE(expected, seen) \
-	__EXPECT(expected, seen, !=, 1)
+	__EXPECT(expected, #expected, seen, #seen, !=, 1)
 
 /**
  * ASSERT_LT(expected, seen)
@@ -341,7 +382,7 @@
  * ASSERT_LT(expected, measured): expected < measured
  */
 #define ASSERT_LT(expected, seen) \
-	__EXPECT(expected, seen, <, 1)
+	__EXPECT(expected, #expected, seen, #seen, <, 1)
 
 /**
  * ASSERT_LE(expected, seen)
@@ -352,7 +393,7 @@
  * ASSERT_LE(expected, measured): expected <= measured
  */
 #define ASSERT_LE(expected, seen) \
-	__EXPECT(expected, seen, <=, 1)
+	__EXPECT(expected, #expected, seen, #seen, <=, 1)
 
 /**
  * ASSERT_GT(expected, seen)
@@ -363,7 +404,7 @@
  * ASSERT_GT(expected, measured): expected > measured
  */
 #define ASSERT_GT(expected, seen) \
-	__EXPECT(expected, seen, >, 1)
+	__EXPECT(expected, #expected, seen, #seen, >, 1)
 
 /**
  * ASSERT_GE(expected, seen)
@@ -374,7 +415,7 @@
  * ASSERT_GE(expected, measured): expected >= measured
  */
 #define ASSERT_GE(expected, seen) \
-	__EXPECT(expected, seen, >=, 1)
+	__EXPECT(expected, #expected, seen, #seen, >=, 1)
 
 /**
  * ASSERT_NULL(seen)
@@ -384,7 +425,7 @@
  * ASSERT_NULL(measured): NULL == measured
  */
 #define ASSERT_NULL(seen) \
-	__EXPECT(NULL, seen, ==, 1)
+	__EXPECT(NULL, "NULL", seen, #seen, ==, 1)
 
 /**
  * ASSERT_TRUE(seen)
@@ -394,7 +435,7 @@
  * ASSERT_TRUE(measured): measured != 0
  */
 #define ASSERT_TRUE(seen) \
-	ASSERT_NE(0, seen)
+	__EXPECT(0, "0", seen, #seen, !=, 1)
 
 /**
  * ASSERT_FALSE(seen)
@@ -404,7 +445,7 @@
  * ASSERT_FALSE(measured): measured == 0
  */
 #define ASSERT_FALSE(seen) \
-	ASSERT_EQ(0, seen)
+	__EXPECT(0, "0", seen, #seen, ==, 1)
 
 /**
  * ASSERT_STREQ(expected, seen)
@@ -437,7 +478,7 @@
  * EXPECT_EQ(expected, measured): expected == measured
  */
 #define EXPECT_EQ(expected, seen) \
-	__EXPECT(expected, seen, ==, 0)
+	__EXPECT(expected, #expected, seen, #seen, ==, 0)
 
 /**
  * EXPECT_NE(expected, seen)
@@ -448,7 +489,7 @@
  * EXPECT_NE(expected, measured): expected != measured
  */
 #define EXPECT_NE(expected, seen) \
-	__EXPECT(expected, seen, !=, 0)
+	__EXPECT(expected, #expected, seen, #seen, !=, 0)
 
 /**
  * EXPECT_LT(expected, seen)
@@ -459,7 +500,7 @@
  * EXPECT_LT(expected, measured): expected < measured
  */
 #define EXPECT_LT(expected, seen) \
-	__EXPECT(expected, seen, <, 0)
+	__EXPECT(expected, #expected, seen, #seen, <, 0)
 
 /**
  * EXPECT_LE(expected, seen)
@@ -470,7 +511,7 @@
  * EXPECT_LE(expected, measured): expected <= measured
  */
 #define EXPECT_LE(expected, seen) \
-	__EXPECT(expected, seen, <=, 0)
+	__EXPECT(expected, #expected, seen, #seen, <=, 0)
 
 /**
  * EXPECT_GT(expected, seen)
@@ -481,7 +522,7 @@
  * EXPECT_GT(expected, measured): expected > measured
  */
 #define EXPECT_GT(expected, seen) \
-	__EXPECT(expected, seen, >, 0)
+	__EXPECT(expected, #expected, seen, #seen, >, 0)
 
 /**
  * EXPECT_GE(expected, seen)
@@ -492,7 +533,7 @@
  * EXPECT_GE(expected, measured): expected >= measured
  */
 #define EXPECT_GE(expected, seen) \
-	__EXPECT(expected, seen, >=, 0)
+	__EXPECT(expected, #expected, seen, #seen, >=, 0)
 
 /**
  * EXPECT_NULL(seen)
@@ -502,7 +543,7 @@
  * EXPECT_NULL(measured): NULL == measured
  */
 #define EXPECT_NULL(seen) \
-	__EXPECT(NULL, seen, ==, 0)
+	__EXPECT(NULL, "NULL", seen, #seen, ==, 0)
 
 /**
  * EXPECT_TRUE(seen)
@@ -512,7 +553,7 @@
  * EXPECT_TRUE(measured): 0 != measured
  */
 #define EXPECT_TRUE(seen) \
-	EXPECT_NE(0, seen)
+	__EXPECT(0, "0", seen, #seen, !=, 0)
 
 /**
  * EXPECT_FALSE(seen)
@@ -522,7 +563,7 @@
  * EXPECT_FALSE(measured): 0 == measured
  */
 #define EXPECT_FALSE(seen) \
-	EXPECT_EQ(0, seen)
+	__EXPECT(0, "0", seen, #seen, ==, 0)
 
 /**
  * EXPECT_STREQ(expected, seen)
@@ -555,18 +596,24 @@
  * return while still providing an optional block to the API consumer.
  */
 #define OPTIONAL_HANDLER(_assert) \
-	for (; _metadata->trigger;  _metadata->trigger = __bail(_assert))
+	for (; _metadata->trigger; _metadata->trigger = \
+			__bail(_assert, _metadata->no_print, _metadata->step))
 
-#define __EXPECT(_expected, _seen, _t, _assert) do { \
+#define __INC_STEP(_metadata) \
+	if (_metadata->passed && _metadata->step < 255) \
+		_metadata->step++;
+
+#define __EXPECT(_expected, _expected_str, _seen, _seen_str, _t, _assert) do { \
 	/* Avoid multiple evaluation of the cases */ \
 	__typeof__(_expected) __exp = (_expected); \
 	__typeof__(_seen) __seen = (_seen); \
+	if (_assert) __INC_STEP(_metadata); \
 	if (!(__exp _t __seen)) { \
 		unsigned long long __exp_print = (uintptr_t)__exp; \
 		unsigned long long __seen_print = (uintptr_t)__seen; \
 		__TH_LOG("Expected %s (%llu) %s %s (%llu)", \
-			 #_expected, __exp_print, #_t, \
-			 #_seen, __seen_print); \
+			 _expected_str, __exp_print, #_t, \
+			 _seen_str, __seen_print); \
 		_metadata->passed = 0; \
 		/* Ensure the optional handler is triggered */ \
 		_metadata->trigger = 1; \
@@ -576,6 +623,7 @@
 #define __EXPECT_STR(_expected, _seen, _t, _assert) do { \
 	const char *__exp = (_expected); \
 	const char *__seen = (_seen); \
+	if (_assert) __INC_STEP(_metadata); \
 	if (!(strcmp(__exp, __seen) _t 0))  { \
 		__TH_LOG("Expected '%s' %s '%s'.", __exp, #_t, __seen); \
 		_metadata->passed = 0; \
@@ -590,6 +638,9 @@ struct __test_metadata {
 	int termsig;
 	int passed;
 	int trigger; /* extra handler after the evaluation */
+	int timeout;
+	__u8 step;
+	bool no_print; /* manual trigger when TH_LOG_STREAM is not available */
 	struct __test_metadata *prev, *next;
 };
 
@@ -634,10 +685,13 @@ static inline void __register_test(struct __test_metadata *t)
 	}
 }
 
-static inline int __bail(int for_realz)
+static inline int __bail(int for_realz, bool no_print, __u8 step)
 {
-	if (for_realz)
+	if (for_realz) {
+		if (no_print)
+			_exit(step);
 		abort();
+	}
 	return 0;
 }
 
@@ -649,22 +703,29 @@ void __run_test(struct __test_metadata *t)
 	t->passed = 1;
 	t->trigger = 0;
 	printf("[ RUN      ] %s\n", t->name);
+	alarm(t->timeout);
 	child_pid = fork();
 	if (child_pid < 0) {
 		printf("ERROR SPAWNING TEST CHILD\n");
 		t->passed = 0;
 	} else if (child_pid == 0) {
 		t->fn(t);
-		_exit(t->passed);
+		/* return the step that failed or 0 */
+		_exit(t->passed ? 0 : t->step);
 	} else {
 		/* TODO(wad) add timeout support. */
 		waitpid(child_pid, &status, 0);
 		if (WIFEXITED(status)) {
-			t->passed = t->termsig == -1 ? WEXITSTATUS(status) : 0;
+			t->passed = t->termsig == -1 ? !WEXITSTATUS(status) : 0;
 			if (t->termsig != -1) {
 				fprintf(TH_LOG_STREAM,
 					"%s: Test exited normally "
 					"instead of by signal (code: %d)\n",
+					t->name,
+					WEXITSTATUS(status));
+			} else if (!t->passed) {
+				fprintf(TH_LOG_STREAM,
+					"%s: Test failed at step #%d\n",
 					t->name,
 					WEXITSTATUS(status));
 			}
@@ -691,6 +752,7 @@ void __run_test(struct __test_metadata *t)
 		}
 	}
 	printf("[     %4s ] %s\n", (t->passed ? "OK" : "FAIL"), t->name);
+	alarm(0);
 }
 
 static int test_harness_run(int __attribute__((unused)) argc,

@@ -1,26 +1,5 @@
-/******************************************************************************
- *
- * Copyright(c) 2007 - 2011 Realtek Corporation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
- * more details.
- *
- * The full GNU General Public License is included in this distribution in the
- * file called LICENSE.
- *
- * Contact Information:
- * wlanfae <wlanfae@realtek.com>
- * Realtek Corporation, No. 2, Innovation Road II, Hsinchu Science Park,
- * Hsinchu 300, Taiwan.
- * Larry Finger <Larry.Finger@lwfinger.net>
- *
- ******************************************************************************/
+/* SPDX-License-Identifier: GPL-2.0 */
+/* Copyright(c) 2007-2011  Realtek Corporation.*/
 
 #ifndef	__HALBT_PRECOMP_H__
 #define __HALBT_PRECOMP_H__
@@ -43,29 +22,11 @@
 #define RT_SDIO_INTERFACE	3
 #define DEV_BUS_TYPE		RT_PCI_INTERFACE
 
-/* IC type */
-#define RTL_HW_TYPE(adapter)	(rtl_hal((struct rtl_priv *)adapter)->hw_type)
-
-#define IS_NEW_GENERATION_IC(adapter)		\
-			(RTL_HW_TYPE(adapter) >= HARDWARE_TYPE_RTL8192EE)
-#define IS_HARDWARE_TYPE_8812(adapter)		\
-			(RTL_HW_TYPE(adapter) == HARDWARE_TYPE_RTL8812AE)
-#define IS_HARDWARE_TYPE_8821(adapter)		\
-			(RTL_HW_TYPE(adapter) == HARDWARE_TYPE_RTL8821AE)
-#define IS_HARDWARE_TYPE_8723A(adapter)	\
-			(RTL_HW_TYPE(adapter) == HARDWARE_TYPE_RTL8723AE)
-#define IS_HARDWARE_TYPE_8723B(adapter)	\
-			(RTL_HW_TYPE(adapter) == HARDWARE_TYPE_RTL8723BE)
-#define IS_HARDWARE_TYPE_8192E(adapter)	\
-			(RTL_HW_TYPE(adapter) == HARDWARE_TYPE_RTL8192EE)
-
 #include "halbtc8192e2ant.h"
 #include "halbtc8723b1ant.h"
 #include "halbtc8723b2ant.h"
 #include "halbtc8821a2ant.h"
 #include "halbtc8821a1ant.h"
-
-#define GetDefaultAdapter(padapter)	padapter
 
 #define BIT0	0x00000001
 #define BIT1	0x00000002

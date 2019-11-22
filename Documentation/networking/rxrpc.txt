@@ -280,6 +280,18 @@ Interaction with the user of the RxRPC socket:
      nominated by a socket option.
 
 
+Notes on sendmsg:
+
+ (*) MSG_WAITALL can be set to tell sendmsg to ignore signals if the peer is
+     making progress at accepting packets within a reasonable time such that we
+     manage to queue up all the data for transmission.  This requires the
+     client to accept at least one packet per 2*RTT time period.
+
+     If this isn't set, sendmsg() will return immediately, either returning
+     EINTR/ERESTARTSYS if nothing was consumed or returning the amount of data
+     consumed.
+
+
 Notes on recvmsg:
 
  (*) If there's a sequence of data messages belonging to a particular call on
@@ -649,7 +661,7 @@ A server would be set up to accept operations in the following manner:
 	setsockopt(server, SOL_RXRPC, RXRPC_SECURITY_KEYRING, "AFSkeys", 7);
 
      The keyring can be manipulated after it has been given to the socket. This
-     permits the server to add more keys, replace keys, etc. whilst it is live.
+     permits the server to add more keys, replace keys, etc. while it is live.
 
  (3) A local address must then be bound:
 
@@ -782,7 +794,11 @@ The kernel interface functions are as follows:
 				struct key *key,
 				unsigned long user_call_ID,
 				s64 tx_total_len,
-				gfp_t gfp);
+				gfp_t gfp,
+				rxrpc_notify_rx_t notify_rx,
+				bool upgrade,
+				bool intr,
+				unsigned int debug_id);
 
      This allocates the infrastructure to make a new RxRPC call and assigns
      call and connection numbers.  The call will be made on the UDP port that
@@ -803,6 +819,20 @@ The kernel interface functions are as follows:
      allows the kernel to encrypt directly to the packet buffers, thereby
      saving a copy.  The value may not be less than -1.
 
+     notify_rx is a pointer to a function to be called when events such as
+     incoming data packets or remote aborts happen.
+
+     upgrade should be set to true if a client operation should request that
+     the server upgrade the service to a better one.  The resultant service ID
+     is returned by rxrpc_kernel_recv_data().
+
+     intr should be set to true if the call should be interruptible.  If this
+     is not set, this function may not return until a channel has been
+     allocated; if it is set, the function may return -ERESTARTSYS.
+
+     debug_id is the call debugging ID to be used for tracing.  This can be
+     obtained by atomically incrementing rxrpc_debug_id.
+
      If this function is successful, an opaque reference to the RxRPC call is
      returned.  The caller now holds a reference on this and it must be
      properly ended.
@@ -818,10 +848,15 @@ The kernel interface functions are as follows:
 
  (*) Send data through a call.
 
+	typedef void (*rxrpc_notify_end_tx_t)(struct sock *sk,
+					      unsigned long user_call_ID,
+					      struct sk_buff *skb);
+
 	int rxrpc_kernel_send_data(struct socket *sock,
 				   struct rxrpc_call *call,
 				   struct msghdr *msg,
-				   size_t len);
+				   size_t len,
+				   rxrpc_notify_end_tx_t notify_end_rx);
 
      This is used to supply either the request part of a client call or the
      reply part of a server call.  msg.msg_iovlen and msg.msg_iov specify the
@@ -832,6 +867,11 @@ The kernel interface functions are as follows:
      The msg must not specify a destination address, control data or any flags
      other than MSG_MORE.  len is the total amount of data to transmit.
 
+     notify_end_rx can be NULL or it can be used to specify a function to be
+     called when the call changes state to end the Tx phase.  This function is
+     called with the call-state spinlock held to prevent any reply or final ACK
+     from being delivered first.
+
  (*) Receive data from a call.
 
 	int rxrpc_kernel_recv_data(struct socket *sock,
@@ -840,7 +880,8 @@ The kernel interface functions are as follows:
 				   size_t size,
 				   size_t *_offset,
 				   bool want_more,
-				   u32 *_abort)
+				   u32 *_abort,
+				   u16 *_service)
 
       This is used to receive data from either the reply part of a client call
       or the request part of a service call.  buf and size specify how much
@@ -862,6 +903,9 @@ The kernel interface functions are as follows:
 
       If a remote ABORT is detected, the abort code received will be stored in
       *_abort and ECONNABORTED will be returned.
+
+      The service ID that the call ended up with is returned into *_service.
+      This can be used to see if a call got a service upgrade.
 
  (*) Abort a call.
 
@@ -965,6 +1009,72 @@ The kernel interface functions are as follows:
      size should be set when the call is begun.  tx_total_len may not be less
      than zero.
 
+ (*) Get call RTT.
+
+	u64 rxrpc_kernel_get_rtt(struct socket *sock, struct rxrpc_call *call);
+
+     Get the RTT time to the peer in use by a call.  The value returned is in
+     nanoseconds.
+
+ (*) Check call still alive.
+
+	bool rxrpc_kernel_check_life(struct socket *sock,
+				     struct rxrpc_call *call,
+				     u32 *_life);
+	void rxrpc_kernel_probe_life(struct socket *sock,
+				     struct rxrpc_call *call);
+
+     The first function passes back in *_life a number that is updated when
+     ACKs are received from the peer (notably including PING RESPONSE ACKs
+     which we can elicit by sending PING ACKs to see if the call still exists
+     on the server).  The caller should compare the numbers of two calls to see
+     if the call is still alive after waiting for a suitable interval.  It also
+     returns true as long as the call hasn't yet reached the completed state.
+
+     This allows the caller to work out if the server is still contactable and
+     if the call is still alive on the server while waiting for the server to
+     process a client operation.
+
+     The second function causes a ping ACK to be transmitted to try to provoke
+     the peer into responding, which would then cause the value returned by the
+     first function to change.  Note that this must be called in TASK_RUNNING
+     state.
+
+ (*) Get reply timestamp.
+
+	bool rxrpc_kernel_get_reply_time(struct socket *sock,
+					 struct rxrpc_call *call,
+					 ktime_t *_ts)
+
+     This allows the timestamp on the first DATA packet of the reply of a
+     client call to be queried, provided that it is still in the Rx ring.  If
+     successful, the timestamp will be stored into *_ts and true will be
+     returned; false will be returned otherwise.
+
+ (*) Get remote client epoch.
+
+	u32 rxrpc_kernel_get_epoch(struct socket *sock,
+				   struct rxrpc_call *call)
+
+     This allows the epoch that's contained in packets of an incoming client
+     call to be queried.  This value is returned.  The function always
+     successful if the call is still in progress.  It shouldn't be called once
+     the call has expired.  Note that calling this on a local client call only
+     returns the local epoch.
+
+     This value can be used to determine if the remote client has been
+     restarted as it shouldn't change otherwise.
+
+ (*) Set the maxmimum lifespan on a call.
+
+	void rxrpc_kernel_set_max_life(struct socket *sock,
+				       struct rxrpc_call *call,
+				       unsigned long hard_timeout)
+
+     This sets the maximum lifespan on a call to hard_timeout (which is in
+     jiffies).  In the event of the timeout occurring, the call will be
+     aborted and -ETIME or -ETIMEDOUT will be returned.
+
 
 =======================
 CONFIGURABLE PARAMETERS
@@ -1015,14 +1125,14 @@ adjusted through sysctls in /proc/net/rxrpc/:
  (*) connection_expiry
 
      The amount of time in seconds after a connection was last used before we
-     remove it from the connection list.  Whilst a connection is in existence,
+     remove it from the connection list.  While a connection is in existence,
      it serves as a placeholder for negotiated security; when it is deleted,
      the security must be renegotiated.
 
  (*) transport_expiry
 
      The amount of time in seconds after a transport was last used before we
-     remove it from the transport list.  Whilst a transport is in existence, it
+     remove it from the transport list.  While a transport is in existence, it
      serves to anchor the peer data and keeps the connection ID counter.
 
  (*) rxrpc_rx_window_size

@@ -1,13 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Holt Integrated Circuits HI-8435 threshold detector driver
  *
  * Copyright (C) 2015 Zodiac Inflight Innovations
  * Copyright (C) 2015 Cogent Embedded, Inc.
- *
- * This program is free software; you can redistribute  it and/or modify it
- * under  the terms of  the GNU General  Public License as published by the
- * Free Software Foundation;  either version 2 of the  License, or (at your
- * option) any later version.
  */
 
 #include <linux/delay.h>
@@ -408,7 +404,6 @@ static const struct iio_chan_spec hi8435_channels[] = {
 };
 
 static const struct iio_info hi8435_info = {
-	.driver_module = THIS_MODULE,
 	.read_raw = hi8435_read_raw,
 	.read_event_config = hi8435_read_event_config,
 	.write_event_config = hi8435_write_event_config,

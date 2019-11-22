@@ -81,11 +81,13 @@ static void moxart_mac_free_memory(struct net_device *ndev)
 				 priv->rx_buf_size, DMA_FROM_DEVICE);
 
 	if (priv->tx_desc_base)
-		dma_free_coherent(NULL, TX_REG_DESC_SIZE * TX_DESC_NUM,
+		dma_free_coherent(&priv->pdev->dev,
+				  TX_REG_DESC_SIZE * TX_DESC_NUM,
 				  priv->tx_desc_base, priv->tx_base);
 
 	if (priv->rx_desc_base)
-		dma_free_coherent(NULL, RX_REG_DESC_SIZE * RX_DESC_NUM,
+		dma_free_coherent(&priv->pdev->dev,
+				  RX_REG_DESC_SIZE * RX_DESC_NUM,
 				  priv->rx_desc_base, priv->rx_base);
 
 	kfree(priv->tx_buf_base);
@@ -161,7 +163,7 @@ static void moxart_mac_setup_desc_ring(struct net_device *ndev)
 
 	priv->rx_head = 0;
 
-	/* reset the MAC controller TX/RX desciptor base address */
+	/* reset the MAC controller TX/RX descriptor base address */
 	writel(priv->tx_base, priv->base + REG_TXR_BASE_ADDRESS);
 	writel(priv->rx_base, priv->base + REG_RXR_BASE_ADDRESS);
 }
@@ -269,9 +271,8 @@ rx_next:
 		priv->rx_head = rx_head;
 	}
 
-	if (rx < budget) {
+	if (rx < budget)
 		napi_complete_done(napi, rx);
-	}
 
 	priv->reg_imr |= RPKT_FINISH_M;
 	writel(priv->reg_imr, priv->base + REG_INTERRUPT_MASK);
@@ -289,8 +290,8 @@ static int moxart_tx_queue_space(struct net_device *ndev)
 static void moxart_tx_finished(struct net_device *ndev)
 {
 	struct moxart_mac_priv_t *priv = netdev_priv(ndev);
-	unsigned tx_head = priv->tx_head;
-	unsigned tx_tail = priv->tx_tail;
+	unsigned int tx_head = priv->tx_head;
+	unsigned int tx_tail = priv->tx_tail;
 
 	while (tx_tail != tx_head) {
 		dma_unmap_single(&ndev->dev, priv->tx_mapping[tx_tail],
@@ -299,7 +300,7 @@ static void moxart_tx_finished(struct net_device *ndev)
 		ndev->stats.tx_packets++;
 		ndev->stats.tx_bytes += priv->tx_skb[tx_tail]->len;
 
-		dev_kfree_skb_irq(priv->tx_skb[tx_tail]);
+		dev_consume_skb_irq(priv->tx_skb[tx_tail]);
 		priv->tx_skb[tx_tail] = NULL;
 
 		tx_tail = TX_NEXT(tx_tail);
@@ -312,7 +313,7 @@ static void moxart_tx_finished(struct net_device *ndev)
 
 static irqreturn_t moxart_mac_interrupt(int irq, void *dev_id)
 {
-	struct net_device *ndev = (struct net_device *) dev_id;
+	struct net_device *ndev = (struct net_device *)dev_id;
 	struct moxart_mac_priv_t *priv = netdev_priv(ndev);
 	unsigned int ists = readl(priv->base + REG_INTERRUPT_STATUS);
 
@@ -477,6 +478,7 @@ static int moxart_mac_probe(struct platform_device *pdev)
 
 	priv = netdev_priv(ndev);
 	priv->ndev = ndev;
+	priv->pdev = pdev;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	ndev->base_addr = res->start;
@@ -492,31 +494,31 @@ static int moxart_mac_probe(struct platform_device *pdev)
 	priv->tx_buf_size = TX_BUF_SIZE;
 	priv->rx_buf_size = RX_BUF_SIZE;
 
-	priv->tx_desc_base = dma_alloc_coherent(NULL, TX_REG_DESC_SIZE *
+	priv->tx_desc_base = dma_alloc_coherent(&pdev->dev, TX_REG_DESC_SIZE *
 						TX_DESC_NUM, &priv->tx_base,
 						GFP_DMA | GFP_KERNEL);
-	if (priv->tx_desc_base == NULL) {
+	if (!priv->tx_desc_base) {
 		ret = -ENOMEM;
 		goto init_fail;
 	}
 
-	priv->rx_desc_base = dma_alloc_coherent(NULL, RX_REG_DESC_SIZE *
+	priv->rx_desc_base = dma_alloc_coherent(&pdev->dev, RX_REG_DESC_SIZE *
 						RX_DESC_NUM, &priv->rx_base,
 						GFP_DMA | GFP_KERNEL);
-	if (priv->rx_desc_base == NULL) {
+	if (!priv->rx_desc_base) {
 		ret = -ENOMEM;
 		goto init_fail;
 	}
 
-	priv->tx_buf_base = kmalloc(priv->tx_buf_size * TX_DESC_NUM,
-				    GFP_ATOMIC);
+	priv->tx_buf_base = kmalloc_array(priv->tx_buf_size, TX_DESC_NUM,
+					  GFP_ATOMIC);
 	if (!priv->tx_buf_base) {
 		ret = -ENOMEM;
 		goto init_fail;
 	}
 
-	priv->rx_buf_base = kmalloc(priv->rx_buf_size * RX_DESC_NUM,
-				    GFP_ATOMIC);
+	priv->rx_buf_base = kmalloc_array(priv->rx_buf_size, RX_DESC_NUM,
+					  GFP_ATOMIC);
 	if (!priv->rx_buf_base) {
 		ret = -ENOMEM;
 		goto init_fail;

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _ASM_IA64_PROCESSOR_H
 #define _ASM_IA64_PROCESSOR_H
 
@@ -600,12 +601,6 @@ ia64_set_unat (__u64 *unat, void *spill_addr, unsigned long nat)
 
 	*unat = (*unat & ~mask) | (nat << bit);
 }
-
-/*
- * Get the current instruction/program counter value.
- */
-#define current_text_addr() \
-	({ void *_pc; _pc = (void *)ia64_getreg(_IA64_REG_IP); _pc; })
 
 static inline __u64
 ia64_get_ivr (void)

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/module.h>
 
 #include <linux/inet_diag.h>
@@ -23,9 +24,6 @@ raw_get_hashinfo(const struct inet_diag_req_v2 *r)
 		return &raw_v6_hashinfo;
 #endif
 	} else {
-		pr_warn_once("Unexpected inet family %d\n",
-			     r->sdiag_family);
-		WARN_ON_ONCE(1);
 		return ERR_PTR(-EINVAL);
 	}
 }
@@ -46,13 +44,13 @@ static struct sock *raw_lookup(struct net *net, struct sock *from,
 		sk = __raw_v4_lookup(net, from, r->sdiag_raw_protocol,
 				     r->id.idiag_dst[0],
 				     r->id.idiag_src[0],
-				     r->id.idiag_if);
+				     r->id.idiag_if, 0);
 #if IS_ENABLED(CONFIG_IPV6)
 	else
 		sk = __raw_v6_lookup(net, from, r->sdiag_raw_protocol,
 				     (const struct in6_addr *)r->id.idiag_src,
 				     (const struct in6_addr *)r->id.idiag_dst,
-				     r->id.idiag_if);
+				     r->id.idiag_if, 0);
 #endif
 	return sk;
 }

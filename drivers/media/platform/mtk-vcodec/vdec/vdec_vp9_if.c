@@ -1,17 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2016 MediaTek Inc.
  * Author: Daniel Hsiao <daniel.hsiao@mediatek.com>
  *	Kai-Sean Yang <kai-sean.yang@mediatek.com>
  *	Tiffany Lin <tiffany.lin@mediatek.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #include <linux/fs.h>
@@ -31,6 +23,7 @@
 #define MAX_NUM_REF_FRAMES 8
 #define VP9_MAX_FRM_BUF_NUM 9
 #define VP9_MAX_FRM_BUF_NODE_NUM (VP9_MAX_FRM_BUF_NUM * 2)
+#define VP9_SEG_ID_SZ 0x12000
 
 /**
  * struct vp9_dram_buf - contains buffer info for vpu
@@ -132,6 +125,7 @@ struct vp9_sf_ref_fb {
  * @frm_num : decoded frame number, include sub-frame count (AP-R, VPU-W)
  * @mv_buf : motion vector working buffer (AP-W, VPU-R)
  * @frm_refs : maintain three reference buffer info (AP-R/W, VPU-R/W)
+ * @seg_id_buf : segmentation map working buffer (AP-W, VPU-R)
  */
 struct vdec_vp9_vsi {
 	unsigned char sf_bs_buf[VP9_SUPER_FRAME_BS_SZ];
@@ -167,11 +161,14 @@ struct vdec_vp9_vsi {
 	struct vp9_dram_buf mv_buf;
 
 	struct vp9_ref_buf frm_refs[REFS_PER_FRAME];
+	struct vp9_dram_buf seg_id_buf;
+
 };
 
 /*
  * struct vdec_vp9_inst - vp9 decode instance
  * @mv_buf : working buffer for mv
+ * @seg_id_buf : working buffer for segmentation map
  * @dec_fb : vdec_fb node to link fb to different fb_xxx_list
  * @available_fb_node_list : current available vdec_fb node
  * @fb_use_list : current used or referenced vdec_fb
@@ -187,6 +184,7 @@ struct vdec_vp9_vsi {
  */
 struct vdec_vp9_inst {
 	struct mtk_vcodec_mem mv_buf;
+	struct mtk_vcodec_mem seg_id_buf;
 
 	struct vdec_fb_node dec_fb[VP9_MAX_FRM_BUF_NODE_NUM];
 	struct list_head available_fb_node_list;
@@ -388,13 +386,11 @@ static bool vp9_alloc_work_buf(struct vdec_vp9_inst *inst)
 			vsi->buf_h);
 
 	mem = &inst->mv_buf;
-
 	if (mem->va)
 		mtk_vcodec_mem_free(inst->ctx, mem);
 
 	mem->size = ((vsi->buf_w / 64) *
 		    (vsi->buf_h / 64) + 2) * 36 * 16;
-
 	result = mtk_vcodec_mem_alloc(inst->ctx, mem);
 	if (result) {
 		mem->size = 0;
@@ -405,6 +401,24 @@ static bool vp9_alloc_work_buf(struct vdec_vp9_inst *inst)
 	vsi->mv_buf.va = (unsigned long)mem->va;
 	vsi->mv_buf.pa = (unsigned long)mem->dma_addr;
 	vsi->mv_buf.sz = (unsigned int)mem->size;
+
+
+	mem = &inst->seg_id_buf;
+	if (mem->va)
+		mtk_vcodec_mem_free(inst->ctx, mem);
+
+	mem->size = VP9_SEG_ID_SZ;
+	result = mtk_vcodec_mem_alloc(inst->ctx, mem);
+	if (result) {
+		mem->size = 0;
+		mtk_vcodec_err(inst, "Cannot allocate seg_id_buf");
+		return false;
+	}
+	/* Set the va again */
+	vsi->seg_id_buf.va = (unsigned long)mem->va;
+	vsi->seg_id_buf.pa = (unsigned long)mem->dma_addr;
+	vsi->seg_id_buf.sz = (unsigned int)mem->size;
+
 
 	vp9_free_all_sf_ref_fb(inst);
 	vsi->sf_next_ref_fb_idx = vp9_get_sf_ref_fb(inst);
@@ -459,15 +473,15 @@ static void vp9_swap_frm_bufs(struct vdec_vp9_inst *inst)
 		 */
 		if ((frm_to_show->fb != NULL) &&
 			(inst->cur_fb->base_y.size >=
-			frm_to_show->fb->base_y.size)) {
+			frm_to_show->fb->base_y.size) &&
+			(inst->cur_fb->base_c.size >=
+			frm_to_show->fb->base_c.size)) {
 			memcpy((void *)inst->cur_fb->base_y.va,
 				(void *)frm_to_show->fb->base_y.va,
-				vsi->buf_w *
-				vsi->buf_h);
+				frm_to_show->fb->base_y.size);
 			memcpy((void *)inst->cur_fb->base_c.va,
 				(void *)frm_to_show->fb->base_c.va,
-				vsi->buf_w *
-				vsi->buf_h / 2);
+				frm_to_show->fb->base_c.size);
 		} else {
 			/* After resolution change case, current CAPTURE buffer
 			 * may have less buffer size than frm_to_show buffer
@@ -653,6 +667,12 @@ static void vp9_reset(struct vdec_vp9_inst *inst)
 	inst->vsi->mv_buf.va = (unsigned long)inst->mv_buf.va;
 	inst->vsi->mv_buf.pa = (unsigned long)inst->mv_buf.dma_addr;
 	inst->vsi->mv_buf.sz = (unsigned long)inst->mv_buf.size;
+
+	/* Set the va again, since vpu_dec_reset will clear seg_id_buf in vpu */
+	inst->vsi->seg_id_buf.va = (unsigned long)inst->seg_id_buf.va;
+	inst->vsi->seg_id_buf.pa = (unsigned long)inst->seg_id_buf.dma_addr;
+	inst->vsi->seg_id_buf.sz = (unsigned long)inst->seg_id_buf.size;
+
 }
 
 static void init_all_fb_lists(struct vdec_vp9_inst *inst)
@@ -674,10 +694,8 @@ static void init_all_fb_lists(struct vdec_vp9_inst *inst)
 
 static void get_pic_info(struct vdec_vp9_inst *inst, struct vdec_pic_info *pic)
 {
-	pic->y_bs_sz = inst->vsi->buf_sz_y_bs;
-	pic->c_bs_sz = inst->vsi->buf_sz_c_bs;
-	pic->y_len_sz = inst->vsi->buf_len_sz_y;
-	pic->c_len_sz = inst->vsi->buf_len_sz_c;
+	pic->fb_sz[0] = inst->vsi->buf_sz_y_bs + inst->vsi->buf_len_sz_y;
+	pic->fb_sz[1] = inst->vsi->buf_sz_c_bs + inst->vsi->buf_len_sz_c;
 
 	pic->pic_w = inst->vsi->pic_w;
 	pic->pic_h = inst->vsi->pic_h;
@@ -686,8 +704,9 @@ static void get_pic_info(struct vdec_vp9_inst *inst, struct vdec_pic_info *pic)
 
 	mtk_vcodec_debug(inst, "pic(%d, %d), buf(%d, %d)",
 		 pic->pic_w, pic->pic_h, pic->buf_w, pic->buf_h);
-	mtk_vcodec_debug(inst, "Y(%d, %d), C(%d, %d)", pic->y_bs_sz,
-		 pic->y_len_sz, pic->c_bs_sz, pic->c_len_sz);
+	mtk_vcodec_debug(inst, "fb size: Y(%d), C(%d)",
+		pic->fb_sz[0],
+		pic->fb_sz[1]);
 }
 
 static void get_disp_fb(struct vdec_vp9_inst *inst, struct vdec_fb **out_fb)
@@ -738,7 +757,7 @@ static int validate_vsi_array_indexes(struct vdec_vp9_inst *inst,
 	return 0;
 }
 
-static void vdec_vp9_deinit(unsigned long h_vdec)
+static void vdec_vp9_deinit(void *h_vdec)
 {
 	struct vdec_vp9_inst *inst = (struct vdec_vp9_inst *)h_vdec;
 	struct mtk_vcodec_mem *mem;
@@ -752,11 +771,15 @@ static void vdec_vp9_deinit(unsigned long h_vdec)
 	if (mem->va)
 		mtk_vcodec_mem_free(inst->ctx, mem);
 
+	mem = &inst->seg_id_buf;
+	if (mem->va)
+		mtk_vcodec_mem_free(inst->ctx, mem);
+
 	vp9_free_all_sf_ref_fb(inst);
 	vp9_free_inst(inst);
 }
 
-static int vdec_vp9_init(struct mtk_vcodec_ctx *ctx, unsigned long *h_vdec)
+static int vdec_vp9_init(struct mtk_vcodec_ctx *ctx)
 {
 	struct vdec_vp9_inst *inst;
 
@@ -780,7 +803,7 @@ static int vdec_vp9_init(struct mtk_vcodec_ctx *ctx, unsigned long *h_vdec)
 	inst->vsi = (struct vdec_vp9_vsi *)inst->vpu.vsi;
 	init_all_fb_lists(inst);
 
-	(*h_vdec) = (unsigned long)inst;
+	ctx->drv_handle = inst;
 	return 0;
 
 err_deinit_inst:
@@ -789,8 +812,8 @@ err_deinit_inst:
 	return -EINVAL;
 }
 
-static int vdec_vp9_decode(unsigned long h_vdec, struct mtk_vcodec_mem *bs,
-		   struct vdec_fb *fb, bool *res_chg)
+static int vdec_vp9_decode(void *h_vdec, struct mtk_vcodec_mem *bs,
+			   struct vdec_fb *fb, bool *res_chg)
 {
 	int ret = 0;
 	struct vdec_vp9_inst *inst = (struct vdec_vp9_inst *)h_vdec;
@@ -848,6 +871,7 @@ static int vdec_vp9_decode(unsigned long h_vdec, struct mtk_vcodec_mem *bs,
 					vsi->sf_frm_sz[idx]);
 			}
 		}
+		memset(inst->seg_id_buf.va, 0, inst->seg_id_buf.size);
 		ret = vpu_dec_start(&inst->vpu, data, 3);
 		if (ret) {
 			mtk_vcodec_err(inst, "vpu_dec_start failed");
@@ -862,7 +886,7 @@ static int vdec_vp9_decode(unsigned long h_vdec, struct mtk_vcodec_mem *bs,
 
 		if (vsi->resolution_changed) {
 			if (!vp9_alloc_work_buf(inst)) {
-				ret = -EINVAL;
+				ret = -EIO;
 				goto DECODE_ERROR;
 			}
 		}
@@ -891,14 +915,12 @@ static int vdec_vp9_decode(unsigned long h_vdec, struct mtk_vcodec_mem *bs,
 
 		if (vsi->show_existing_frame && (vsi->frm_to_show_idx <
 					VP9_MAX_FRM_BUF_NUM)) {
-			mtk_vcodec_err(inst,
+			mtk_vcodec_debug(inst,
 				"Skip Decode drv->new_fb_idx=%d, drv->frm_to_show_idx=%d",
 				vsi->new_fb_idx, vsi->frm_to_show_idx);
 
 			vp9_ref_cnt_fb(inst, &vsi->new_fb_idx,
 					vsi->frm_to_show_idx);
-			ret = -EINVAL;
-			goto DECODE_ERROR;
 		}
 
 		/* VPU assign the buffer pointer in its address space,
@@ -947,8 +969,8 @@ static void get_crop_info(struct vdec_vp9_inst *inst, struct v4l2_rect *cr)
 			 cr->left, cr->top, cr->width, cr->height);
 }
 
-static int vdec_vp9_get_param(unsigned long h_vdec,
-		enum vdec_get_param_type type, void *out)
+static int vdec_vp9_get_param(void *h_vdec, enum vdec_get_param_type type,
+			      void *out)
 {
 	struct vdec_vp9_inst *inst = (struct vdec_vp9_inst *)h_vdec;
 	int ret = 0;
@@ -978,16 +1000,9 @@ static int vdec_vp9_get_param(unsigned long h_vdec,
 	return ret;
 }
 
-static struct vdec_common_if vdec_vp9_if = {
+const struct vdec_common_if vdec_vp9_if = {
 	.init		= vdec_vp9_init,
 	.decode		= vdec_vp9_decode,
 	.get_param	= vdec_vp9_get_param,
 	.deinit		= vdec_vp9_deinit,
 };
-
-struct vdec_common_if *get_vp9_dec_comm_if(void);
-
-struct vdec_common_if *get_vp9_dec_comm_if(void)
-{
-	return &vdec_vp9_if;
-}

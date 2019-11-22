@@ -1,13 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* drivers/media/platform/s5p-cec/exynos_hdmi_cecctrl.c
  *
  * Copyright (c) 2009, 2014 Samsung Electronics
  *		http://www.samsung.com/
  *
  * cec ftn file for Samsung TVOUT driver
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/io.h>
@@ -172,7 +169,8 @@ u32 s5p_cec_get_status(struct s5p_cec_dev *cec)
 {
 	u32 status = 0;
 
-	status = readb(cec->reg + S5P_CEC_STATUS_0);
+	status = readb(cec->reg + S5P_CEC_STATUS_0) & 0xf;
+	status |= (readb(cec->reg + S5P_CEC_TX_STAT1) & 0xf) << 4;
 	status |= readb(cec->reg + S5P_CEC_STATUS_1) << 8;
 	status |= readb(cec->reg + S5P_CEC_STATUS_2) << 16;
 	status |= readb(cec->reg + S5P_CEC_STATUS_3) << 24;

@@ -1,16 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * aQuantia Corporation Network Driver
  * Copyright (C) 2014-2017 aQuantia Corporation. All rights reserved
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
  */
 
 /* File aq_ethtool.c: Definition of ethertool related functions. */
 
 #include "aq_ethtool.h"
 #include "aq_nic.h"
+#include "aq_vec.h"
+#include "aq_filters.h"
 
 static void aq_ethtool_get_regs(struct net_device *ndev,
 				struct ethtool_regs *regs, void *p)
@@ -56,10 +55,6 @@ aq_ethtool_set_link_ksettings(struct net_device *ndev,
 	return aq_nic_set_link_ksettings(aq_nic, cmd);
 }
 
-/* there "5U" is number of queue[#] stats lines (InPackets+...+InErrors) */
-static const unsigned int aq_ethtool_stat_queue_lines = 5U;
-static const unsigned int aq_ethtool_stat_queue_chars =
-	5U * ETH_GSTRING_LEN;
 static const char aq_ethtool_stat_names[][ETH_GSTRING_LEN] = {
 	"InPackets",
 	"InUCast",
@@ -70,69 +65,39 @@ static const char aq_ethtool_stat_names[][ETH_GSTRING_LEN] = {
 	"OutUCast",
 	"OutMCast",
 	"OutBCast",
-	"InUCastOctects",
-	"OutUCastOctects",
-	"InMCastOctects",
-	"OutMCastOctects",
-	"InBCastOctects",
-	"OutBCastOctects",
-	"InOctects",
-	"OutOctects",
+	"InUCastOctets",
+	"OutUCastOctets",
+	"InMCastOctets",
+	"OutMCastOctets",
+	"InBCastOctets",
+	"OutBCastOctets",
+	"InOctets",
+	"OutOctets",
 	"InPacketsDma",
 	"OutPacketsDma",
 	"InOctetsDma",
 	"OutOctetsDma",
 	"InDroppedDma",
-	"Queue[0] InPackets",
-	"Queue[0] OutPackets",
-	"Queue[0] InJumboPackets",
-	"Queue[0] InLroPackets",
-	"Queue[0] InErrors",
-	"Queue[1] InPackets",
-	"Queue[1] OutPackets",
-	"Queue[1] InJumboPackets",
-	"Queue[1] InLroPackets",
-	"Queue[1] InErrors",
-	"Queue[2] InPackets",
-	"Queue[2] OutPackets",
-	"Queue[2] InJumboPackets",
-	"Queue[2] InLroPackets",
-	"Queue[2] InErrors",
-	"Queue[3] InPackets",
-	"Queue[3] OutPackets",
-	"Queue[3] InJumboPackets",
-	"Queue[3] InLroPackets",
-	"Queue[3] InErrors",
-	"Queue[4] InPackets",
-	"Queue[4] OutPackets",
-	"Queue[4] InJumboPackets",
-	"Queue[4] InLroPackets",
-	"Queue[4] InErrors",
-	"Queue[5] InPackets",
-	"Queue[5] OutPackets",
-	"Queue[5] InJumboPackets",
-	"Queue[5] InLroPackets",
-	"Queue[5] InErrors",
-	"Queue[6] InPackets",
-	"Queue[6] OutPackets",
-	"Queue[6] InJumboPackets",
-	"Queue[6] InLroPackets",
-	"Queue[6] InErrors",
-	"Queue[7] InPackets",
-	"Queue[7] OutPackets",
-	"Queue[7] InJumboPackets",
-	"Queue[7] InLroPackets",
-	"Queue[7] InErrors",
+};
+
+static const char aq_ethtool_queue_stat_names[][ETH_GSTRING_LEN] = {
+	"Queue[%d] InPackets",
+	"Queue[%d] OutPackets",
+	"Queue[%d] Restarts",
+	"Queue[%d] InJumboPackets",
+	"Queue[%d] InLroPackets",
+	"Queue[%d] InErrors",
 };
 
 static void aq_ethtool_stats(struct net_device *ndev,
 			     struct ethtool_stats *stats, u64 *data)
 {
 	struct aq_nic_s *aq_nic = netdev_priv(ndev);
+	struct aq_nic_cfg_s *cfg = aq_nic_get_cfg(aq_nic);
 
-/* ASSERT: Need add lines to aq_ethtool_stat_names if AQ_CFG_VECS_MAX > 8 */
-	BUILD_BUG_ON(AQ_CFG_VECS_MAX > 8);
-	memset(data, 0, ARRAY_SIZE(aq_ethtool_stat_names) * sizeof(u64));
+	memset(data, 0, (ARRAY_SIZE(aq_ethtool_stat_names) +
+			 ARRAY_SIZE(aq_ethtool_queue_stat_names) *
+			 cfg->vecs) * sizeof(u64));
 	aq_nic_get_stats(aq_nic, data);
 }
 
@@ -154,8 +119,8 @@ static void aq_ethtool_get_drvinfo(struct net_device *ndev,
 
 	strlcpy(drvinfo->bus_info, pdev ? pci_name(pdev) : "",
 		sizeof(drvinfo->bus_info));
-	drvinfo->n_stats = ARRAY_SIZE(aq_ethtool_stat_names) -
-		(AQ_CFG_VECS_MAX - cfg->vecs) * aq_ethtool_stat_queue_lines;
+	drvinfo->n_stats = ARRAY_SIZE(aq_ethtool_stat_names) +
+		cfg->vecs * ARRAY_SIZE(aq_ethtool_queue_stat_names);
 	drvinfo->testinfo_len = 0;
 	drvinfo->regdump_len = regs_count;
 	drvinfo->eedump_len = 0;
@@ -164,14 +129,25 @@ static void aq_ethtool_get_drvinfo(struct net_device *ndev,
 static void aq_ethtool_get_strings(struct net_device *ndev,
 				   u32 stringset, u8 *data)
 {
+	int i, si;
 	struct aq_nic_s *aq_nic = netdev_priv(ndev);
 	struct aq_nic_cfg_s *cfg = aq_nic_get_cfg(aq_nic);
+	u8 *p = data;
 
-	if (stringset == ETH_SS_STATS)
-		memcpy(data, *aq_ethtool_stat_names,
-		       sizeof(aq_ethtool_stat_names) -
-		       (AQ_CFG_VECS_MAX - cfg->vecs) *
-		       aq_ethtool_stat_queue_chars);
+	if (stringset == ETH_SS_STATS) {
+		memcpy(p, aq_ethtool_stat_names,
+		       sizeof(aq_ethtool_stat_names));
+		p = p + sizeof(aq_ethtool_stat_names);
+		for (i = 0; i < cfg->vecs; i++) {
+			for (si = 0;
+				si < ARRAY_SIZE(aq_ethtool_queue_stat_names);
+				si++) {
+				snprintf(p, ETH_GSTRING_LEN,
+					 aq_ethtool_queue_stat_names[si], i);
+				p += ETH_GSTRING_LEN;
+			}
+		}
+	}
 }
 
 static int aq_ethtool_get_sset_count(struct net_device *ndev, int stringset)
@@ -182,9 +158,8 @@ static int aq_ethtool_get_sset_count(struct net_device *ndev, int stringset)
 
 	switch (stringset) {
 	case ETH_SS_STATS:
-		ret = ARRAY_SIZE(aq_ethtool_stat_names) -
-			(AQ_CFG_VECS_MAX - cfg->vecs) *
-			aq_ethtool_stat_queue_lines;
+		ret = ARRAY_SIZE(aq_ethtool_stat_names) +
+			cfg->vecs * ARRAY_SIZE(aq_ethtool_queue_stat_names);
 		break;
 	default:
 		ret = -EOPNOTSUPP;
@@ -224,6 +199,41 @@ static int aq_ethtool_get_rss(struct net_device *ndev, u32 *indir, u8 *key,
 	return 0;
 }
 
+static int aq_ethtool_set_rss(struct net_device *netdev, const u32 *indir,
+			      const u8 *key, const u8 hfunc)
+{
+	struct aq_nic_s *aq_nic = netdev_priv(netdev);
+	struct aq_nic_cfg_s *cfg;
+	unsigned int i = 0U;
+	u32 rss_entries;
+	int err = 0;
+
+	cfg = aq_nic_get_cfg(aq_nic);
+	rss_entries = cfg->aq_rss.indirection_table_size;
+
+	/* We do not allow change in unsupported parameters */
+	if (hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_TOP)
+		return -EOPNOTSUPP;
+	/* Fill out the redirection table */
+	if (indir)
+		for (i = 0; i < rss_entries; i++)
+			cfg->aq_rss.indirection_table[i] = indir[i];
+
+	/* Fill out the rss hash key */
+	if (key) {
+		memcpy(cfg->aq_rss.hash_secret_key, key,
+		       sizeof(cfg->aq_rss.hash_secret_key));
+		err = aq_nic->aq_hw_ops->hw_rss_hash_set(aq_nic->aq_hw,
+			&cfg->aq_rss);
+		if (err)
+			return err;
+	}
+
+	err = aq_nic->aq_hw_ops->hw_rss_set(aq_nic->aq_hw, &cfg->aq_rss);
+
+	return err;
+}
+
 static int aq_ethtool_get_rxnfc(struct net_device *ndev,
 				struct ethtool_rxnfc *cmd,
 				u32 *rule_locs)
@@ -236,12 +246,334 @@ static int aq_ethtool_get_rxnfc(struct net_device *ndev,
 	case ETHTOOL_GRXRINGS:
 		cmd->data = cfg->vecs;
 		break;
-
+	case ETHTOOL_GRXCLSRLCNT:
+		cmd->rule_cnt = aq_get_rxnfc_count_all_rules(aq_nic);
+		break;
+	case ETHTOOL_GRXCLSRULE:
+		err = aq_get_rxnfc_rule(aq_nic, cmd);
+		break;
+	case ETHTOOL_GRXCLSRLALL:
+		err = aq_get_rxnfc_all_rules(aq_nic, cmd, rule_locs);
+		break;
 	default:
 		err = -EOPNOTSUPP;
 		break;
 	}
 
+	return err;
+}
+
+static int aq_ethtool_set_rxnfc(struct net_device *ndev,
+				struct ethtool_rxnfc *cmd)
+{
+	int err = 0;
+	struct aq_nic_s *aq_nic = netdev_priv(ndev);
+
+	switch (cmd->cmd) {
+	case ETHTOOL_SRXCLSRLINS:
+		err = aq_add_rxnfc_rule(aq_nic, cmd);
+		break;
+	case ETHTOOL_SRXCLSRLDEL:
+		err = aq_del_rxnfc_rule(aq_nic, cmd);
+		break;
+	default:
+		err = -EOPNOTSUPP;
+		break;
+	}
+
+	return err;
+}
+
+static int aq_ethtool_get_coalesce(struct net_device *ndev,
+				   struct ethtool_coalesce *coal)
+{
+	struct aq_nic_s *aq_nic = netdev_priv(ndev);
+	struct aq_nic_cfg_s *cfg = aq_nic_get_cfg(aq_nic);
+
+	if (cfg->itr == AQ_CFG_INTERRUPT_MODERATION_ON ||
+	    cfg->itr == AQ_CFG_INTERRUPT_MODERATION_AUTO) {
+		coal->rx_coalesce_usecs = cfg->rx_itr;
+		coal->tx_coalesce_usecs = cfg->tx_itr;
+		coal->rx_max_coalesced_frames = 0;
+		coal->tx_max_coalesced_frames = 0;
+	} else {
+		coal->rx_coalesce_usecs = 0;
+		coal->tx_coalesce_usecs = 0;
+		coal->rx_max_coalesced_frames = 1;
+		coal->tx_max_coalesced_frames = 1;
+	}
+	return 0;
+}
+
+static int aq_ethtool_set_coalesce(struct net_device *ndev,
+				   struct ethtool_coalesce *coal)
+{
+	struct aq_nic_s *aq_nic = netdev_priv(ndev);
+	struct aq_nic_cfg_s *cfg = aq_nic_get_cfg(aq_nic);
+
+	/* This is not yet supported
+	 */
+	if (coal->use_adaptive_rx_coalesce || coal->use_adaptive_tx_coalesce)
+		return -EOPNOTSUPP;
+
+	/* Atlantic only supports timing based coalescing
+	 */
+	if (coal->rx_max_coalesced_frames > 1 ||
+	    coal->rx_coalesce_usecs_irq ||
+	    coal->rx_max_coalesced_frames_irq)
+		return -EOPNOTSUPP;
+
+	if (coal->tx_max_coalesced_frames > 1 ||
+	    coal->tx_coalesce_usecs_irq ||
+	    coal->tx_max_coalesced_frames_irq)
+		return -EOPNOTSUPP;
+
+	/* We do not support frame counting. Check this
+	 */
+	if (!(coal->rx_max_coalesced_frames == !coal->rx_coalesce_usecs))
+		return -EOPNOTSUPP;
+	if (!(coal->tx_max_coalesced_frames == !coal->tx_coalesce_usecs))
+		return -EOPNOTSUPP;
+
+	if (coal->rx_coalesce_usecs > AQ_CFG_INTERRUPT_MODERATION_USEC_MAX ||
+	    coal->tx_coalesce_usecs > AQ_CFG_INTERRUPT_MODERATION_USEC_MAX)
+		return -EINVAL;
+
+	cfg->itr = AQ_CFG_INTERRUPT_MODERATION_ON;
+
+	cfg->rx_itr = coal->rx_coalesce_usecs;
+	cfg->tx_itr = coal->tx_coalesce_usecs;
+
+	return aq_nic_update_interrupt_moderation_settings(aq_nic);
+}
+
+static void aq_ethtool_get_wol(struct net_device *ndev,
+			       struct ethtool_wolinfo *wol)
+{
+	struct aq_nic_s *aq_nic = netdev_priv(ndev);
+	struct aq_nic_cfg_s *cfg = aq_nic_get_cfg(aq_nic);
+
+	wol->supported = WAKE_MAGIC;
+	wol->wolopts = 0;
+
+	if (cfg->wol)
+		wol->wolopts |= WAKE_MAGIC;
+}
+
+static int aq_ethtool_set_wol(struct net_device *ndev,
+			      struct ethtool_wolinfo *wol)
+{
+	struct pci_dev *pdev = to_pci_dev(ndev->dev.parent);
+	struct aq_nic_s *aq_nic = netdev_priv(ndev);
+	struct aq_nic_cfg_s *cfg = aq_nic_get_cfg(aq_nic);
+	int err = 0;
+
+	if (wol->wolopts & WAKE_MAGIC)
+		cfg->wol |= AQ_NIC_WOL_ENABLED;
+	else
+		cfg->wol &= ~AQ_NIC_WOL_ENABLED;
+	err = device_set_wakeup_enable(&pdev->dev, wol->wolopts);
+
+	return err;
+}
+
+static enum hw_atl_fw2x_rate eee_mask_to_ethtool_mask(u32 speed)
+{
+	u32 rate = 0;
+
+	if (speed & AQ_NIC_RATE_EEE_10G)
+		rate |= SUPPORTED_10000baseT_Full;
+
+	if (speed & AQ_NIC_RATE_EEE_2GS)
+		rate |= SUPPORTED_2500baseX_Full;
+
+	if (speed & AQ_NIC_RATE_EEE_1G)
+		rate |= SUPPORTED_1000baseT_Full;
+
+	return rate;
+}
+
+static int aq_ethtool_get_eee(struct net_device *ndev, struct ethtool_eee *eee)
+{
+	struct aq_nic_s *aq_nic = netdev_priv(ndev);
+	u32 rate, supported_rates;
+	int err = 0;
+
+	if (!aq_nic->aq_fw_ops->get_eee_rate)
+		return -EOPNOTSUPP;
+
+	mutex_lock(&aq_nic->fwreq_mutex);
+	err = aq_nic->aq_fw_ops->get_eee_rate(aq_nic->aq_hw, &rate,
+					      &supported_rates);
+	mutex_unlock(&aq_nic->fwreq_mutex);
+	if (err < 0)
+		return err;
+
+	eee->supported = eee_mask_to_ethtool_mask(supported_rates);
+
+	if (aq_nic->aq_nic_cfg.eee_speeds)
+		eee->advertised = eee->supported;
+
+	eee->lp_advertised = eee_mask_to_ethtool_mask(rate);
+
+	eee->eee_enabled = !!eee->advertised;
+
+	eee->tx_lpi_enabled = eee->eee_enabled;
+	if (eee->advertised & eee->lp_advertised)
+		eee->eee_active = true;
+
+	return 0;
+}
+
+static int aq_ethtool_set_eee(struct net_device *ndev, struct ethtool_eee *eee)
+{
+	struct aq_nic_s *aq_nic = netdev_priv(ndev);
+	u32 rate, supported_rates;
+	struct aq_nic_cfg_s *cfg;
+	int err = 0;
+
+	cfg = aq_nic_get_cfg(aq_nic);
+
+	if (unlikely(!aq_nic->aq_fw_ops->get_eee_rate ||
+		     !aq_nic->aq_fw_ops->set_eee_rate))
+		return -EOPNOTSUPP;
+
+	mutex_lock(&aq_nic->fwreq_mutex);
+	err = aq_nic->aq_fw_ops->get_eee_rate(aq_nic->aq_hw, &rate,
+					      &supported_rates);
+	mutex_unlock(&aq_nic->fwreq_mutex);
+	if (err < 0)
+		return err;
+
+	if (eee->eee_enabled) {
+		rate = supported_rates;
+		cfg->eee_speeds = rate;
+	} else {
+		rate = 0;
+		cfg->eee_speeds = 0;
+	}
+
+	mutex_lock(&aq_nic->fwreq_mutex);
+	err = aq_nic->aq_fw_ops->set_eee_rate(aq_nic->aq_hw, rate);
+	mutex_unlock(&aq_nic->fwreq_mutex);
+
+	return err;
+}
+
+static int aq_ethtool_nway_reset(struct net_device *ndev)
+{
+	struct aq_nic_s *aq_nic = netdev_priv(ndev);
+	int err = 0;
+
+	if (unlikely(!aq_nic->aq_fw_ops->renegotiate))
+		return -EOPNOTSUPP;
+
+	if (netif_running(ndev)) {
+		mutex_lock(&aq_nic->fwreq_mutex);
+		err = aq_nic->aq_fw_ops->renegotiate(aq_nic->aq_hw);
+		mutex_unlock(&aq_nic->fwreq_mutex);
+	}
+
+	return err;
+}
+
+static void aq_ethtool_get_pauseparam(struct net_device *ndev,
+				      struct ethtool_pauseparam *pause)
+{
+	struct aq_nic_s *aq_nic = netdev_priv(ndev);
+	u32 fc = aq_nic->aq_nic_cfg.flow_control;
+
+	pause->autoneg = 0;
+
+	pause->rx_pause = !!(fc & AQ_NIC_FC_RX);
+	pause->tx_pause = !!(fc & AQ_NIC_FC_TX);
+
+}
+
+static int aq_ethtool_set_pauseparam(struct net_device *ndev,
+				     struct ethtool_pauseparam *pause)
+{
+	struct aq_nic_s *aq_nic = netdev_priv(ndev);
+	int err = 0;
+
+	if (!aq_nic->aq_fw_ops->set_flow_control)
+		return -EOPNOTSUPP;
+
+	if (pause->autoneg == AUTONEG_ENABLE)
+		return -EOPNOTSUPP;
+
+	if (pause->rx_pause)
+		aq_nic->aq_hw->aq_nic_cfg->flow_control |= AQ_NIC_FC_RX;
+	else
+		aq_nic->aq_hw->aq_nic_cfg->flow_control &= ~AQ_NIC_FC_RX;
+
+	if (pause->tx_pause)
+		aq_nic->aq_hw->aq_nic_cfg->flow_control |= AQ_NIC_FC_TX;
+	else
+		aq_nic->aq_hw->aq_nic_cfg->flow_control &= ~AQ_NIC_FC_TX;
+
+	mutex_lock(&aq_nic->fwreq_mutex);
+	err = aq_nic->aq_fw_ops->set_flow_control(aq_nic->aq_hw);
+	mutex_unlock(&aq_nic->fwreq_mutex);
+
+	return err;
+}
+
+static void aq_get_ringparam(struct net_device *ndev,
+			     struct ethtool_ringparam *ring)
+{
+	struct aq_nic_s *aq_nic = netdev_priv(ndev);
+	struct aq_nic_cfg_s *aq_nic_cfg = aq_nic_get_cfg(aq_nic);
+
+	ring->rx_pending = aq_nic_cfg->rxds;
+	ring->tx_pending = aq_nic_cfg->txds;
+
+	ring->rx_max_pending = aq_nic_cfg->aq_hw_caps->rxds_max;
+	ring->tx_max_pending = aq_nic_cfg->aq_hw_caps->txds_max;
+}
+
+static int aq_set_ringparam(struct net_device *ndev,
+			    struct ethtool_ringparam *ring)
+{
+	int err = 0;
+	bool ndev_running = false;
+	struct aq_nic_s *aq_nic = netdev_priv(ndev);
+	struct aq_nic_cfg_s *aq_nic_cfg = aq_nic_get_cfg(aq_nic);
+	const struct aq_hw_caps_s *hw_caps = aq_nic_cfg->aq_hw_caps;
+
+	if (ring->rx_mini_pending || ring->rx_jumbo_pending) {
+		err = -EOPNOTSUPP;
+		goto err_exit;
+	}
+
+	if (netif_running(ndev)) {
+		ndev_running = true;
+		dev_close(ndev);
+	}
+
+	aq_nic_free_vectors(aq_nic);
+
+	aq_nic_cfg->rxds = max(ring->rx_pending, hw_caps->rxds_min);
+	aq_nic_cfg->rxds = min(aq_nic_cfg->rxds, hw_caps->rxds_max);
+	aq_nic_cfg->rxds = ALIGN(aq_nic_cfg->rxds, AQ_HW_RXD_MULTIPLE);
+
+	aq_nic_cfg->txds = max(ring->tx_pending, hw_caps->txds_min);
+	aq_nic_cfg->txds = min(aq_nic_cfg->txds, hw_caps->txds_max);
+	aq_nic_cfg->txds = ALIGN(aq_nic_cfg->txds, AQ_HW_TXD_MULTIPLE);
+
+	for (aq_nic->aq_vecs = 0; aq_nic->aq_vecs < aq_nic_cfg->vecs;
+	     aq_nic->aq_vecs++) {
+		aq_nic->aq_vec[aq_nic->aq_vecs] =
+		    aq_vec_alloc(aq_nic, aq_nic->aq_vecs, aq_nic_cfg);
+		if (unlikely(!aq_nic->aq_vec[aq_nic->aq_vecs])) {
+			err = -ENOMEM;
+			goto err_exit;
+		}
+	}
+	if (ndev_running)
+		err = dev_open(ndev, NULL);
+
+err_exit:
 	return err;
 }
 
@@ -252,11 +584,24 @@ const struct ethtool_ops aq_ethtool_ops = {
 	.get_drvinfo         = aq_ethtool_get_drvinfo,
 	.get_strings         = aq_ethtool_get_strings,
 	.get_rxfh_indir_size = aq_ethtool_get_rss_indir_size,
+	.get_wol             = aq_ethtool_get_wol,
+	.set_wol             = aq_ethtool_set_wol,
+	.nway_reset          = aq_ethtool_nway_reset,
+	.get_ringparam       = aq_get_ringparam,
+	.set_ringparam       = aq_set_ringparam,
+	.get_eee             = aq_ethtool_get_eee,
+	.set_eee             = aq_ethtool_set_eee,
+	.get_pauseparam      = aq_ethtool_get_pauseparam,
+	.set_pauseparam      = aq_ethtool_set_pauseparam,
 	.get_rxfh_key_size   = aq_ethtool_get_rss_key_size,
 	.get_rxfh            = aq_ethtool_get_rss,
+	.set_rxfh            = aq_ethtool_set_rss,
 	.get_rxnfc           = aq_ethtool_get_rxnfc,
+	.set_rxnfc           = aq_ethtool_set_rxnfc,
 	.get_sset_count      = aq_ethtool_get_sset_count,
 	.get_ethtool_stats   = aq_ethtool_stats,
 	.get_link_ksettings  = aq_ethtool_get_link_ksettings,
 	.set_link_ksettings  = aq_ethtool_set_link_ksettings,
+	.get_coalesce	     = aq_ethtool_get_coalesce,
+	.set_coalesce	     = aq_ethtool_set_coalesce,
 };

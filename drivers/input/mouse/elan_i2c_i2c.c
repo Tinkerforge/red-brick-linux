@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Elan I2C/SMBus Touchpad driver - I2C interface
  *
@@ -8,10 +9,6 @@
  * Based on cyapa driver:
  * copyright (c) 2011-2012 Cypress Semiconductor, Inc.
  * copyright (c) 2011-2012 Google, Inc.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published
- * by the Free Software Foundation.
  *
  * Trademarks are the property of their respective owners.
  */
@@ -288,7 +285,8 @@ static int elan_i2c_get_version(struct i2c_client *client,
 }
 
 static int elan_i2c_get_sm_version(struct i2c_client *client,
-				   u16 *ic_type, u8 *version)
+				   u16 *ic_type, u8 *version,
+				   u8 *clickpad)
 {
 	int error;
 	u8 pattern_ver;
@@ -317,6 +315,7 @@ static int elan_i2c_get_sm_version(struct i2c_client *client,
 			return error;
 		}
 		*version = val[1];
+		*clickpad = val[0] & 0x10;
 	} else {
 		error = elan_i2c_read_cmd(client, ETP_I2C_OSM_VERSION_CMD, val);
 		if (error) {
@@ -326,6 +325,15 @@ static int elan_i2c_get_sm_version(struct i2c_client *client,
 		}
 		*version = val[0];
 		*ic_type = val[1];
+
+		error = elan_i2c_read_cmd(client, ETP_I2C_NSM_VERSION_CMD,
+					  val);
+		if (error) {
+			dev_err(&client->dev, "failed to get SM version: %d\n",
+				error);
+			return error;
+		}
+		*clickpad = val[0] & 0x10;
 	}
 
 	return 0;
@@ -587,7 +595,7 @@ static int elan_i2c_write_fw_block(struct i2c_client *client,
 	}
 
 	/* Wait for F/W to update one page ROM data. */
-	msleep(20);
+	msleep(35);
 
 	error = elan_i2c_read_cmd(client, ETP_I2C_IAP_CTRL_CMD, val);
 	if (error) {

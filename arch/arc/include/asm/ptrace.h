@@ -1,9 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2004, 2007-2010, 2011-2012 Synopsys, Inc. (www.synopsys.com)
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  *
  * Amit Bhor, Sameer Dhavale: Codito Technologies 2004
  */
@@ -18,6 +15,11 @@
 
 #ifdef CONFIG_ISA_ARCOMPACT
 struct pt_regs {
+
+#ifdef CONFIG_ARC_PLAT_EZNPS
+	unsigned long eflags;	/* Extended FLAGS */
+	unsigned long gpa1;	/* General Purpose Aux */
+#endif
 
 	/* Real registers */
 	unsigned long bta;	/* bta_l1, bta_l2, erbta */

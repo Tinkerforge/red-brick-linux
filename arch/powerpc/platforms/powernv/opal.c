@@ -1,12 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * PowerNV OPAL high level interfaces
  *
  * Copyright 2011 IBM Corp.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version
- * 2 of the License, or (at your option) any later version.
  */
 
 #define pr_fmt(fmt)	"opal: " fmt
@@ -16,6 +12,7 @@
 #include <linux/of.h>
 #include <linux/of_fdt.h>
 #include <linux/of_platform.h>
+#include <linux/of_address.h>
 #include <linux/interrupt.h>
 #include <linux/notifier.h>
 #include <linux/slab.h>
@@ -25,11 +22,16 @@
 #include <linux/memblock.h>
 #include <linux/kthread.h>
 #include <linux/freezer.h>
+#include <linux/kmsg_dump.h>
+#include <linux/console.h>
+#include <linux/sched/debug.h>
 
 #include <asm/machdep.h>
 #include <asm/opal.h>
 #include <asm/firmware.h>
 #include <asm/mce.h>
+#include <asm/imc-pmu.h>
+#include <asm/bug.h>
 
 #include "powernv.h"
 
@@ -120,7 +122,7 @@ int __init early_init_dt_scan_opal(unsigned long node,
 
 	if (of_flat_dt_is_compatible(node, "ibm,opal-v3")) {
 		powerpc_firmware_features |= FW_FEATURE_OPAL;
-		pr_info("OPAL detected !\n");
+		pr_debug("OPAL detected !\n");
 	} else {
 		panic("OPAL != V3 detected, no longer supported.\n");
 	}
@@ -162,13 +164,12 @@ int __init early_init_dt_scan_recoverable_ranges(unsigned long node,
 			sizeof(struct mcheck_recoverable_range);
 
 	/*
-	 * Allocate a buffer to hold the MC recoverable ranges. We would be
-	 * accessing them in real mode, hence it needs to be within
-	 * RMO region.
+	 * Allocate a buffer to hold the MC recoverable ranges.
 	 */
-	mc_recoverable_range =__va(memblock_alloc_base(size, __alignof__(u64),
-							ppc64_rma_size));
-	memset(mc_recoverable_range, 0, size);
+	mc_recoverable_range = memblock_alloc(size, __alignof__(u64));
+	if (!mc_recoverable_range)
+		panic("%s: Failed to allocate %u bytes align=0x%lx\n",
+		      __func__, size, __alignof__(u64));
 
 	for (i = 0; i < mc_recoverable_range_len; i++) {
 		mc_recoverable_range[i].start_addr =
@@ -201,16 +202,18 @@ static int __init opal_register_exception_handlers(void)
 	glue = 0x7000;
 
 	/*
-	 * Check if we are running on newer firmware that exports
-	 * OPAL_HANDLE_HMI token. If yes, then don't ask OPAL to patch
-	 * the HMI interrupt and we catch it directly in Linux.
+	 * Only ancient OPAL firmware requires this.
+	 * Specifically, firmware from FW810.00 (released June 2014)
+	 * through FW810.20 (Released October 2014).
 	 *
-	 * For older firmware (i.e currently released POWER8 System Firmware
-	 * as of today <= SV810_087), we fallback to old behavior and let OPAL
-	 * patch the HMI vector and handle it inside OPAL firmware.
+	 * Check if we are running on newer (post Oct 2014) firmware that
+	 * exports the OPAL_HANDLE_HMI token. If yes, then don't ask OPAL to
+	 * patch the HMI interrupt and we catch it directly in Linux.
 	 *
-	 * For newer firmware (in development/yet to be released) we will
-	 * start catching/handling HMI directly in Linux.
+	 * For older firmware (i.e < FW810.20), we fallback to old behavior and
+	 * let OPAL patch the HMI vector and handle it inside OPAL firmware.
+	 *
+	 * For newer firmware we catch/handle the HMI directly in Linux.
 	 */
 	if (!opal_check_token(OPAL_HANDLE_HMI)) {
 		pr_info("Old firmware detected, OPAL handles HMIs.\n");
@@ -220,6 +223,11 @@ static int __init opal_register_exception_handlers(void)
 		glue += 128;
 	}
 
+	/*
+	 * Only applicable to ancient firmware, all modern
+	 * (post March 2015/skiboot 5.0) firmware will just return
+	 * OPAL_UNSUPPORTED.
+	 */
 	opal_register_exception_handler(OPAL_SOFTPATCH_HANDLER, 0, glue);
 #endif
 
@@ -235,8 +243,8 @@ int opal_message_notifier_register(enum opal_msg_type msg_type,
 					struct notifier_block *nb)
 {
 	if (!nb || msg_type >= OPAL_MSG_TYPE_MAX) {
-		pr_warning("%s: Invalid arguments, msg_type:%d\n",
-			   __func__, msg_type);
+		pr_warn("%s: Invalid arguments, msg_type:%d\n",
+			__func__, msg_type);
 		return -EINVAL;
 	}
 
@@ -277,8 +285,8 @@ static void opal_handle_message(void)
 
 	/* check for errors. */
 	if (ret) {
-		pr_warning("%s: Failed to retrieve opal message, err=%lld\n",
-				__func__, ret);
+		pr_warn("%s: Failed to retrieve opal message, err=%lld\n",
+			__func__, ret);
 		return;
 	}
 
@@ -340,70 +348,146 @@ int opal_get_chars(uint32_t vtermno, char *buf, int count)
 	return 0;
 }
 
-int opal_put_chars(uint32_t vtermno, const char *data, int total_len)
+static int __opal_put_chars(uint32_t vtermno, const char *data, int total_len, bool atomic)
 {
-	int written = 0;
+	unsigned long flags = 0 /* shut up gcc */;
+	int written;
 	__be64 olen;
-	s64 len, rc;
-	unsigned long flags;
-	__be64 evt;
+	s64 rc;
 
 	if (!opal.entry)
 		return -ENODEV;
 
-	/* We want put_chars to be atomic to avoid mangling of hvsi
-	 * packets. To do that, we first test for room and return
-	 * -EAGAIN if there isn't enough.
-	 *
-	 * Unfortunately, opal_console_write_buffer_space() doesn't
-	 * appear to work on opal v1, so we just assume there is
-	 * enough room and be done with it
-	 */
-	spin_lock_irqsave(&opal_write_lock, flags);
+	if (atomic)
+		spin_lock_irqsave(&opal_write_lock, flags);
 	rc = opal_console_write_buffer_space(vtermno, &olen);
-	len = be64_to_cpu(olen);
-	if (rc || len < total_len) {
-		spin_unlock_irqrestore(&opal_write_lock, flags);
+	if (rc || be64_to_cpu(olen) < total_len) {
 		/* Closed -> drop characters */
 		if (rc)
-			return total_len;
-		opal_poll_events(NULL);
-		return -EAGAIN;
-	}
-
-	/* We still try to handle partial completions, though they
-	 * should no longer happen.
-	 */
-	rc = OPAL_BUSY;
-	while(total_len > 0 && (rc == OPAL_BUSY ||
-				rc == OPAL_BUSY_EVENT || rc == OPAL_SUCCESS)) {
-		olen = cpu_to_be64(total_len);
-		rc = opal_console_write(vtermno, &olen, data);
-		len = be64_to_cpu(olen);
-
-		/* Closed or other error drop */
-		if (rc != OPAL_SUCCESS && rc != OPAL_BUSY &&
-		    rc != OPAL_BUSY_EVENT) {
 			written = total_len;
-			break;
-		}
-		if (rc == OPAL_SUCCESS) {
-			total_len -= len;
-			data += len;
-			written += len;
-		}
-		/* This is a bit nasty but we need that for the console to
-		 * flush when there aren't any interrupts. We will clean
-		 * things a bit later to limit that to synchronous path
-		 * such as the kernel console and xmon/udbg
-		 */
-		do
-			opal_poll_events(&evt);
-		while(rc == OPAL_SUCCESS &&
-			(be64_to_cpu(evt) & OPAL_EVENT_CONSOLE_OUTPUT));
+		else
+			written = -EAGAIN;
+		goto out;
 	}
-	spin_unlock_irqrestore(&opal_write_lock, flags);
+
+	/* Should not get a partial write here because space is available. */
+	olen = cpu_to_be64(total_len);
+	rc = opal_console_write(vtermno, &olen, data);
+	if (rc == OPAL_BUSY || rc == OPAL_BUSY_EVENT) {
+		if (rc == OPAL_BUSY_EVENT)
+			opal_poll_events(NULL);
+		written = -EAGAIN;
+		goto out;
+	}
+
+	/* Closed or other error drop */
+	if (rc != OPAL_SUCCESS) {
+		written = opal_error_code(rc);
+		goto out;
+	}
+
+	written = be64_to_cpu(olen);
+	if (written < total_len) {
+		if (atomic) {
+			/* Should not happen */
+			pr_warn("atomic console write returned partial "
+				"len=%d written=%d\n", total_len, written);
+		}
+		if (!written)
+			written = -EAGAIN;
+	}
+
+out:
+	if (atomic)
+		spin_unlock_irqrestore(&opal_write_lock, flags);
+
 	return written;
+}
+
+int opal_put_chars(uint32_t vtermno, const char *data, int total_len)
+{
+	return __opal_put_chars(vtermno, data, total_len, false);
+}
+
+/*
+ * opal_put_chars_atomic will not perform partial-writes. Data will be
+ * atomically written to the terminal or not at all. This is not strictly
+ * true at the moment because console space can race with OPAL's console
+ * writes.
+ */
+int opal_put_chars_atomic(uint32_t vtermno, const char *data, int total_len)
+{
+	return __opal_put_chars(vtermno, data, total_len, true);
+}
+
+static s64 __opal_flush_console(uint32_t vtermno)
+{
+	s64 rc;
+
+	if (!opal_check_token(OPAL_CONSOLE_FLUSH)) {
+		__be64 evt;
+
+		/*
+		 * If OPAL_CONSOLE_FLUSH is not implemented in the firmware,
+		 * the console can still be flushed by calling the polling
+		 * function while it has OPAL_EVENT_CONSOLE_OUTPUT events.
+		 */
+		WARN_ONCE(1, "opal: OPAL_CONSOLE_FLUSH missing.\n");
+
+		opal_poll_events(&evt);
+		if (!(be64_to_cpu(evt) & OPAL_EVENT_CONSOLE_OUTPUT))
+			return OPAL_SUCCESS;
+		return OPAL_BUSY;
+
+	} else {
+		rc = opal_console_flush(vtermno);
+		if (rc == OPAL_BUSY_EVENT) {
+			opal_poll_events(NULL);
+			rc = OPAL_BUSY;
+		}
+		return rc;
+	}
+
+}
+
+/*
+ * opal_flush_console spins until the console is flushed
+ */
+int opal_flush_console(uint32_t vtermno)
+{
+	for (;;) {
+		s64 rc = __opal_flush_console(vtermno);
+
+		if (rc == OPAL_BUSY || rc == OPAL_PARTIAL) {
+			mdelay(1);
+			continue;
+		}
+
+		return opal_error_code(rc);
+	}
+}
+
+/*
+ * opal_flush_chars is an hvc interface that sleeps until the console is
+ * flushed if wait, otherwise it will return -EBUSY if the console has data,
+ * -EAGAIN if it has data and some of it was flushed.
+ */
+int opal_flush_chars(uint32_t vtermno, bool wait)
+{
+	for (;;) {
+		s64 rc = __opal_flush_console(vtermno);
+
+		if (rc == OPAL_BUSY || rc == OPAL_PARTIAL) {
+			if (wait) {
+				msleep(OPAL_BUSY_DELAY_MS);
+				continue;
+			}
+			if (rc == OPAL_PARTIAL)
+				return -EAGAIN;
+		}
+
+		return opal_error_code(rc);
+	}
 }
 
 static int opal_recover_mce(struct pt_regs *regs,
@@ -422,24 +506,81 @@ static int opal_recover_mce(struct pt_regs *regs,
 		/* Fatal machine check */
 		pr_err("Machine check interrupt is fatal\n");
 		recovered = 0;
-	} else if ((evt->severity == MCE_SEV_ERROR_SYNC) &&
-			(user_mode(regs) && !is_global_init(current))) {
+	}
+
+	if (!recovered && evt->sync_error) {
 		/*
-		 * For now, kill the task if we have received exception when
-		 * in userspace.
+		 * Try to kill processes if we get a synchronous machine check
+		 * (e.g., one caused by execution of this instruction). This
+		 * will devolve into a panic if we try to kill init or are in
+		 * an interrupt etc.
 		 *
 		 * TODO: Queue up this address for hwpoisioning later.
+		 * TODO: This is not quite right for d-side machine
+		 *       checks ->nip is not necessarily the important
+		 *       address.
 		 */
-		_exception(SIGBUS, regs, BUS_MCEERR_AR, regs->nip);
-		recovered = 1;
+		if ((user_mode(regs))) {
+			_exception(SIGBUS, regs, BUS_MCEERR_AR, regs->nip);
+			recovered = 1;
+		} else if (die_will_crash()) {
+			/*
+			 * die() would kill the kernel, so better to go via
+			 * the platform reboot code that will log the
+			 * machine check.
+			 */
+			recovered = 0;
+		} else {
+			die("Machine check", regs, SIGBUS);
+			recovered = 1;
+		}
 	}
+
 	return recovered;
+}
+
+void __noreturn pnv_platform_error_reboot(struct pt_regs *regs, const char *msg)
+{
+	panic_flush_kmsg_start();
+
+	pr_emerg("Hardware platform error: %s\n", msg);
+	if (regs)
+		show_regs(regs);
+	smp_send_stop();
+
+	panic_flush_kmsg_end();
+
+	/*
+	 * Don't bother to shut things down because this will
+	 * xstop the system.
+	 */
+	if (opal_cec_reboot2(OPAL_REBOOT_PLATFORM_ERROR, msg)
+						== OPAL_UNSUPPORTED) {
+		pr_emerg("Reboot type %d not supported for %s\n",
+				OPAL_REBOOT_PLATFORM_ERROR, msg);
+	}
+
+	/*
+	 * We reached here. There can be three possibilities:
+	 * 1. We are running on a firmware level that do not support
+	 *    opal_cec_reboot2()
+	 * 2. We are running on a firmware level that do not support
+	 *    OPAL_REBOOT_PLATFORM_ERROR reboot type.
+	 * 3. We are running on FSP based system that does not need
+	 *    opal to trigger checkstop explicitly for error analysis.
+	 *    The FSP PRD component would have already got notified
+	 *    about this error through other channels.
+	 * 4. We are running on a newer skiboot that by default does
+	 *    not cause a checkstop, drops us back to the kernel to
+	 *    extract context and state at the time of the error.
+	 */
+
+	panic(msg);
 }
 
 int opal_machine_check(struct pt_regs *regs)
 {
 	struct machine_check_event evt;
-	int ret;
 
 	if (!get_mce_event(&evt, MCE_EVENT_RELEASE))
 		return 0;
@@ -450,48 +591,12 @@ int opal_machine_check(struct pt_regs *regs)
 		       evt.version);
 		return 0;
 	}
-	machine_check_print_event_info(&evt, user_mode(regs));
+	machine_check_print_event_info(&evt, user_mode(regs), false);
 
 	if (opal_recover_mce(regs, &evt))
 		return 1;
 
-	/*
-	 * Unrecovered machine check, we are heading to panic path.
-	 *
-	 * We may have hit this MCE in very early stage of kernel
-	 * initialization even before opal-prd has started running. If
-	 * this is the case then this MCE error may go un-noticed or
-	 * un-analyzed if we go down panic path. We need to inform
-	 * BMC/OCC about this error so that they can collect relevant
-	 * data for error analysis before rebooting.
-	 * Use opal_cec_reboot2(OPAL_REBOOT_PLATFORM_ERROR) to do so.
-	 * This function may not return on BMC based system.
-	 */
-	ret = opal_cec_reboot2(OPAL_REBOOT_PLATFORM_ERROR,
-			"Unrecoverable Machine Check exception");
-	if (ret == OPAL_UNSUPPORTED) {
-		pr_emerg("Reboot type %d not supported\n",
-					OPAL_REBOOT_PLATFORM_ERROR);
-	}
-
-	/*
-	 * We reached here. There can be three possibilities:
-	 * 1. We are running on a firmware level that do not support
-	 *    opal_cec_reboot2()
-	 * 2. We are running on a firmware level that do not support
-	 *    OPAL_REBOOT_PLATFORM_ERROR reboot type.
-	 * 3. We are running on FSP based system that does not need opal
-	 *    to trigger checkstop explicitly for error analysis. The FSP
-	 *    PRD component would have already got notified about this
-	 *    error through other channels.
-	 *
-	 * If hardware marked this as an unrecoverable MCE, we are
-	 * going to panic anyway. Even if it didn't, it's not safe to
-	 * continue at this point, so we should explicitly panic.
-	 */
-
-	panic("PowerNV Unrecovered Machine Check");
-	return 0;
+	pnv_platform_error_reboot(regs, "Unrecoverable Machine Check exception");
 }
 
 /* Early hmi handler called in real mode. */
@@ -512,24 +617,39 @@ int opal_hmi_exception_early(struct pt_regs *regs)
 	return 0;
 }
 
+int opal_hmi_exception_early2(struct pt_regs *regs)
+{
+	s64 rc;
+	__be64 out_flags;
+
+	/*
+	 * call opal hmi handler.
+	 * Check 64-bit flag mask to find out if an event was generated,
+	 * and whether TB is still valid or not etc.
+	 */
+	rc = opal_handle_hmi2(&out_flags);
+	if (rc != OPAL_SUCCESS)
+		return 0;
+
+	if (be64_to_cpu(out_flags) & OPAL_HMI_FLAGS_NEW_EVENT)
+		local_paca->hmi_event_available = 1;
+	if (be64_to_cpu(out_flags) & OPAL_HMI_FLAGS_TOD_TB_FAIL)
+		tb_invalid = true;
+	return 1;
+}
+
 /* HMI exception handler called in virtual mode during check_irq_replay. */
 int opal_handle_hmi_exception(struct pt_regs *regs)
 {
-	s64 rc;
-	__be64 evt = 0;
-
 	/*
 	 * Check if HMI event is available.
-	 * if Yes, then call opal_poll_events to pull opal messages and
-	 * process them.
+	 * if Yes, then wake kopald to process them.
 	 */
 	if (!local_paca->hmi_event_available)
 		return 0;
 
 	local_paca->hmi_event_available = 0;
-	rc = opal_poll_events(&evt);
-	if (rc == OPAL_SUCCESS && evt)
-		opal_handle_events(be64_to_cpu(evt));
+	opal_wake_poller();
 
 	return 1;
 }
@@ -720,17 +840,31 @@ static void opal_pdev_init(const char *compatible)
 		of_platform_device_create(np, NULL, NULL);
 }
 
+static void __init opal_imc_init_dev(void)
+{
+	struct device_node *np;
+
+	np = of_find_compatible_node(NULL, NULL, IMC_DTB_COMPAT);
+	if (np)
+		of_platform_device_create(np, NULL, NULL);
+}
+
 static int kopald(void *unused)
 {
 	unsigned long timeout = msecs_to_jiffies(opal_heartbeat) + 1;
-	__be64 events;
 
 	set_freezable();
 	do {
 		try_to_freeze();
-		opal_poll_events(&events);
-		opal_handle_events(be64_to_cpu(events));
-		schedule_timeout_interruptible(timeout);
+
+		opal_handle_events();
+
+		set_current_state(TASK_INTERRUPTIBLE);
+		if (opal_have_pending_events())
+			__set_current_state(TASK_RUNNING);
+		else
+			schedule_timeout(timeout);
+
 	} while (!kthread_should_stop());
 
 	return 0;
@@ -768,7 +902,7 @@ static int __init opal_init(void)
 	consoles = of_find_node_by_path("/ibm,opal/consoles");
 	if (consoles) {
 		for_each_child_of_node(consoles, np) {
-			if (strcmp(np->name, "serial"))
+			if (!of_node_name_eq(np, "serial"))
 				continue;
 			of_platform_device_create(np, NULL, NULL);
 		}
@@ -790,8 +924,14 @@ static int __init opal_init(void)
 	/* Create i2c platform devices */
 	opal_pdev_init("ibm,opal-i2c");
 
+	/* Handle non-volatile memory devices */
+	opal_pdev_init("pmem-region");
+
 	/* Setup a heatbeat thread if requested by OPAL */
 	opal_init_heartbeat();
+
+	/* Detect In-Memory Collection counters and create devices*/
+	opal_imc_init_dev();
 
 	/* Create leds platform devices */
 	leds = of_find_node_by_path("/ibm,opal/leds");
@@ -836,6 +976,18 @@ static int __init opal_init(void)
 	/* Initialise OPAL kmsg dumper for flushing console on panic */
 	opal_kmsg_init();
 
+	/* Initialise OPAL powercap interface */
+	opal_powercap_init();
+
+	/* Initialise OPAL Power-Shifting-Ratio interface */
+	opal_psr_init();
+
+	/* Initialise OPAL sensor groups */
+	opal_sensor_groups_init();
+
+	/* Initialise OPAL Power control interface */
+	opal_power_control_init();
+
 	return 0;
 }
 machine_subsys_initcall(powernv, opal_init);
@@ -874,6 +1026,7 @@ EXPORT_SYMBOL_GPL(opal_flash_read);
 EXPORT_SYMBOL_GPL(opal_flash_write);
 EXPORT_SYMBOL_GPL(opal_flash_erase);
 EXPORT_SYMBOL_GPL(opal_prd_msg);
+EXPORT_SYMBOL_GPL(opal_check_token);
 
 /* Convert a region of vmalloc memory to an opal sg list */
 struct opal_sg_list *opal_vmalloc_to_sg_list(void *vmalloc_addr,
@@ -945,6 +1098,7 @@ int opal_error_code(int rc)
 
 	case OPAL_PARAMETER:		return -EINVAL;
 	case OPAL_ASYNC_COMPLETION:	return -EINPROGRESS;
+	case OPAL_BUSY:
 	case OPAL_BUSY_EVENT:		return -EBUSY;
 	case OPAL_NO_MEM:		return -ENOMEM;
 	case OPAL_PERMISSION:		return -EPERM;
@@ -952,6 +1106,7 @@ int opal_error_code(int rc)
 	case OPAL_UNSUPPORTED:		return -EIO;
 	case OPAL_HARDWARE:		return -EIO;
 	case OPAL_INTERNAL_ERROR:	return -EIO;
+	case OPAL_TIMEOUT:		return -ETIMEDOUT;
 	default:
 		pr_err("%s: unexpected OPAL error %d\n", __func__, rc);
 		return -EIO;
@@ -983,3 +1138,6 @@ EXPORT_SYMBOL_GPL(opal_write_oppanel_async);
 /* Export this for KVM */
 EXPORT_SYMBOL_GPL(opal_int_set_mfrr);
 EXPORT_SYMBOL_GPL(opal_int_eoi);
+EXPORT_SYMBOL_GPL(opal_error_code);
+/* Export the below symbol for NX compression */
+EXPORT_SYMBOL(opal_nx_coproc_init);

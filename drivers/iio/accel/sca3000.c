@@ -1,9 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * sca3000_core.c -- support VTI sca3000 series accelerometers via SPI
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published by
- * the Free Software Foundation.
  *
  * Copyright (c) 2009 Jonathan Cameron <jic23@kernel.org>
  *
@@ -36,7 +33,7 @@
 #define   SCA3000_LOCKED				BIT(5)
 #define   SCA3000_EEPROM_CS_ERROR			BIT(1)
 #define   SCA3000_SPI_FRAME_ERROR			BIT(0)
- 
+
 /* All reads done using register decrement so no need to directly access LSBs */
 #define SCA3000_REG_X_MSB_ADDR				0x05
 #define SCA3000_REG_Y_MSB_ADDR				0x07
@@ -74,7 +71,7 @@
 #define SCA3000_REG_INT_STATUS_ADDR			0x16
 #define   SCA3000_REG_INT_STATUS_THREE_QUARTERS		BIT(7)
 #define   SCA3000_REG_INT_STATUS_HALF			BIT(6)
-	
+
 #define SCA3000_INT_STATUS_FREE_FALL			BIT(3)
 #define SCA3000_INT_STATUS_Y_TRIGGER			BIT(2)
 #define SCA3000_INT_STATUS_X_TRIGGER			BIT(1)
@@ -124,7 +121,7 @@
 
 #define SCA3000_REG_INT_MASK_ADDR			0x21
 #define   SCA3000_REG_INT_MASK_PROT_MASK		0x1C
- 
+
 #define   SCA3000_REG_INT_MASK_RING_THREE_QUARTER	BIT(7)
 #define   SCA3000_REG_INT_MASK_RING_HALF		BIT(6)
 
@@ -797,6 +794,7 @@ static int sca3000_write_raw(struct iio_dev *indio_dev,
 		mutex_lock(&st->lock);
 		ret = sca3000_write_3db_freq(st, val);
 		mutex_unlock(&st->lock);
+		return ret;
 	default:
 		return -EINVAL;
 	}
@@ -871,8 +869,9 @@ static int sca3000_read_event_value(struct iio_dev *indio_dev,
 				    enum iio_event_info info,
 				    int *val, int *val2)
 {
-	int ret, i;
 	struct sca3000_state *st = iio_priv(indio_dev);
+	long ret;
+	int i;
 
 	switch (info) {
 	case IIO_EV_INFO_VALUE:
@@ -884,11 +883,11 @@ static int sca3000_read_event_value(struct iio_dev *indio_dev,
 			return ret;
 		*val = 0;
 		if (chan->channel2 == IIO_MOD_Y)
-			for_each_set_bit(i, (unsigned long *)&ret,
+			for_each_set_bit(i, &ret,
 					 ARRAY_SIZE(st->info->mot_det_mult_y))
 				*val += st->info->mot_det_mult_y[i];
 		else
-			for_each_set_bit(i, (unsigned long *)&ret,
+			for_each_set_bit(i, &ret,
 					 ARRAY_SIZE(st->info->mot_det_mult_xz))
 				*val += st->info->mot_det_mult_xz[i];
 
@@ -1277,7 +1276,7 @@ static int sca3000_configure_ring(struct iio_dev *indio_dev)
 {
 	struct iio_buffer *buffer;
 
-	buffer = iio_kfifo_allocate();
+	buffer = devm_iio_kfifo_allocate(&indio_dev->dev);
 	if (!buffer)
 		return -ENOMEM;
 
@@ -1285,11 +1284,6 @@ static int sca3000_configure_ring(struct iio_dev *indio_dev)
 	indio_dev->modes |= INDIO_BUFFER_SOFTWARE;
 
 	return 0;
-}
-
-static void sca3000_unconfigure_ring(struct iio_dev *indio_dev)
-{
-	iio_kfifo_free(indio_dev->buffer);
 }
 
 static inline
@@ -1454,7 +1448,6 @@ static const struct iio_info sca3000_info = {
 	.write_event_value = &sca3000_write_event_value,
 	.read_event_config = &sca3000_read_event_config,
 	.write_event_config = &sca3000_write_event_config,
-	.driver_module = THIS_MODULE,
 };
 
 static int sca3000_probe(struct spi_device *spi)
@@ -1487,7 +1480,9 @@ static int sca3000_probe(struct spi_device *spi)
 	}
 	indio_dev->modes = INDIO_DIRECT_MODE;
 
-	sca3000_configure_ring(indio_dev);
+	ret = sca3000_configure_ring(indio_dev);
+	if (ret)
+		return ret;
 
 	if (spi->irq) {
 		ret = request_threaded_irq(spi->irq,
@@ -1546,8 +1541,6 @@ static int sca3000_remove(struct spi_device *spi)
 	sca3000_stop_all_interrupts(st);
 	if (spi->irq)
 		free_irq(spi->irq, indio_dev);
-
-	sca3000_unconfigure_ring(indio_dev);
 
 	return 0;
 }

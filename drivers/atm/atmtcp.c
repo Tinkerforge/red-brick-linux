@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* drivers/atm/atmtcp.c - ATM over TCP "device" driver */
 
 /* Written 1997-2000 by Werner Almesberger, EPFL LRC/ICA */
@@ -342,7 +343,7 @@ static struct atmdev_ops atmtcp_v_dev_ops = {
  */
 
 
-static struct atmdev_ops atmtcp_c_dev_ops = {
+static const struct atmdev_ops atmtcp_c_dev_ops = {
 	.close		= atmtcp_c_close,
 	.send		= atmtcp_c_send
 };

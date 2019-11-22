@@ -1,10 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2016 IBM Corp.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 #include <linux/bitops.h>
 #include <linux/init.h>
@@ -25,7 +21,33 @@
 #include "../pinctrl-utils.h"
 #include "pinctrl-aspeed.h"
 
-#define ASPEED_G5_NR_PINS 232
+/*
+ * The "Multi-function Pins Mapping and Control" table in the SoC datasheet
+ * references registers by the device/offset mnemonic. The register macros
+ * below are named the same way to ease transcription and verification (as
+ * opposed to naming them e.g. PINMUX_CTRL_[0-9]). Further, signal expressions
+ * reference registers beyond those dedicated to pinmux, such as the system
+ * reset control and MAC clock configuration registers. The AST2500 goes a step
+ * further and references registers in the graphics IP block.
+ */
+#define SCU2C           0x2C /* Misc. Control Register */
+#define SCU3C           0x3C /* System Reset Control/Status Register */
+#define SCU48           0x48 /* MAC Interface Clock Delay Setting */
+#define HW_STRAP1       0x70 /* AST2400 strapping is 33 bits, is split */
+#define HW_REVISION_ID  0x7C /* Silicon revision ID register */
+#define SCU80           0x80 /* Multi-function Pin Control #1 */
+#define SCU84           0x84 /* Multi-function Pin Control #2 */
+#define SCU88           0x88 /* Multi-function Pin Control #3 */
+#define SCU8C           0x8C /* Multi-function Pin Control #4 */
+#define SCU90           0x90 /* Multi-function Pin Control #5 */
+#define SCU94           0x94 /* Multi-function Pin Control #6 */
+#define SCUA0           0xA0 /* Multi-function Pin Control #7 */
+#define SCUA4           0xA4 /* Multi-function Pin Control #8 */
+#define SCUA8           0xA8 /* Multi-function Pin Control #9 */
+#define SCUAC           0xAC /* Multi-function Pin Control #10 */
+#define HW_STRAP2       0xD0 /* Strapping */
+
+#define ASPEED_G5_NR_PINS 236
 
 #define COND1		{ ASPEED_IP_SCU, SCU90, BIT(6), 0, 0 }
 #define COND2		{ ASPEED_IP_SCU, SCU94, GENMASK(1, 0), 0, 0 }
@@ -576,6 +598,8 @@ SS_PIN_DECL(N3, GPIOJ2, SGPMO);
 #define N4 75
 SIG_EXPR_LIST_DECL_SINGLE(SGPMI, SGPM, SIG_DESC_SET(SCU84, 11));
 SS_PIN_DECL(N4, GPIOJ3, SGPMI);
+
+FUNC_GROUP_DECL(SGPM, R2, L2, N3, N4);
 
 #define N5 76
 SIG_EXPR_LIST_DECL_SINGLE(VGAHS, VGAHS, SIG_DESC_SET(SCU84, 12));
@@ -1724,6 +1748,48 @@ FUNC_GROUP_DECL(LPCRST, G22);
 
 FUNC_GROUP_DECL(ESPI, G21, G20, D22, E22, C22, F21, F22, G22);
 
+#define A7 232
+SIG_EXPR_LIST_DECL_SINGLE(USB2AHDP, USB2AH, SIG_DESC_SET(SCU90, 29));
+SIG_EXPR_LIST_DECL_SINGLE(USB2ADDP, USB2AD, SIG_DESC_BIT(SCU90, 29, 0));
+MS_PIN_DECL_(A7, SIG_EXPR_LIST_PTR(USB2AHDP), SIG_EXPR_LIST_PTR(USB2ADDP));
+
+#define A8 233
+SIG_EXPR_LIST_DECL_SINGLE(USB2AHDN, USB2AH, SIG_DESC_SET(SCU90, 29));
+SIG_EXPR_LIST_DECL_SINGLE(USB2ADDN, USB2AD, SIG_DESC_BIT(SCU90, 29, 0));
+MS_PIN_DECL_(A8, SIG_EXPR_LIST_PTR(USB2AHDN), SIG_EXPR_LIST_PTR(USB2ADDN));
+
+FUNC_GROUP_DECL(USB2AH, A7, A8);
+FUNC_GROUP_DECL(USB2AD, A7, A8);
+
+#define USB11BHID_DESC  { ASPEED_IP_SCU, SCU94, GENMASK(14, 13), 0, 0 }
+#define USB2BD_DESC   { ASPEED_IP_SCU, SCU94, GENMASK(14, 13), 1, 0 }
+#define USB2BH1_DESC { ASPEED_IP_SCU, SCU94, GENMASK(14, 13), 2, 0 }
+#define USB2BH2_DESC { ASPEED_IP_SCU, SCU94, GENMASK(14, 13), 3, 0 }
+
+#define B6 234
+SIG_EXPR_LIST_DECL_SINGLE(USB11BDP, USB11BHID, USB11BHID_DESC);
+SIG_EXPR_LIST_DECL_SINGLE(USB2BDDP, USB2BD, USB2BD_DESC);
+SIG_EXPR_DECL(USB2BHDP1, USB2BH, USB2BH1_DESC);
+SIG_EXPR_DECL(USB2BHDP2, USB2BH, USB2BH2_DESC);
+SIG_EXPR_LIST_DECL(USB2BHDP, SIG_EXPR_PTR(USB2BHDP1, USB2BH),
+		SIG_EXPR_PTR(USB2BHDP2, USB2BH));
+MS_PIN_DECL_(B6, SIG_EXPR_LIST_PTR(USB11BDP), SIG_EXPR_LIST_PTR(USB2BDDP),
+		SIG_EXPR_LIST_PTR(USB2BHDP));
+
+#define A6 235
+SIG_EXPR_LIST_DECL_SINGLE(USB11BDN, USB11BHID, USB11BHID_DESC);
+SIG_EXPR_LIST_DECL_SINGLE(USB2BDN, USB2BD, USB2BD_DESC);
+SIG_EXPR_DECL(USB2BHDN1, USB2BH, USB2BH1_DESC);
+SIG_EXPR_DECL(USB2BHDN2, USB2BH, USB2BH2_DESC);
+SIG_EXPR_LIST_DECL(USB2BHDN, SIG_EXPR_PTR(USB2BHDN1, USB2BH),
+		SIG_EXPR_PTR(USB2BHDN2, USB2BH));
+MS_PIN_DECL_(A6, SIG_EXPR_LIST_PTR(USB11BDN), SIG_EXPR_LIST_PTR(USB2BDN),
+		SIG_EXPR_LIST_PTR(USB2BHDN));
+
+FUNC_GROUP_DECL(USB11BHID, B6, A6);
+FUNC_GROUP_DECL(USB2BD, B6, A6);
+FUNC_GROUP_DECL(USB2BH, B6, A6);
+
 /* Pins, groups and functions are sort(1):ed alphabetically for sanity */
 
 static struct pinctrl_pin_desc aspeed_g5_pins[ASPEED_G5_NR_PINS] = {
@@ -1743,6 +1809,9 @@ static struct pinctrl_pin_desc aspeed_g5_pins[ASPEED_G5_NR_PINS] = {
 	ASPEED_PINCTRL_PIN(A3),
 	ASPEED_PINCTRL_PIN(A4),
 	ASPEED_PINCTRL_PIN(A5),
+	ASPEED_PINCTRL_PIN(A6),
+	ASPEED_PINCTRL_PIN(A7),
+	ASPEED_PINCTRL_PIN(A8),
 	ASPEED_PINCTRL_PIN(A9),
 	ASPEED_PINCTRL_PIN(AA1),
 	ASPEED_PINCTRL_PIN(AA19),
@@ -1777,6 +1846,7 @@ static struct pinctrl_pin_desc aspeed_g5_pins[ASPEED_G5_NR_PINS] = {
 	ASPEED_PINCTRL_PIN(B3),
 	ASPEED_PINCTRL_PIN(B4),
 	ASPEED_PINCTRL_PIN(B5),
+	ASPEED_PINCTRL_PIN(B6),
 	ASPEED_PINCTRL_PIN(B9),
 	ASPEED_PINCTRL_PIN(C1),
 	ASPEED_PINCTRL_PIN(C11),
@@ -2081,6 +2151,7 @@ static const struct aspeed_pin_group aspeed_g5_groups[] = {
 	ASPEED_PINCTRL_GROUP(SD2),
 	ASPEED_PINCTRL_GROUP(SDA1),
 	ASPEED_PINCTRL_GROUP(SDA2),
+	ASPEED_PINCTRL_GROUP(SGPM),
 	ASPEED_PINCTRL_GROUP(SGPS1),
 	ASPEED_PINCTRL_GROUP(SGPS2),
 	ASPEED_PINCTRL_GROUP(SIOONCTRL),
@@ -2111,6 +2182,11 @@ static const struct aspeed_pin_group aspeed_g5_groups[] = {
 	ASPEED_PINCTRL_GROUP(TXD3),
 	ASPEED_PINCTRL_GROUP(TXD4),
 	ASPEED_PINCTRL_GROUP(UART6),
+	ASPEED_PINCTRL_GROUP(USB11BHID),
+	ASPEED_PINCTRL_GROUP(USB2AD),
+	ASPEED_PINCTRL_GROUP(USB2AH),
+	ASPEED_PINCTRL_GROUP(USB2BD),
+	ASPEED_PINCTRL_GROUP(USB2BH),
 	ASPEED_PINCTRL_GROUP(USBCKI),
 	ASPEED_PINCTRL_GROUP(VGABIOSROM),
 	ASPEED_PINCTRL_GROUP(VGAHS),
@@ -2245,6 +2321,7 @@ static const struct aspeed_pin_function aspeed_g5_functions[] = {
 	ASPEED_PINCTRL_FUNC(SD2),
 	ASPEED_PINCTRL_FUNC(SDA1),
 	ASPEED_PINCTRL_FUNC(SDA2),
+	ASPEED_PINCTRL_FUNC(SGPM),
 	ASPEED_PINCTRL_FUNC(SGPS1),
 	ASPEED_PINCTRL_FUNC(SGPS2),
 	ASPEED_PINCTRL_FUNC(SIOONCTRL),
@@ -2275,6 +2352,11 @@ static const struct aspeed_pin_function aspeed_g5_functions[] = {
 	ASPEED_PINCTRL_FUNC(TXD3),
 	ASPEED_PINCTRL_FUNC(TXD4),
 	ASPEED_PINCTRL_FUNC(UART6),
+	ASPEED_PINCTRL_FUNC(USB11BHID),
+	ASPEED_PINCTRL_FUNC(USB2AD),
+	ASPEED_PINCTRL_FUNC(USB2AH),
+	ASPEED_PINCTRL_FUNC(USB2BD),
+	ASPEED_PINCTRL_FUNC(USB2BH),
 	ASPEED_PINCTRL_FUNC(USBCKI),
 	ASPEED_PINCTRL_FUNC(VGABIOSROM),
 	ASPEED_PINCTRL_FUNC(VGAHS),
@@ -2425,18 +2507,192 @@ static struct aspeed_pin_config aspeed_g5_configs[] = {
 	{ PIN_CONFIG_INPUT_DEBOUNCE, { A20, B19 }, SCUA8, 27 },
 };
 
+static struct regmap *aspeed_g5_acquire_regmap(struct aspeed_pinmux_data *ctx,
+					       int ip)
+{
+	if (ip == ASPEED_IP_SCU) {
+		WARN(!ctx->maps[ip], "Missing SCU syscon!");
+		return ctx->maps[ip];
+	}
+
+	if (ip >= ASPEED_NR_PINMUX_IPS)
+		return ERR_PTR(-EINVAL);
+
+	if (likely(ctx->maps[ip]))
+		return ctx->maps[ip];
+
+	if (ip == ASPEED_IP_GFX) {
+		struct device_node *node;
+		struct regmap *map;
+
+		node = of_parse_phandle(ctx->dev->of_node,
+					"aspeed,external-nodes", 0);
+		if (node) {
+			map = syscon_node_to_regmap(node);
+			of_node_put(node);
+			if (IS_ERR(map))
+				return map;
+		} else
+			return ERR_PTR(-ENODEV);
+
+		ctx->maps[ASPEED_IP_GFX] = map;
+		dev_dbg(ctx->dev, "Acquired GFX regmap");
+		return map;
+	}
+
+	if (ip == ASPEED_IP_LPC) {
+		struct device_node *node;
+		struct regmap *map;
+
+		node = of_parse_phandle(ctx->dev->of_node,
+					"aspeed,external-nodes", 1);
+		if (node) {
+			map = syscon_node_to_regmap(node->parent);
+			of_node_put(node);
+			if (IS_ERR(map))
+				return map;
+		} else
+			return ERR_PTR(-ENODEV);
+
+		ctx->maps[ASPEED_IP_LPC] = map;
+		dev_dbg(ctx->dev, "Acquired LPC regmap");
+		return map;
+	}
+
+	return ERR_PTR(-EINVAL);
+}
+
+static int aspeed_g5_sig_expr_eval(struct aspeed_pinmux_data *ctx,
+				   const struct aspeed_sig_expr *expr,
+				   bool enabled)
+{
+	int ret;
+	int i;
+
+	for (i = 0; i < expr->ndescs; i++) {
+		const struct aspeed_sig_desc *desc = &expr->descs[i];
+		struct regmap *map;
+
+		map = aspeed_g5_acquire_regmap(ctx, desc->ip);
+		if (IS_ERR(map)) {
+			dev_err(ctx->dev,
+				"Failed to acquire regmap for IP block %d\n",
+				desc->ip);
+			return PTR_ERR(map);
+		}
+
+		ret = aspeed_sig_desc_eval(desc, enabled, ctx->maps[desc->ip]);
+		if (ret <= 0)
+			return ret;
+	}
+
+	return 1;
+}
+
+/**
+ * Configure a pin's signal by applying an expression's descriptor state for
+ * all descriptors in the expression.
+ *
+ * @ctx: The pinmux context
+ * @expr: The expression associated with the function whose signal is to be
+ *        configured
+ * @enable: true to enable an function's signal through a pin's signal
+ *          expression, false to disable the function's signal
+ *
+ * Return: 0 if the expression is configured as requested and a negative error
+ * code otherwise
+ */
+static int aspeed_g5_sig_expr_set(struct aspeed_pinmux_data *ctx,
+				  const struct aspeed_sig_expr *expr,
+				  bool enable)
+{
+	int ret;
+	int i;
+
+	for (i = 0; i < expr->ndescs; i++) {
+		const struct aspeed_sig_desc *desc = &expr->descs[i];
+		u32 pattern = enable ? desc->enable : desc->disable;
+		u32 val = (pattern << __ffs(desc->mask));
+		struct regmap *map;
+
+		map = aspeed_g5_acquire_regmap(ctx, desc->ip);
+		if (IS_ERR(map)) {
+			dev_err(ctx->dev,
+				"Failed to acquire regmap for IP block %d\n",
+				desc->ip);
+			return PTR_ERR(map);
+		}
+
+		/*
+		 * Strap registers are configured in hardware or by early-boot
+		 * firmware. Treat them as read-only despite that we can write
+		 * them. This may mean that certain functions cannot be
+		 * deconfigured and is the reason we re-evaluate after writing
+		 * all descriptor bits.
+		 *
+		 * Port D and port E GPIO loopback modes are the only exception
+		 * as those are commonly used with front-panel buttons to allow
+		 * normal operation of the host when the BMC is powered off or
+		 * fails to boot. Once the BMC has booted, the loopback mode
+		 * must be disabled for the BMC to control host power-on and
+		 * reset.
+		 */
+		if (desc->ip == ASPEED_IP_SCU && desc->reg == HW_STRAP1 &&
+		    !(desc->mask & (BIT(21) | BIT(22))))
+			continue;
+
+		if (desc->ip == ASPEED_IP_SCU && desc->reg == HW_STRAP2)
+			continue;
+
+		/* On AST2500, Set bits in SCU70 are cleared from SCU7C */
+		if (desc->ip == ASPEED_IP_SCU && desc->reg == HW_STRAP1) {
+			u32 value = ~val & desc->mask;
+
+			if (value) {
+				ret = regmap_write(ctx->maps[desc->ip],
+						   HW_REVISION_ID, value);
+				if (ret < 0)
+					return ret;
+			}
+		}
+
+		ret = regmap_update_bits(ctx->maps[desc->ip], desc->reg,
+					 desc->mask, val);
+
+		if (ret)
+			return ret;
+	}
+
+	ret = aspeed_sig_expr_eval(ctx, expr, enable);
+	if (ret < 0)
+		return ret;
+
+	if (!ret)
+		return -EPERM;
+
+	return 0;
+}
+
+static const struct aspeed_pinmux_ops aspeed_g5_ops = {
+	.eval = aspeed_g5_sig_expr_eval,
+	.set = aspeed_g5_sig_expr_set,
+};
+
 static struct aspeed_pinctrl_data aspeed_g5_pinctrl_data = {
 	.pins = aspeed_g5_pins,
 	.npins = ARRAY_SIZE(aspeed_g5_pins),
-	.groups = aspeed_g5_groups,
-	.ngroups = ARRAY_SIZE(aspeed_g5_groups),
-	.functions = aspeed_g5_functions,
-	.nfunctions = ARRAY_SIZE(aspeed_g5_functions),
+	.pinmux = {
+		.ops = &aspeed_g5_ops,
+		.groups = aspeed_g5_groups,
+		.ngroups = ARRAY_SIZE(aspeed_g5_groups),
+		.functions = aspeed_g5_functions,
+		.nfunctions = ARRAY_SIZE(aspeed_g5_functions),
+	},
 	.configs = aspeed_g5_configs,
 	.nconfigs = ARRAY_SIZE(aspeed_g5_configs),
 };
 
-static struct pinmux_ops aspeed_g5_pinmux_ops = {
+static const struct pinmux_ops aspeed_g5_pinmux_ops = {
 	.get_functions_count = aspeed_pinmux_get_fn_count,
 	.get_function_name = aspeed_pinmux_get_fn_name,
 	.get_function_groups = aspeed_pinmux_get_fn_groups,
@@ -2445,7 +2701,7 @@ static struct pinmux_ops aspeed_g5_pinmux_ops = {
 	.strict = true,
 };
 
-static struct pinctrl_ops aspeed_g5_pinctrl_ops = {
+static const struct pinctrl_ops aspeed_g5_pinctrl_ops = {
 	.get_groups_count = aspeed_pinctrl_get_groups_count,
 	.get_group_name = aspeed_pinctrl_get_group_name,
 	.get_group_pins = aspeed_pinctrl_get_group_pins,
@@ -2454,7 +2710,7 @@ static struct pinctrl_ops aspeed_g5_pinctrl_ops = {
 	.dt_free_map = pinctrl_utils_free_map,
 };
 
-static struct pinconf_ops aspeed_g5_conf_ops = {
+static const struct pinconf_ops aspeed_g5_conf_ops = {
 	.is_generic = true,
 	.pin_config_get = aspeed_pin_config_get,
 	.pin_config_set = aspeed_pin_config_set,
@@ -2474,34 +2730,11 @@ static struct pinctrl_desc aspeed_g5_pinctrl_desc = {
 static int aspeed_g5_pinctrl_probe(struct platform_device *pdev)
 {
 	int i;
-	struct regmap *map;
-	struct device_node *node;
 
 	for (i = 0; i < ARRAY_SIZE(aspeed_g5_pins); i++)
 		aspeed_g5_pins[i].number = i;
 
-	node = of_parse_phandle(pdev->dev.of_node, "aspeed,external-nodes", 0);
-	map = syscon_node_to_regmap(node);
-	of_node_put(node);
-	if (IS_ERR(map)) {
-		dev_warn(&pdev->dev, "No GFX phandle found, some mux configurations may fail\n");
-		map = NULL;
-	}
-	aspeed_g5_pinctrl_data.maps[ASPEED_IP_GFX] = map;
-
-	node = of_parse_phandle(pdev->dev.of_node, "aspeed,external-nodes", 1);
-	if (node) {
-		map = syscon_node_to_regmap(node->parent);
-		if (IS_ERR(map)) {
-			dev_warn(&pdev->dev, "LHC parent is not a syscon, some mux configurations may fail\n");
-			map = NULL;
-		}
-	} else {
-		dev_warn(&pdev->dev, "No LHC phandle found, some mux configurations may fail\n");
-		map = NULL;
-	}
-	of_node_put(node);
-	aspeed_g5_pinctrl_data.maps[ASPEED_IP_LPC] = map;
+	aspeed_g5_pinctrl_data.pinmux.dev = &pdev->dev;
 
 	return aspeed_pinctrl_probe(pdev, &aspeed_g5_pinctrl_desc,
 			&aspeed_g5_pinctrl_data);

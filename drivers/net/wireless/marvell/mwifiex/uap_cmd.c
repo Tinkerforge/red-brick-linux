@@ -265,6 +265,8 @@ mwifiex_set_uap_rates(struct mwifiex_uap_bss_param *bss_cfg,
 
 	rate_ie = (void *)cfg80211_find_ie(WLAN_EID_SUPP_RATES, var_pos, len);
 	if (rate_ie) {
+		if (rate_ie->len > MWIFIEX_SUPPORTED_RATES)
+			return;
 		memcpy(bss_cfg->rates, rate_ie + 1, rate_ie->len);
 		rate_len = rate_ie->len;
 	}
@@ -272,8 +274,11 @@ mwifiex_set_uap_rates(struct mwifiex_uap_bss_param *bss_cfg,
 	rate_ie = (void *)cfg80211_find_ie(WLAN_EID_EXT_SUPP_RATES,
 					   params->beacon.tail,
 					   params->beacon.tail_len);
-	if (rate_ie)
+	if (rate_ie) {
+		if (rate_ie->len > MWIFIEX_SUPPORTED_RATES - rate_len)
+			return;
 		memcpy(bss_cfg->rates + rate_len, rate_ie + 1, rate_ie->len);
+	}
 
 	return;
 }
@@ -391,6 +396,8 @@ mwifiex_set_wmm_params(struct mwifiex_private *priv,
 					    params->beacon.tail_len);
 	if (vendor_ie) {
 		wmm_ie = vendor_ie;
+		if (*(wmm_ie + 1) > sizeof(struct mwifiex_types_wmm_info))
+			return;
 		memcpy(&bss_cfg->wmm_info, wmm_ie +
 		       sizeof(struct ieee_types_header), *(wmm_ie + 1));
 		priv->wmm_enabled = 1;
@@ -442,6 +449,28 @@ mwifiex_uap_bss_wep(u8 **tlv_buf, void *cmd_buf, u16 *param_size)
 	*tlv_buf = tlv;
 
 	return;
+}
+
+/* This function enable 11D if userspace set the country IE.
+ */
+void mwifiex_config_uap_11d(struct mwifiex_private *priv,
+			    struct cfg80211_beacon_data *beacon_data)
+{
+	enum state_11d_t state_11d;
+	const u8 *country_ie;
+
+	country_ie = cfg80211_find_ie(WLAN_EID_COUNTRY, beacon_data->tail,
+				      beacon_data->tail_len);
+	if (country_ie) {
+		/* Send cmd to FW to enable 11D function */
+		state_11d = ENABLE_11D;
+		if (mwifiex_send_cmd(priv, HostCmd_CMD_802_11_SNMP_MIB,
+				     HostCmd_ACT_GEN_SET, DOT11D_I,
+				     &state_11d, true)) {
+			mwifiex_dbg(priv->adapter, ERROR,
+				    "11D: failed to enable 11D\n");
+		}
+	}
 }
 
 /* This function parses BSS related parameters from structure
@@ -848,23 +877,11 @@ void mwifiex_uap_set_channel(struct mwifiex_private *priv,
 int mwifiex_config_start_uap(struct mwifiex_private *priv,
 			     struct mwifiex_uap_bss_param *bss_cfg)
 {
-	enum state_11d_t state_11d;
-
 	if (mwifiex_send_cmd(priv, HostCmd_CMD_UAP_SYS_CONFIG,
 			     HostCmd_ACT_GEN_SET,
 			     UAP_BSS_PARAMS_I, bss_cfg, true)) {
 		mwifiex_dbg(priv->adapter, ERROR,
 			    "Failed to set AP configuration\n");
-		return -1;
-	}
-
-	/* Send cmd to FW to enable 11D function */
-	state_11d = ENABLE_11D;
-	if (mwifiex_send_cmd(priv, HostCmd_CMD_802_11_SNMP_MIB,
-			     HostCmd_ACT_GEN_SET, DOT11D_I,
-			     &state_11d, true)) {
-		mwifiex_dbg(priv->adapter, ERROR,
-			    "11D: failed to enable 11D\n");
 		return -1;
 	}
 

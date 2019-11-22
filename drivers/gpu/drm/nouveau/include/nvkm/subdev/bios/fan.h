@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #ifndef __NVBIOS_FAN_H__
 #define __NVBIOS_FAN_H__
 #include <subdev/bios/therm.h>

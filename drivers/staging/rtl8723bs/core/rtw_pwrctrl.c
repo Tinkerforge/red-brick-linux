@@ -1,15 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /******************************************************************************
  *
  * Copyright(c) 2007 - 2012 Realtek Corporation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
- * more details.
  *
  ******************************************************************************/
 #define _RTW_PWRCTRL_C_
@@ -34,7 +26,7 @@ void _ips_enter(struct adapter *padapter)
 
 	if (rf_off == pwrpriv->change_rfpwrstate) {
 		pwrpriv->bpower_saving = true;
-		DBG_871X_LEVEL(_drv_always_, "nolinked power save enter\n");
+		DBG_871X("nolinked power save enter\n");
 
 		if (pwrpriv->ips_mode == IPS_LEVEL_2)
 			pwrpriv->bkeepfwalive = true;
@@ -51,11 +43,11 @@ void ips_enter(struct adapter *padapter)
 	struct pwrctrl_priv *pwrpriv = adapter_to_pwrctl(padapter);
 
 
-	rtw_btcoex_IpsNotify(padapter, pwrpriv->ips_mode_req);
+	hal_btcoex_IpsNotify(padapter, pwrpriv->ips_mode_req);
 
-	down(&pwrpriv->lock);
+	mutex_lock(&pwrpriv->lock);
 	_ips_enter(padapter);
-	up(&pwrpriv->lock);
+	mutex_unlock(&pwrpriv->lock);
 }
 
 int _ips_leave(struct adapter *padapter)
@@ -73,7 +65,7 @@ int _ips_leave(struct adapter *padapter)
 		if (result == _SUCCESS) {
 			pwrpriv->rf_pwrstate = rf_on;
 		}
-		DBG_871X_LEVEL(_drv_always_, "nolinked power save leave\n");
+		DBG_871X("nolinked power save leave\n");
 
 		DBG_871X("==> ips_leave.....LED(0x%08x)...\n", rtw_read32(padapter, 0x4c));
 		pwrpriv->bips_processing = false;
@@ -93,12 +85,12 @@ int ips_leave(struct adapter *padapter)
 	if (!is_primary_adapter(padapter))
 		return _SUCCESS;
 
-	down(&pwrpriv->lock);
+	mutex_lock(&pwrpriv->lock);
 	ret = _ips_leave(padapter);
-	up(&pwrpriv->lock);
+	mutex_unlock(&pwrpriv->lock);
 
 	if (_SUCCESS == ret)
-		rtw_btcoex_IpsNotify(padapter, IPS_NONE);
+		hal_btcoex_IpsNotify(padapter, IPS_NONE);
 
 	return ret;
 }
@@ -166,9 +158,9 @@ void rtw_ps_processor(struct adapter *padapter)
 	struct debug_priv *pdbgpriv = &psdpriv->drv_dbg;
 	u32 ps_deny = 0;
 
-	down(&adapter_to_pwrctl(padapter)->lock);
+	mutex_lock(&adapter_to_pwrctl(padapter)->lock);
 	ps_deny = rtw_ps_deny_get(padapter);
-	up(&adapter_to_pwrctl(padapter)->lock);
+	mutex_unlock(&adapter_to_pwrctl(padapter)->lock);
 	if (ps_deny != 0) {
 		DBG_871X(FUNC_ADPT_FMT ": ps_deny = 0x%08X, skip power save!\n",
 			FUNC_ADPT_ARG(padapter), ps_deny);
@@ -186,7 +178,7 @@ void rtw_ps_processor(struct adapter *padapter)
 	if (pwrpriv->ips_mode_req == IPS_NONE)
 		goto exit;
 
-	if (rtw_pwr_unassociated_idle(padapter) == false)
+	if (!rtw_pwr_unassociated_idle(padapter))
 		goto exit;
 
 	if ((pwrpriv->rf_pwrstate == rf_on) && ((pwrpriv->pwr_state_check_cnts%4) == 0)) {
@@ -201,17 +193,19 @@ exit:
 	return;
 }
 
-void pwr_state_check_handler(RTW_TIMER_HDL_ARGS);
-void pwr_state_check_handler(RTW_TIMER_HDL_ARGS)
+static void pwr_state_check_handler(struct timer_list *t)
 {
-	struct adapter *padapter = (struct adapter *)FunctionContext;
+	struct pwrctrl_priv *pwrctrlpriv =
+		from_timer(pwrctrlpriv, t, pwr_state_check_timer);
+	struct adapter *padapter = pwrctrlpriv->adapter;
+
 	rtw_ps_cmd(padapter);
 }
 
 void traffic_check_for_leave_lps(struct adapter *padapter, u8 tx, u32 tx_packets)
 {
-	static unsigned long start_time = 0;
-	static u32 xmit_cnt = 0;
+	static unsigned long start_time;
+	static u32 xmit_cnt;
 	u8 bLeaveLPS = false;
 	struct mlme_priv *pmlmepriv = &padapter->mlmepriv;
 
@@ -227,7 +221,7 @@ void traffic_check_for_leave_lps(struct adapter *padapter, u8 tx, u32 tx_packets
 			if (xmit_cnt > 8) {
 				if ((adapter_to_pwrctl(padapter)->bLeisurePs)
 					&& (adapter_to_pwrctl(padapter)->pwr_mode != PS_MODE_ACTIVE)
-					&& (rtw_btcoex_IsBtControlLps(padapter) == false)
+					&& (hal_btcoex_IsBtControlLps(padapter) == false)
 					) {
 					DBG_871X("leave lps via Tx = %d\n", xmit_cnt);
 					bLeaveLPS = true;
@@ -242,7 +236,7 @@ void traffic_check_for_leave_lps(struct adapter *padapter, u8 tx, u32 tx_packets
 		if (pmlmepriv->LinkDetectInfo.NumRxUnicastOkInPeriod > 4/*2*/) {
 			if ((adapter_to_pwrctl(padapter)->bLeisurePs)
 				&& (adapter_to_pwrctl(padapter)->pwr_mode != PS_MODE_ACTIVE)
-				&& (rtw_btcoex_IsBtControlLps(padapter) == false)
+				&& (hal_btcoex_IsBtControlLps(padapter) == false)
 				) {
 				DBG_871X("leave lps via Rx = %d\n", pmlmepriv->LinkDetectInfo.NumRxUnicastOkInPeriod);
 				bLeaveLPS = true;
@@ -275,7 +269,7 @@ void rtw_set_rpwm(struct adapter *padapter, u8 pslv)
 
 	if (pwrpriv->brpwmtimeout == true) {
 		DBG_871X("%s: RPWM timeout, force to set RPWM(0x%02X) again!\n", __func__, pslv);
-	} else{
+	} else {
 		if ((pwrpriv->rpwm == pslv)
 			|| ((pwrpriv->rpwm >= PS_STATE_S2) && (pslv >= PS_STATE_S2))) {
 			RT_TRACE(_module_rtl871x_pwrctrl_c_, _drv_err_,
@@ -419,15 +413,15 @@ void rtw_set_ps_mode(struct adapter *padapter, u8 ps_mode, u8 smart_ps, u8 bcn_a
 			return;
 
 
-	down(&pwrpriv->lock);
+	mutex_lock(&pwrpriv->lock);
 
 	/* if (pwrpriv->pwr_mode == PS_MODE_ACTIVE) */
 	if (ps_mode == PS_MODE_ACTIVE) {
 		if (1
-			&& (((rtw_btcoex_IsBtControlLps(padapter) == false)
+			&& (((hal_btcoex_IsBtControlLps(padapter) == false)
 					)
-				|| ((rtw_btcoex_IsBtControlLps(padapter) == true)
-					&& (rtw_btcoex_IsLpsOn(padapter) == false))
+				|| ((hal_btcoex_IsBtControlLps(padapter) == true)
+					&& (hal_btcoex_IsLpsOn(padapter) == false))
 				)
 			) {
 			DBG_871X(FUNC_ADPT_FMT" Leave 802.11 power save - %s\n",
@@ -463,19 +457,19 @@ void rtw_set_ps_mode(struct adapter *padapter, u8 ps_mode, u8 smart_ps, u8 bcn_a
 			rtw_hal_set_hwreg(padapter, HW_VAR_H2C_FW_PWRMODE, (u8 *)(&ps_mode));
 			pwrpriv->bFwCurrentInPSMode = false;
 
-			rtw_btcoex_LpsNotify(padapter, ps_mode);
+			hal_btcoex_LpsNotify(padapter, ps_mode);
 		}
-	} else{
+	} else {
 		if ((PS_RDY_CHECK(padapter) && check_fwstate(&padapter->mlmepriv, WIFI_ASOC_STATE))
-			|| ((rtw_btcoex_IsBtControlLps(padapter) == true)
-				&& (rtw_btcoex_IsLpsOn(padapter) == true))
+			|| ((hal_btcoex_IsBtControlLps(padapter) == true)
+				&& (hal_btcoex_IsLpsOn(padapter) == true))
 			) {
 			u8 pslv;
 
 			DBG_871X(FUNC_ADPT_FMT" Enter 802.11 power save - %s\n",
 				FUNC_ADPT_ARG(padapter), msg);
 
-			rtw_btcoex_LpsNotify(padapter, ps_mode);
+			hal_btcoex_LpsNotify(padapter, ps_mode);
 
 			pwrpriv->bFwCurrentInPSMode = true;
 			pwrpriv->pwr_mode = ps_mode;
@@ -487,11 +481,11 @@ void rtw_set_ps_mode(struct adapter *padapter, u8 ps_mode, u8 smart_ps, u8 bcn_a
 			if (pwrpriv->alives == 0)
 				pslv = PS_STATE_S0;
 
-			if ((rtw_btcoex_IsBtDisabled(padapter) == false)
-				&& (rtw_btcoex_IsBtControlLps(padapter) == true)) {
+			if ((hal_btcoex_IsBtDisabled(padapter) == false)
+				&& (hal_btcoex_IsBtControlLps(padapter) == true)) {
 				u8 val8;
 
-				val8 = rtw_btcoex_LpsVal(padapter);
+				val8 = hal_btcoex_LpsVal(padapter);
 				if (val8 & BIT(4))
 					pslv = PS_STATE_S2;
 			}
@@ -500,7 +494,7 @@ void rtw_set_ps_mode(struct adapter *padapter, u8 ps_mode, u8 smart_ps, u8 bcn_a
 		}
 	}
 
-	up(&pwrpriv->lock);
+	mutex_unlock(&pwrpriv->lock);
 }
 
 /*
@@ -550,7 +544,7 @@ void LPS_Enter(struct adapter *padapter, const char *msg)
 	int n_assoc_iface = 0;
 	char buf[32] = {0};
 
-	if (rtw_btcoex_IsBtControlLps(padapter) == true)
+	if (hal_btcoex_IsBtControlLps(padapter) == true)
 		return;
 
 	/* Skip lps enter request if number of assocated adapters is not 1 */
@@ -595,7 +589,7 @@ void LPS_Leave(struct adapter *padapter, const char *msg)
 
 /* 	DBG_871X("+LeisurePSLeave\n"); */
 
-	if (rtw_btcoex_IsBtControlLps(padapter) == true)
+	if (hal_btcoex_IsBtControlLps(padapter) == true)
 		return;
 
 	if (pwrpriv->bLeisurePs) {
@@ -634,14 +628,14 @@ void LeaveAllPowerSaveModeDirect(struct adapter *Adapter)
 			return;
 		}
 
-		down(&pwrpriv->lock);
+		mutex_lock(&pwrpriv->lock);
 
 		rtw_set_rpwm(Adapter, PS_STATE_S4);
 
-		up(&pwrpriv->lock);
+		mutex_unlock(&pwrpriv->lock);
 
 		rtw_lps_ctrl_wk_cmd(pri_padapter, LPS_CTRL_LEAVE, 0);
-	} else{
+	} else {
 		if (pwrpriv->rf_pwrstate == rf_off)
 			if (false == ips_leave(pri_padapter))
 				DBG_871X("======> ips_leave fail.............\n");
@@ -699,10 +693,10 @@ void LPS_Leave_check(
 	bReady = false;
 	start_time = jiffies;
 
-	yield();
+	cond_resched();
 
 	while (1) {
-		down(&pwrpriv->lock);
+		mutex_lock(&pwrpriv->lock);
 
 		if ((padapter->bSurpriseRemoved == true)
 			|| (padapter->hw_init_completed == false)
@@ -710,7 +704,7 @@ void LPS_Leave_check(
 			)
 			bReady = true;
 
-		up(&pwrpriv->lock);
+		mutex_unlock(&pwrpriv->lock);
 
 		if (true == bReady)
 			break;
@@ -738,11 +732,10 @@ void cpwm_int_hdl(
 
 	pwrpriv = adapter_to_pwrctl(padapter);
 
-	down(&pwrpriv->lock);
+	mutex_lock(&pwrpriv->lock);
 
 	if (pwrpriv->rpwm < PS_STATE_S2) {
 		DBG_871X("%s: Redundant CPWM Int. RPWM = 0x%02X CPWM = 0x%02x\n", __func__, pwrpriv->rpwm, pwrpriv->cpwm);
-		up(&pwrpriv->lock);
 		goto exit;
 	}
 
@@ -751,15 +744,15 @@ void cpwm_int_hdl(
 
 	if (pwrpriv->cpwm >= PS_STATE_S2) {
 		if (pwrpriv->alives & CMD_ALIVE)
-			up(&padapter->cmdpriv.cmd_queue_sema);
+			complete(&padapter->cmdpriv.cmd_queue_comp);
 
 		if (pwrpriv->alives & XMIT_ALIVE)
-			up(&padapter->xmitpriv.xmit_sema);
+			complete(&padapter->xmitpriv.xmit_comp);
 	}
 
-	up(&pwrpriv->lock);
-
 exit:
+	mutex_unlock(&pwrpriv->lock);
+
 	RT_TRACE(_module_rtl871x_pwrctrl_c_, _drv_notice_,
 			 ("cpwm_int_hdl: cpwm = 0x%02x\n", pwrpriv->cpwm));
 }
@@ -789,12 +782,12 @@ static void rpwmtimeout_workitem_callback(struct work_struct *work)
 	padapter = dvobj->if1;
 /* 	DBG_871X("+%s: rpwm = 0x%02X cpwm = 0x%02X\n", __func__, pwrpriv->rpwm, pwrpriv->cpwm); */
 
-	down(&pwrpriv->lock);
+	mutex_lock(&pwrpriv->lock);
 	if ((pwrpriv->rpwm == pwrpriv->cpwm) || (pwrpriv->cpwm >= PS_STATE_S2)) {
 		DBG_871X("%s: rpwm = 0x%02X cpwm = 0x%02X CPWM done!\n", __func__, pwrpriv->rpwm, pwrpriv->cpwm);
 		goto exit;
 	}
-	up(&pwrpriv->lock);
+	mutex_unlock(&pwrpriv->lock);
 
 	if (rtw_read8(padapter, 0x100) != 0xEA) {
 		struct reportpwrstate_parm report;
@@ -806,7 +799,7 @@ static void rpwmtimeout_workitem_callback(struct work_struct *work)
 		return;
 	}
 
-	down(&pwrpriv->lock);
+	mutex_lock(&pwrpriv->lock);
 
 	if ((pwrpriv->rpwm == pwrpriv->cpwm) || (pwrpriv->cpwm >= PS_STATE_S2)) {
 		DBG_871X("%s: cpwm =%d, nothing to do!\n", __func__, pwrpriv->cpwm);
@@ -817,20 +810,16 @@ static void rpwmtimeout_workitem_callback(struct work_struct *work)
 	pwrpriv->brpwmtimeout = false;
 
 exit:
-	up(&pwrpriv->lock);
+	mutex_unlock(&pwrpriv->lock);
 }
 
 /*
  * This function is a timer handler, can't do any IO in it.
  */
-static void pwr_rpwm_timeout_handler(void *FunctionContext)
+static void pwr_rpwm_timeout_handler(struct timer_list *t)
 {
-	struct adapter *padapter;
-	struct pwrctrl_priv *pwrpriv;
+	struct pwrctrl_priv *pwrpriv = from_timer(pwrpriv, t, pwr_rpwm_timer);
 
-
-	padapter = (struct adapter *)FunctionContext;
-	pwrpriv = adapter_to_pwrctl(padapter);
 	DBG_871X("+%s: rpwm = 0x%02X cpwm = 0x%02X\n", __func__, pwrpriv->rpwm, pwrpriv->cpwm);
 
 	if ((pwrpriv->rpwm == pwrpriv->cpwm) || (pwrpriv->cpwm >= PS_STATE_S2)) {
@@ -877,7 +866,7 @@ s32 rtw_register_task_alive(struct adapter *padapter, u32 task)
 	pwrctrl = adapter_to_pwrctl(padapter);
 	pslv = PS_STATE_S2;
 
-	down(&pwrctrl->lock);
+	mutex_lock(&pwrctrl->lock);
 
 	register_task_alive(pwrctrl, task);
 
@@ -894,7 +883,7 @@ s32 rtw_register_task_alive(struct adapter *padapter, u32 task)
 		}
 	}
 
-	up(&pwrctrl->lock);
+	mutex_unlock(&pwrctrl->lock);
 
 	if (_FAIL == res)
 		if (pwrctrl->cpwm >= PS_STATE_S2)
@@ -921,16 +910,16 @@ void rtw_unregister_task_alive(struct adapter *padapter, u32 task)
 	pwrctrl = adapter_to_pwrctl(padapter);
 	pslv = PS_STATE_S0;
 
-	if ((rtw_btcoex_IsBtDisabled(padapter) == false)
-		&& (rtw_btcoex_IsBtControlLps(padapter) == true)) {
+	if ((hal_btcoex_IsBtDisabled(padapter) == false)
+		&& (hal_btcoex_IsBtControlLps(padapter) == true)) {
 		u8 val8;
 
-		val8 = rtw_btcoex_LpsVal(padapter);
+		val8 = hal_btcoex_LpsVal(padapter);
 		if (val8 & BIT(4))
 			pslv = PS_STATE_S2;
 	}
 
-	down(&pwrctrl->lock);
+	mutex_lock(&pwrctrl->lock);
 
 	unregister_task_alive(pwrctrl, task);
 
@@ -946,7 +935,7 @@ void rtw_unregister_task_alive(struct adapter *padapter, u32 task)
 
 	}
 
-	up(&pwrctrl->lock);
+	mutex_unlock(&pwrctrl->lock);
 }
 
 /*
@@ -972,7 +961,7 @@ s32 rtw_register_tx_alive(struct adapter *padapter)
 	pwrctrl = adapter_to_pwrctl(padapter);
 	pslv = PS_STATE_S2;
 
-	down(&pwrctrl->lock);
+	mutex_lock(&pwrctrl->lock);
 
 	register_task_alive(pwrctrl, XMIT_ALIVE);
 
@@ -989,7 +978,7 @@ s32 rtw_register_tx_alive(struct adapter *padapter)
 		}
 	}
 
-	up(&pwrctrl->lock);
+	mutex_unlock(&pwrctrl->lock);
 
 	if (_FAIL == res)
 		if (pwrctrl->cpwm >= PS_STATE_S2)
@@ -1021,7 +1010,7 @@ s32 rtw_register_cmd_alive(struct adapter *padapter)
 	pwrctrl = adapter_to_pwrctl(padapter);
 	pslv = PS_STATE_S2;
 
-	down(&pwrctrl->lock);
+	mutex_lock(&pwrctrl->lock);
 
 	register_task_alive(pwrctrl, CMD_ALIVE);
 
@@ -1038,7 +1027,7 @@ s32 rtw_register_cmd_alive(struct adapter *padapter)
 		}
 	}
 
-	up(&pwrctrl->lock);
+	mutex_unlock(&pwrctrl->lock);
 
 	if (_FAIL == res)
 		if (pwrctrl->cpwm >= PS_STATE_S2)
@@ -1062,16 +1051,16 @@ void rtw_unregister_tx_alive(struct adapter *padapter)
 	pwrctrl = adapter_to_pwrctl(padapter);
 	pslv = PS_STATE_S0;
 
-	if ((rtw_btcoex_IsBtDisabled(padapter) == false)
-		&& (rtw_btcoex_IsBtControlLps(padapter) == true)) {
+	if ((hal_btcoex_IsBtDisabled(padapter) == false)
+		&& (hal_btcoex_IsBtControlLps(padapter) == true)) {
 		u8 val8;
 
-		val8 = rtw_btcoex_LpsVal(padapter);
+		val8 = hal_btcoex_LpsVal(padapter);
 		if (val8 & BIT(4))
 			pslv = PS_STATE_S2;
 	}
 
-	down(&pwrctrl->lock);
+	mutex_lock(&pwrctrl->lock);
 
 	unregister_task_alive(pwrctrl, XMIT_ALIVE);
 
@@ -1086,7 +1075,7 @@ void rtw_unregister_tx_alive(struct adapter *padapter)
 				rtw_set_rpwm(padapter, pslv);
 	}
 
-	up(&pwrctrl->lock);
+	mutex_unlock(&pwrctrl->lock);
 }
 
 /*
@@ -1104,16 +1093,16 @@ void rtw_unregister_cmd_alive(struct adapter *padapter)
 	pwrctrl = adapter_to_pwrctl(padapter);
 	pslv = PS_STATE_S0;
 
-	if ((rtw_btcoex_IsBtDisabled(padapter) == false)
-		&& (rtw_btcoex_IsBtControlLps(padapter) == true)) {
+	if ((hal_btcoex_IsBtDisabled(padapter) == false)
+		&& (hal_btcoex_IsBtControlLps(padapter) == true)) {
 		u8 val8;
 
-		val8 = rtw_btcoex_LpsVal(padapter);
+		val8 = hal_btcoex_LpsVal(padapter);
 		if (val8 & BIT(4))
 			pslv = PS_STATE_S2;
 	}
 
-	down(&pwrctrl->lock);
+	mutex_lock(&pwrctrl->lock);
 
 	unregister_task_alive(pwrctrl, CMD_ALIVE);
 
@@ -1129,15 +1118,14 @@ void rtw_unregister_cmd_alive(struct adapter *padapter)
 		}
 	}
 
-	up(&pwrctrl->lock);
+	mutex_unlock(&pwrctrl->lock);
 }
 
 void rtw_init_pwrctrl_priv(struct adapter *padapter)
 {
 	struct pwrctrl_priv *pwrctrlpriv = adapter_to_pwrctl(padapter);
 
-	sema_init(&pwrctrlpriv->lock, 1);
-	sema_init(&pwrctrlpriv->check_32k_lock, 1);
+	mutex_init(&pwrctrlpriv->lock);
 	pwrctrlpriv->rf_pwrstate = rf_on;
 	pwrctrlpriv->ips_enter_cnts = 0;
 	pwrctrlpriv->ips_leave_cnts = 0;
@@ -1154,7 +1142,7 @@ void rtw_init_pwrctrl_priv(struct adapter *padapter)
 
 	pwrctrlpriv->LpsIdleCount = 0;
 	pwrctrlpriv->power_mgnt = padapter->registrypriv.power_mgnt;/*  PS_MODE_MIN; */
-	pwrctrlpriv->bLeisurePs = (PS_MODE_ACTIVE != pwrctrlpriv->power_mgnt)?true:false;
+	pwrctrlpriv->bLeisurePs = pwrctrlpriv->power_mgnt != PS_MODE_ACTIVE;
 
 	pwrctrlpriv->bFwCurrentInPSMode = false;
 
@@ -1173,10 +1161,11 @@ void rtw_init_pwrctrl_priv(struct adapter *padapter)
 	_init_workitem(&pwrctrlpriv->cpwm_event, cpwm_event_callback, NULL);
 
 	pwrctrlpriv->brpwmtimeout = false;
+	pwrctrlpriv->adapter = padapter;
 	_init_workitem(&pwrctrlpriv->rpwmtimeoutwi, rpwmtimeout_workitem_callback, NULL);
-	_init_timer(&pwrctrlpriv->pwr_rpwm_timer, padapter->pnetdev, pwr_rpwm_timeout_handler, padapter);
-
-	rtw_init_timer(&pwrctrlpriv->pwr_state_check_timer, padapter, pwr_state_check_handler);
+	timer_setup(&pwrctrlpriv->pwr_rpwm_timer, pwr_rpwm_timeout_handler, 0);
+	timer_setup(&pwrctrlpriv->pwr_state_check_timer,
+		    pwr_state_check_handler, 0);
 
 	pwrctrlpriv->wowlan_mode = false;
 	pwrctrlpriv->wowlan_ap_mode = false;
@@ -1193,8 +1182,6 @@ void rtw_init_pwrctrl_priv(struct adapter *padapter)
 
 void rtw_free_pwrctrl_priv(struct adapter *adapter)
 {
-	/* memset((unsigned char *)pwrctrlpriv, 0, sizeof(struct pwrctrl_priv)); */
-
 #ifdef CONFIG_PNO_SUPPORT
 	if (pwrctrlpriv->pnlo_info != NULL)
 		printk("****** pnlo_info memory leak********\n");
@@ -1243,7 +1230,7 @@ int _rtw_pwr_wakeup(struct adapter *padapter, u32 ips_deffer_ms, const char *cal
 	if (pwrpriv->ps_processing) {
 		DBG_871X("%s wait ps_processing...\n", __func__);
 		while (pwrpriv->ps_processing && jiffies_to_msecs(jiffies - start) <= 3000)
-			msleep(10);
+			mdelay(10);
 		if (pwrpriv->ps_processing)
 			DBG_871X("%s wait ps_processing timeout\n", __func__);
 		else
@@ -1255,7 +1242,7 @@ int _rtw_pwr_wakeup(struct adapter *padapter, u32 ips_deffer_ms, const char *cal
 		while (pwrpriv->bInSuspend
 			&& jiffies_to_msecs(jiffies - start) <= 3000
 		) {
-			msleep(10);
+			mdelay(10);
 		}
 		if (pwrpriv->bInSuspend)
 			DBG_871X("%s wait bInSuspend timeout\n", __func__);
@@ -1327,7 +1314,8 @@ int rtw_pm_set_lps(struct adapter *padapter, u8 mode)
 				pwrctrlpriv->LpsIdleCount = 2;
 
 			pwrctrlpriv->power_mgnt = mode;
-			pwrctrlpriv->bLeisurePs = (PS_MODE_ACTIVE != pwrctrlpriv->power_mgnt)?true:false;
+			pwrctrlpriv->bLeisurePs =
+				pwrctrlpriv->power_mgnt != PS_MODE_ACTIVE;
 		}
 	} else
 		ret = -EINVAL;
@@ -1367,13 +1355,13 @@ void rtw_ps_deny(struct adapter *padapter, enum PS_DENY_REASON reason)
 
 	pwrpriv = adapter_to_pwrctl(padapter);
 
-	down(&pwrpriv->lock);
+	mutex_lock(&pwrpriv->lock);
 	if (pwrpriv->ps_deny & BIT(reason)) {
 		DBG_871X(FUNC_ADPT_FMT ": [WARNING] Reason %d had been set before!!\n",
 			FUNC_ADPT_ARG(padapter), reason);
 	}
 	pwrpriv->ps_deny |= BIT(reason);
-	up(&pwrpriv->lock);
+	mutex_unlock(&pwrpriv->lock);
 
 /* 	DBG_871X("-" FUNC_ADPT_FMT ": Now PS deny for 0x%08X\n", */
 /* 		FUNC_ADPT_ARG(padapter), pwrpriv->ps_deny); */
@@ -1393,13 +1381,13 @@ void rtw_ps_deny_cancel(struct adapter *padapter, enum PS_DENY_REASON reason)
 
 	pwrpriv = adapter_to_pwrctl(padapter);
 
-	down(&pwrpriv->lock);
+	mutex_lock(&pwrpriv->lock);
 	if ((pwrpriv->ps_deny & BIT(reason)) == 0) {
 		DBG_871X(FUNC_ADPT_FMT ": [ERROR] Reason %d had been canceled before!!\n",
 			FUNC_ADPT_ARG(padapter), reason);
 	}
 	pwrpriv->ps_deny &= ~BIT(reason);
-	up(&pwrpriv->lock);
+	mutex_unlock(&pwrpriv->lock);
 
 /* 	DBG_871X("-" FUNC_ADPT_FMT ": Now PS deny for 0x%08X\n", */
 /* 		FUNC_ADPT_ARG(padapter), pwrpriv->ps_deny); */

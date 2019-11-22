@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * kernel/power/suspend_test.c - Suspend to RAM and standby test facility.
  *
  * Copyright (c) 2009 Pavel Machek <pavel@ucw.cz>
- *
- * This file is released under the GPLv2.
  */
 
 #include <linux/init.h>
@@ -104,9 +103,9 @@ repeat:
 		printk(info_test, pm_states[state]);
 		status = pm_suspend(state);
 		if (status < 0)
-			state = PM_SUSPEND_FREEZE;
+			state = PM_SUSPEND_TO_IDLE;
 	}
-	if (state == PM_SUSPEND_FREEZE) {
+	if (state == PM_SUSPEND_TO_IDLE) {
 		printk(info_test, pm_states[state]);
 		status = pm_suspend(state);
 	}

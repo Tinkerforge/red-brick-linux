@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Core driver for the pin muxing portions of the pin control subsystem
  *
@@ -8,8 +9,6 @@
  * Author: Linus Walleij <linus.walleij@linaro.org>
  *
  * Copyright (C) 2012 NVIDIA CORPORATION. All rights reserved.
- *
- * License terms: GNU General Public License (GPL) version 2
  */
 #define pr_fmt(fmt) "pinmux core: " fmt
 
@@ -22,7 +21,6 @@
 #include <linux/err.h>
 #include <linux/list.h>
 #include <linux/string.h>
-#include <linux/sysfs.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 #include <linux/pinctrl/machine.h>
@@ -61,7 +59,7 @@ int pinmux_check_ops(struct pinctrl_dev *pctldev)
 	return 0;
 }
 
-int pinmux_validate_map(struct pinctrl_map const *map, int i)
+int pinmux_validate_map(const struct pinctrl_map *map, int i)
 {
 	if (!map->data.mux.function) {
 		pr_err("failed to register map %s (%d): no function given\n",
@@ -308,11 +306,10 @@ static int pinmux_func_name_to_selector(struct pinctrl_dev *pctldev,
 		selector++;
 	}
 
-	dev_err(pctldev->dev, "function '%s' not supported\n", function);
 	return -EINVAL;
 }
 
-int pinmux_map_to_setting(struct pinctrl_map const *map,
+int pinmux_map_to_setting(const struct pinctrl_map *map,
 			  struct pinctrl_setting *setting)
 {
 	struct pinctrl_dev *pctldev = setting->pctldev;
@@ -372,12 +369,12 @@ int pinmux_map_to_setting(struct pinctrl_map const *map,
 	return 0;
 }
 
-void pinmux_free_setting(struct pinctrl_setting const *setting)
+void pinmux_free_setting(const struct pinctrl_setting *setting)
 {
 	/* This function is currently unused */
 }
 
-int pinmux_enable_setting(struct pinctrl_setting const *setting)
+int pinmux_enable_setting(const struct pinctrl_setting *setting)
 {
 	struct pinctrl_dev *pctldev = setting->pctldev;
 	const struct pinctrl_ops *pctlops = pctldev->desc->pctlops;
@@ -458,7 +455,7 @@ err_pin_request:
 	return ret;
 }
 
-void pinmux_disable_setting(struct pinctrl_setting const *setting)
+void pinmux_disable_setting(const struct pinctrl_setting *setting)
 {
 	struct pinctrl_dev *pctldev = setting->pctldev;
 	const struct pinctrl_ops *pctlops = pctldev->desc->pctlops;
@@ -493,8 +490,6 @@ void pinmux_disable_setting(struct pinctrl_setting const *setting)
 			continue;
 		}
 		if (desc->mux_setting == &(setting->data.mux)) {
-			desc->mux_setting = NULL;
-			/* And release the pin */
 			pin_free(pctldev, pins[i], NULL);
 		} else {
 			const char *gname;
@@ -619,7 +614,7 @@ static int pinmux_pins_show(struct seq_file *s, void *what)
 				   pctlops->get_group_name(pctldev,
 					desc->mux_setting->group));
 		else
-			seq_printf(s, "\n");
+			seq_putc(s, '\n');
 	}
 
 	mutex_unlock(&pctldev->mutex);
@@ -627,7 +622,7 @@ static int pinmux_pins_show(struct seq_file *s, void *what)
 	return 0;
 }
 
-void pinmux_show_map(struct seq_file *s, struct pinctrl_map const *map)
+void pinmux_show_map(struct seq_file *s, const struct pinctrl_map *map)
 {
 	seq_printf(s, "group %s\nfunction %s\n",
 		map->data.mux.group ? map->data.mux.group : "(default)",
@@ -635,7 +630,7 @@ void pinmux_show_map(struct seq_file *s, struct pinctrl_map const *map)
 }
 
 void pinmux_show_setting(struct seq_file *s,
-			 struct pinctrl_setting const *setting)
+			 const struct pinctrl_setting *setting)
 {
 	struct pinctrl_dev *pctldev = setting->pctldev;
 	const struct pinmux_ops *pmxops = pctldev->desc->pmxops;
@@ -648,37 +643,16 @@ void pinmux_show_setting(struct seq_file *s,
 		   setting->data.mux.func);
 }
 
-static int pinmux_functions_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, pinmux_functions_show, inode->i_private);
-}
-
-static int pinmux_pins_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, pinmux_pins_show, inode->i_private);
-}
-
-static const struct file_operations pinmux_functions_ops = {
-	.open		= pinmux_functions_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
-static const struct file_operations pinmux_pins_ops = {
-	.open		= pinmux_pins_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
+DEFINE_SHOW_ATTRIBUTE(pinmux_functions);
+DEFINE_SHOW_ATTRIBUTE(pinmux_pins);
 
 void pinmux_init_device_debugfs(struct dentry *devroot,
 			 struct pinctrl_dev *pctldev)
 {
 	debugfs_create_file("pinmux-functions", S_IFREG | S_IRUGO,
-			    devroot, pctldev, &pinmux_functions_ops);
+			    devroot, pctldev, &pinmux_functions_fops);
 	debugfs_create_file("pinmux-pins", S_IFREG | S_IRUGO,
-			    devroot, pctldev, &pinmux_pins_ops);
+			    devroot, pctldev, &pinmux_pins_fops);
 }
 
 #endif /* CONFIG_DEBUG_FS */
@@ -777,6 +751,16 @@ int pinmux_generic_add_function(struct pinctrl_dev *pctldev,
 				void *data)
 {
 	struct function_desc *function;
+	int selector;
+
+	if (!name)
+		return -EINVAL;
+
+	selector = pinmux_func_name_to_selector(pctldev, name);
+	if (selector >= 0)
+		return selector;
+
+	selector = pctldev->num_functions;
 
 	function = devm_kzalloc(pctldev->dev, sizeof(*function), GFP_KERNEL);
 	if (!function)
@@ -787,12 +771,11 @@ int pinmux_generic_add_function(struct pinctrl_dev *pctldev,
 	function->num_group_names = num_groups;
 	function->data = data;
 
-	radix_tree_insert(&pctldev->pin_function_tree, pctldev->num_functions,
-			  function);
+	radix_tree_insert(&pctldev->pin_function_tree, selector, function);
 
 	pctldev->num_functions++;
 
-	return 0;
+	return selector;
 }
 EXPORT_SYMBOL_GPL(pinmux_generic_add_function);
 
@@ -833,7 +816,7 @@ EXPORT_SYMBOL_GPL(pinmux_generic_remove_function);
 void pinmux_generic_free_functions(struct pinctrl_dev *pctldev)
 {
 	struct radix_tree_iter iter;
-	void **slot;
+	void __rcu **slot;
 
 	radix_tree_for_each_slot(slot, &pctldev->pin_function_tree, &iter, 0)
 		radix_tree_delete(&pctldev->pin_function_tree, iter.index);

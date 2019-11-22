@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * builtin-timechart.c - make an svg timechart of system activity
  *
@@ -5,11 +6,6 @@
  *
  * Authors:
  *     Arjan van de Ven <arjan@linux.intel.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; version 2
- * of the License.
  */
 
 #include <errno.h>
@@ -17,9 +13,6 @@
 #include <traceevent/event-parse.h>
 
 #include "builtin.h"
-
-#include "util/util.h"
-
 #include "util/color.h"
 #include <linux/list.h>
 #include "util/cache.h"
@@ -28,6 +21,7 @@
 #include <linux/kernel.h>
 #include <linux/rbtree.h>
 #include <linux/time64.h>
+#include <linux/zalloc.h>
 #include "util/symbol.h"
 #include "util/thread.h"
 #include "util/callchain.h"
@@ -42,6 +36,10 @@
 #include "util/tool.h"
 #include "util/data.h"
 #include "util/debug.h"
+
+#ifdef LACKS_OPEN_MEMSTREAM_PROTOTYPE
+FILE *open_memstream(char **ptr, size_t *sizeloc);
+#endif
 
 #define SUPPORT_OLD_POWER_EVENTS 1
 #define PWR_EVENT_EXIT -1
@@ -533,12 +531,8 @@ static const char *cat_backtrace(union perf_event *event,
 		}
 
 		tal.filtered = 0;
-		thread__find_addr_location(al.thread, cpumode,
-					   MAP__FUNCTION, ip, &tal);
-
-		if (tal.sym)
-			fprintf(f, "..... %016" PRIx64 " %s\n", ip,
-				tal.sym->name);
+		if (thread__find_symbol(al.thread, cpumode, ip, &tal))
+			fprintf(f, "..... %016" PRIx64 " %s\n", ip, tal.sym->name);
 		else
 			fprintf(f, "..... %016" PRIx64 "\n", ip);
 	}
@@ -1601,13 +1595,13 @@ static int __cmd_timechart(struct timechart *tchart, const char *output_name)
 		{ "syscalls:sys_exit_pselect6",		process_exit_poll },
 		{ "syscalls:sys_exit_select",		process_exit_poll },
 	};
-	struct perf_data_file file = {
-		.path = input_name,
-		.mode = PERF_DATA_MODE_READ,
+	struct perf_data data = {
+		.path  = input_name,
+		.mode  = PERF_DATA_MODE_READ,
 		.force = tchart->force,
 	};
 
-	struct perf_session *session = perf_session__new(&file, false,
+	struct perf_session *session = perf_session__new(&data, false,
 							 &tchart->tool);
 	int ret = -EINVAL;
 
@@ -1617,7 +1611,7 @@ static int __cmd_timechart(struct timechart *tchart, const char *output_name)
 	symbol__init(&session->header.env);
 
 	(void)perf_header__process_sections(&session->header,
-					    perf_data_file__fd(session->file),
+					    perf_data__fd(session->data),
 					    tchart,
 					    process_header);
 
@@ -1732,8 +1726,10 @@ static int timechart__io_record(int argc, const char **argv)
 	if (rec_argv == NULL)
 		return -ENOMEM;
 
-	if (asprintf(&filter, "common_pid != %d", getpid()) < 0)
+	if (asprintf(&filter, "common_pid != %d", getpid()) < 0) {
+		free(rec_argv);
 		return -ENOMEM;
+	}
 
 	p = rec_argv;
 	for (i = 0; i < common_args_nr; i++)

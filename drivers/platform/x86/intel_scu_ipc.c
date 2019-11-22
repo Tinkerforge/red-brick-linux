@@ -1,13 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * intel_scu_ipc.c: Driver for the Intel SCU IPC mechanism
+ * Driver for the Intel SCU IPC mechanism
  *
  * (C) Copyright 2008-2010,2015 Intel Corporation
  * Author: Sreedhara DS (sreedhara.ds@intel.com)
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; version 2
- * of the License.
  *
  * SCU running in ARC processor communicates with other entity running in IA
  * core through IPC mechanism which in turn messaging between IA core ad SCU.
@@ -16,14 +12,16 @@
  * IPC-1 Driver provides an API for power control unit registers (e.g. MSIC)
  * along with other APIs.
  */
+
 #include <linux/delay.h>
+#include <linux/device.h>
 #include <linux/errno.h>
 #include <linux/init.h>
-#include <linux/device.h>
-#include <linux/pm.h>
-#include <linux/pci.h>
 #include <linux/interrupt.h>
+#include <linux/pci.h>
+#include <linux/pm.h>
 #include <linux/sfi.h>
+
 #include <asm/intel-mid.h>
 #include <asm/intel_scu_ipc.h>
 
@@ -72,20 +70,20 @@ struct intel_scu_ipc_pdata_t {
 	u8 irq_mode;
 };
 
-static struct intel_scu_ipc_pdata_t intel_scu_ipc_lincroft_pdata = {
+static const struct intel_scu_ipc_pdata_t intel_scu_ipc_lincroft_pdata = {
 	.i2c_base = 0xff12b000,
 	.i2c_len = 0x10,
 	.irq_mode = 0,
 };
 
 /* Penwell and Cloverview */
-static struct intel_scu_ipc_pdata_t intel_scu_ipc_penwell_pdata = {
+static const struct intel_scu_ipc_pdata_t intel_scu_ipc_penwell_pdata = {
 	.i2c_base = 0xff12b000,
 	.i2c_len = 0x10,
 	.irq_mode = 1,
 };
 
-static struct intel_scu_ipc_pdata_t intel_scu_ipc_tangier_pdata = {
+static const struct intel_scu_ipc_pdata_t intel_scu_ipc_tangier_pdata = {
 	.i2c_base  = 0xff00d000,
 	.i2c_len = 0x10,
 	.irq_mode = 0,
@@ -584,11 +582,11 @@ int intel_scu_ipc_i2c_cntrl(u32 addr, u32 *data)
 	if (cmd == IPC_I2C_READ) {
 		writel(addr, scu->i2c_base + IPC_I2C_CNTRL_ADDR);
 		/* Write not getting updated without delay */
-		mdelay(1);
+		usleep_range(1000, 2000);
 		*data = readl(scu->i2c_base + I2C_DATA_ADDR);
 	} else if (cmd == IPC_I2C_WRITE) {
 		writel(*data, scu->i2c_base + I2C_DATA_ADDR);
-		mdelay(1);
+		usleep_range(1000, 2000);
 		writel(addr, scu->i2c_base + IPC_I2C_CNTRL_ADDR);
 	} else {
 		dev_err(scu->dev,

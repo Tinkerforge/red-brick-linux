@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ADS7846 based touchscreen and sensor driver
  *
@@ -12,10 +13,6 @@
  *	Copyright (C) 2002 MontaVista Software
  *	Copyright (C) 2004 Texas Instruments
  *	Copyright (C) 2005 Dirk Behme
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License version 2 as
- *  published by the Free Software Foundation.
  */
 #include <linux/types.h>
 #include <linux/hwmon.h>
@@ -499,7 +496,7 @@ static struct attribute *ads7846_attributes[] = {
 	NULL,
 };
 
-static struct attribute_group ads7846_attr_group = {
+static const struct attribute_group ads7846_attr_group = {
 	.attrs = ads7846_attributes,
 	.is_visible = ads7846_is_visible,
 };
@@ -599,7 +596,7 @@ static struct attribute *ads784x_attributes[] = {
 	NULL,
 };
 
-static struct attribute_group ads784x_attr_group = {
+static const struct attribute_group ads784x_attr_group = {
 	.attrs = ads784x_attributes,
 };
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/lockdep.h>
 #include <stdlib.h>
 
@@ -11,6 +12,11 @@
 u32 prandom_u32(void)
 {
 	/* Used only by lock_pin_lock() which is dead code */
+	abort();
+}
+
+void print_irqtrace_events(struct task_struct *curr)
+{
 	abort();
 }
 

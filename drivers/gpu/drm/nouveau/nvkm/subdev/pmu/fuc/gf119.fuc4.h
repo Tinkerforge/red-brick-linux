@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 static uint32_t gf119_pmu_data[] = {
 /* 0x0000: proc_kern */
 	0x52544e49,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /* cpumap.c: used for optimizing CPU assignment
  *
  * Copyright (C) 2009 Hong H. Pham <hong.pham@windriver.com>
@@ -193,8 +194,7 @@ static struct cpuinfo_tree *build_cpuinfo_tree(void)
 
 	n = enumerate_cpuinfo_nodes(tmp_level);
 
-	new_tree = kzalloc(sizeof(struct cpuinfo_tree) +
-	                   (sizeof(struct cpuinfo_node) * n), GFP_ATOMIC);
+	new_tree = kzalloc(struct_size(new_tree, nodes, n), GFP_ATOMIC);
 	if (!new_tree)
 		return NULL;
 

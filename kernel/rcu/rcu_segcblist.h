@@ -1,23 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * RCU segmented callback lists, internal-to-rcu header file
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, you can access it online at
- * http://www.gnu.org/licenses/gpl-2.0.html.
- *
  * Copyright IBM Corporation, 2017
  *
- * Authors: Paul E. McKenney <paulmck@linux.vnet.ibm.com>
+ * Authors: Paul E. McKenney <paulmck@linux.ibm.com>
  */
 
 #include <linux/rcu_segcblist.h>
@@ -31,29 +18,7 @@ static inline void rcu_cblist_dequeued_lazy(struct rcu_cblist *rclp)
 	rclp->len_lazy--;
 }
 
-/*
- * Interim function to return rcu_cblist head pointer.  Longer term, the
- * rcu_cblist will be used more pervasively, removing the need for this
- * function.
- */
-static inline struct rcu_head *rcu_cblist_head(struct rcu_cblist *rclp)
-{
-	return rclp->head;
-}
-
-/*
- * Interim function to return rcu_cblist head pointer.  Longer term, the
- * rcu_cblist will be used more pervasively, removing the need for this
- * function.
- */
-static inline struct rcu_head **rcu_cblist_tail(struct rcu_cblist *rclp)
-{
-	WARN_ON_ONCE(!rclp->head);
-	return rclp->tail;
-}
-
 void rcu_cblist_init(struct rcu_cblist *rclp);
-long rcu_cblist_count_cbs(struct rcu_cblist *rclp, long lim);
 struct rcu_head *rcu_cblist_dequeue(struct rcu_cblist *rclp);
 
 /*
@@ -134,14 +99,10 @@ static inline struct rcu_head **rcu_segcblist_tail(struct rcu_segcblist *rsclp)
 
 void rcu_segcblist_init(struct rcu_segcblist *rsclp);
 void rcu_segcblist_disable(struct rcu_segcblist *rsclp);
-bool rcu_segcblist_segempty(struct rcu_segcblist *rsclp, int seg);
 bool rcu_segcblist_ready_cbs(struct rcu_segcblist *rsclp);
 bool rcu_segcblist_pend_cbs(struct rcu_segcblist *rsclp);
-struct rcu_head *rcu_segcblist_dequeue(struct rcu_segcblist *rsclp);
-void rcu_segcblist_dequeued_lazy(struct rcu_segcblist *rsclp);
 struct rcu_head *rcu_segcblist_first_cb(struct rcu_segcblist *rsclp);
 struct rcu_head *rcu_segcblist_first_pend_cb(struct rcu_segcblist *rsclp);
-bool rcu_segcblist_new_cbs(struct rcu_segcblist *rsclp);
 void rcu_segcblist_enqueue(struct rcu_segcblist *rsclp,
 			   struct rcu_head *rhp, bool lazy);
 bool rcu_segcblist_entrain(struct rcu_segcblist *rsclp,
@@ -160,5 +121,5 @@ void rcu_segcblist_insert_pend_cbs(struct rcu_segcblist *rsclp,
 				   struct rcu_cblist *rclp);
 void rcu_segcblist_advance(struct rcu_segcblist *rsclp, unsigned long seq);
 bool rcu_segcblist_accelerate(struct rcu_segcblist *rsclp, unsigned long seq);
-bool rcu_segcblist_future_gp_needed(struct rcu_segcblist *rsclp,
-				    unsigned long seq);
+void rcu_segcblist_merge(struct rcu_segcblist *dst_rsclp,
+			 struct rcu_segcblist *src_rsclp);

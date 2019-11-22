@@ -1,14 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2016 Maxime Ripard
  * Maxime Ripard <maxime.ripard@free-electrons.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of
- * the License, or (at your option) any later version.
  */
 
 #include <linux/clk-provider.h>
+#include <linux/io.h>
 
 #include "ccu_gate.h"
 #include "ccu_mult.h"
@@ -111,10 +108,14 @@ static int ccu_mult_set_rate(struct clk_hw *hw, unsigned long rate,
 	unsigned long flags;
 	u32 reg;
 
-	if (ccu_frac_helper_has_rate(&cm->common, &cm->frac, rate))
-		return ccu_frac_helper_set_rate(&cm->common, &cm->frac, rate);
-	else
+	if (ccu_frac_helper_has_rate(&cm->common, &cm->frac, rate)) {
+		ccu_frac_helper_enable(&cm->common, &cm->frac);
+
+		return ccu_frac_helper_set_rate(&cm->common, &cm->frac,
+						rate, cm->lock);
+	} else {
 		ccu_frac_helper_disable(&cm->common, &cm->frac);
+	}
 
 	parent_rate = ccu_mux_helper_apply_prediv(&cm->common, &cm->mux, -1,
 						  parent_rate);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * stv0367.c
  *
@@ -6,17 +7,6 @@
  * Copyright (C) ST Microelectronics.
  * Copyright (C) 2010,2011 NetUP Inc.
  * Copyright (C) 2010,2011 Igor M. Liplianin <liplianin@netup.ru>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *
- * GNU General Public License for more details.
  */
 
 #include <linux/kernel.h>
@@ -25,7 +15,7 @@
 #include <linux/slab.h>
 #include <linux/i2c.h>
 
-#include "dvb_math.h"
+#include <media/dvb_math.h>
 
 #include "stv0367.h"
 #include "stv0367_defs.h"
@@ -166,7 +156,9 @@ int stv0367_writeregs(struct stv0367_state *state, u16 reg, u8 *data, int len)
 
 static int stv0367_writereg(struct stv0367_state *state, u16 reg, u8 data)
 {
-	return stv0367_writeregs(state, reg, &data, 1);
+	u8 tmp = data; /* see gcc.gnu.org/bugzilla/show_bug.cgi?id=81715 */
+
+	return stv0367_writeregs(state, reg, &tmp, 1);
 }
 
 static u8 stv0367_readreg(struct stv0367_state *state, u16 reg)
@@ -1547,7 +1539,6 @@ static int stv0367ter_read_ber(struct dvb_frontend *fe, u32 *ber)
 	} else if (abc == 0x7) {
 		if (Errors <= 4) {
 			temporary = (Errors * 1000000000) / (8 * (1 << 14));
-			temporary =  temporary;
 		} else if (Errors <= 42) {
 			temporary = (Errors * 100000000) / (8 * (1 << 14));
 			temporary = temporary * 10;
@@ -1625,7 +1616,6 @@ static u32 stv0367ter_get_per(struct stv0367_state *state)
 	else if (abc == 0x9) {
 		if (Errors <= 4) {
 			temporary = (Errors * 1000000000) / (8 * (1 << 8));
-			temporary =  temporary;
 		} else if (Errors <= 42) {
 			temporary = (Errors * 100000000) / (8 * (1 << 8));
 			temporary = temporary * 10;
@@ -1693,10 +1683,9 @@ static const struct dvb_frontend_ops stv0367ter_ops = {
 	.delsys = { SYS_DVBT },
 	.info = {
 		.name			= "ST STV0367 DVB-T",
-		.frequency_min		= 47000000,
-		.frequency_max		= 862000000,
-		.frequency_stepsize	= 15625,
-		.frequency_tolerance	= 0,
+		.frequency_min_hz	=  47 * MHz,
+		.frequency_max_hz	= 862 * MHz,
+		.frequency_stepsize_hz	= 15625,
 		.caps = FE_CAN_FEC_1_2 | FE_CAN_FEC_2_3 |
 			FE_CAN_FEC_3_4 | FE_CAN_FEC_5_6 | FE_CAN_FEC_7_8 |
 			FE_CAN_FEC_AUTO |
@@ -2149,6 +2138,71 @@ static u32 stv0367cab_GetSymbolRate(struct stv0367_state *state, u32 mclk_hz)
 	return regsym;
 }
 
+static u32 stv0367cab_fsm_status(struct stv0367_state *state)
+{
+	return stv0367_readbits(state, F367CAB_FSM_STATUS);
+}
+
+static u32 stv0367cab_qamfec_lock(struct stv0367_state *state)
+{
+	return stv0367_readbits(state,
+		(state->cab_state->qamfec_status_reg ?
+		 state->cab_state->qamfec_status_reg :
+		 F367CAB_QAMFEC_LOCK));
+}
+
+static
+enum stv0367_cab_signal_type stv0367cab_fsm_signaltype(u32 qam_fsm_status)
+{
+	enum stv0367_cab_signal_type signaltype = FE_CAB_NOAGC;
+
+	switch (qam_fsm_status) {
+	case 1:
+		signaltype = FE_CAB_NOAGC;
+		break;
+	case 2:
+		signaltype = FE_CAB_NOTIMING;
+		break;
+	case 3:
+		signaltype = FE_CAB_TIMINGOK;
+		break;
+	case 4:
+		signaltype = FE_CAB_NOCARRIER;
+		break;
+	case 5:
+		signaltype = FE_CAB_CARRIEROK;
+		break;
+	case 7:
+		signaltype = FE_CAB_NOBLIND;
+		break;
+	case 8:
+		signaltype = FE_CAB_BLINDOK;
+		break;
+	case 10:
+		signaltype = FE_CAB_NODEMOD;
+		break;
+	case 11:
+		signaltype = FE_CAB_DEMODOK;
+		break;
+	case 12:
+		signaltype = FE_CAB_DEMODOK;
+		break;
+	case 13:
+		signaltype = FE_CAB_NODEMOD;
+		break;
+	case 14:
+		signaltype = FE_CAB_NOBLIND;
+		break;
+	case 15:
+		signaltype = FE_CAB_NOSIGNAL;
+		break;
+	default:
+		break;
+	}
+
+	return signaltype;
+}
+
 static int stv0367cab_read_status(struct dvb_frontend *fe,
 				  enum fe_status *status)
 {
@@ -2158,22 +2212,26 @@ static int stv0367cab_read_status(struct dvb_frontend *fe,
 
 	*status = 0;
 
-	if (state->cab_state->state > FE_CAB_NOSIGNAL)
-		*status |= FE_HAS_SIGNAL;
+	/* update cab_state->state from QAM_FSM_STATUS */
+	state->cab_state->state = stv0367cab_fsm_signaltype(
+		stv0367cab_fsm_status(state));
 
-	if (state->cab_state->state > FE_CAB_NOCARRIER)
-		*status |= FE_HAS_CARRIER;
-
-	if (state->cab_state->state >= FE_CAB_DEMODOK)
-		*status |= FE_HAS_VITERBI;
-
-	if (state->cab_state->state >= FE_CAB_DATAOK)
-		*status |= FE_HAS_SYNC;
-
-	if (stv0367_readbits(state, (state->cab_state->qamfec_status_reg ?
-		state->cab_state->qamfec_status_reg : F367CAB_QAMFEC_LOCK))) {
-		*status |= FE_HAS_LOCK;
+	if (stv0367cab_qamfec_lock(state)) {
+		*status = FE_HAS_SIGNAL | FE_HAS_CARRIER | FE_HAS_VITERBI
+			  | FE_HAS_SYNC | FE_HAS_LOCK;
 		dprintk("%s: stv0367 has locked\n", __func__);
+	} else {
+		if (state->cab_state->state > FE_CAB_NOSIGNAL)
+			*status |= FE_HAS_SIGNAL;
+
+		if (state->cab_state->state > FE_CAB_NOCARRIER)
+			*status |= FE_HAS_CARRIER;
+
+		if (state->cab_state->state >= FE_CAB_DEMODOK)
+			*status |= FE_HAS_VITERBI;
+
+		if (state->cab_state->state >= FE_CAB_DATAOK)
+			*status |= FE_HAS_SYNC;
 	}
 
 	return 0;
@@ -2374,7 +2432,7 @@ enum stv0367_cab_signal_type stv0367cab_algo(struct stv0367_state *state,
 	LockTime = 0;
 	stv0367_writereg(state, R367CAB_CTRL_1, 0x00);
 	do {
-		QAM_Lock = stv0367_readbits(state, F367CAB_FSM_STATUS);
+		QAM_Lock = stv0367cab_fsm_status(state);
 		if ((LockTime >= (DemodTimeOut - EQLTimeOut)) &&
 							(QAM_Lock == 0x04))
 			/*
@@ -2435,10 +2493,7 @@ enum stv0367_cab_signal_type stv0367cab_algo(struct stv0367_state *state,
 		do {
 			usleep_range(5000, 7000);
 			LockTime += 5;
-			QAMFEC_Lock = stv0367_readbits(state,
-				(state->cab_state->qamfec_status_reg ?
-				state->cab_state->qamfec_status_reg :
-				F367CAB_QAMFEC_LOCK));
+			QAMFEC_Lock = stv0367cab_qamfec_lock(state);
 		} while (!QAMFEC_Lock && (LockTime < FECTimeOut));
 	} else
 		QAMFEC_Lock = 0;
@@ -2474,52 +2529,8 @@ enum stv0367_cab_signal_type stv0367cab_algo(struct stv0367_state *state,
 		cab_state->locked = 1;
 
 		/* stv0367_setbits(state, F367CAB_AGC_ACCUMRSTSEL,7);*/
-	} else {
-		switch (QAM_Lock) {
-		case 1:
-			signalType = FE_CAB_NOAGC;
-			break;
-		case 2:
-			signalType = FE_CAB_NOTIMING;
-			break;
-		case 3:
-			signalType = FE_CAB_TIMINGOK;
-			break;
-		case 4:
-			signalType = FE_CAB_NOCARRIER;
-			break;
-		case 5:
-			signalType = FE_CAB_CARRIEROK;
-			break;
-		case 7:
-			signalType = FE_CAB_NOBLIND;
-			break;
-		case 8:
-			signalType = FE_CAB_BLINDOK;
-			break;
-		case 10:
-			signalType = FE_CAB_NODEMOD;
-			break;
-		case 11:
-			signalType = FE_CAB_DEMODOK;
-			break;
-		case 12:
-			signalType = FE_CAB_DEMODOK;
-			break;
-		case 13:
-			signalType = FE_CAB_NODEMOD;
-			break;
-		case 14:
-			signalType = FE_CAB_NOBLIND;
-			break;
-		case 15:
-			signalType = FE_CAB_NOSIGNAL;
-			break;
-		default:
-			break;
-		}
-
-	}
+	} else
+		signalType = stv0367cab_fsm_signaltype(QAM_Lock);
 
 	/* Set the AGC control values to tracking values */
 	stv0367_writebits(state, F367CAB_AGC_ACCUMRSTSEL, TrackAGCAccum);
@@ -2845,9 +2856,9 @@ static const struct dvb_frontend_ops stv0367cab_ops = {
 	.delsys = { SYS_DVBC_ANNEX_A },
 	.info = {
 		.name = "ST STV0367 DVB-C",
-		.frequency_min = 47000000,
-		.frequency_max = 862000000,
-		.frequency_stepsize = 62500,
+		.frequency_min_hz =  47 * MHz,
+		.frequency_max_hz = 862 * MHz,
+		.frequency_stepsize_hz = 62500,
 		.symbol_rate_min = 870000,
 		.symbol_rate_max = 11700000,
 		.caps = 0x400 |/* FE_CAN_QAM_4 */
@@ -3090,7 +3101,7 @@ static int stv0367ddb_read_status(struct dvb_frontend *fe,
 {
 	struct stv0367_state *state = fe->demodulator_priv;
 	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
-	int ret;
+	int ret = 0;
 
 	switch (state->activedemod) {
 	case demod_ter:
@@ -3100,7 +3111,7 @@ static int stv0367ddb_read_status(struct dvb_frontend *fe,
 		ret = stv0367cab_read_status(fe, status);
 		break;
 	default:
-		return 0;
+		break;
 	}
 
 	/* stop and report on *_read_status failure */
@@ -3138,7 +3149,7 @@ static int stv0367ddb_get_frontend(struct dvb_frontend *fe,
 		break;
 	}
 
-	return -EINVAL;
+	return 0;
 }
 
 static int stv0367ddb_sleep(struct dvb_frontend *fe)
@@ -3251,17 +3262,16 @@ static const struct dvb_frontend_ops stv0367ddb_ops = {
 	.delsys = { SYS_DVBC_ANNEX_A, SYS_DVBT },
 	.info = {
 		.name			= "ST STV0367 DDB DVB-C/T",
-		.frequency_min		= 47000000,
-		.frequency_max		= 865000000,
-		.frequency_stepsize	= 166667,
-		.frequency_tolerance	= 0,
+		.frequency_min_hz	=  47 * MHz,
+		.frequency_max_hz	= 865 * MHz,
+		.frequency_stepsize_hz	= 166667,
 		.symbol_rate_min	= 870000,
 		.symbol_rate_max	= 11700000,
 		.caps = /* DVB-C */
 			0x400 |/* FE_CAN_QAM_4 */
 			FE_CAN_QAM_16 | FE_CAN_QAM_32  |
 			FE_CAN_QAM_64 | FE_CAN_QAM_128 |
-			FE_CAN_QAM_256 | FE_CAN_QAM_AUTO |
+			FE_CAN_QAM_256 |
 			/* DVB-T */
 			FE_CAN_FEC_1_2 | FE_CAN_FEC_2_3 | FE_CAN_FEC_3_4 |
 			FE_CAN_FEC_5_6 | FE_CAN_FEC_7_8 | FE_CAN_FEC_AUTO |

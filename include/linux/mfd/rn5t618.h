@@ -1,14 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * MFD core driver for Ricoh RN5T618 PMIC
  *
  * Copyright (C) 2014 Beniamino Galvani <b.galvani@gmail.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * version 2 as published by the Free Software Foundation.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifndef __LINUX_MFD_RN5T618_H
@@ -226,11 +220,17 @@ enum {
 	RN5T618_DCDC2,
 	RN5T618_DCDC3,
 	RN5T618_DCDC4,
+	RN5T618_DCDC5,
 	RN5T618_LDO1,
 	RN5T618_LDO2,
 	RN5T618_LDO3,
 	RN5T618_LDO4,
 	RN5T618_LDO5,
+	RN5T618_LDO6,
+	RN5T618_LDO7,
+	RN5T618_LDO8,
+	RN5T618_LDO9,
+	RN5T618_LDO10,
 	RN5T618_LDORTC1,
 	RN5T618_LDORTC2,
 	RN5T618_REG_NUM,

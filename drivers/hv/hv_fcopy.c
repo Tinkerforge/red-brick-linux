@@ -1,20 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * An implementation of file copy service.
  *
  * Copyright (C) 2014, Microsoft, Inc.
  *
  * Author : K. Y. Srinivasan <ksrinivasan@novell.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published
- * by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, GOOD TITLE or
- * NON INFRINGEMENT.  See the GNU General Public License for more
- * details.
- *
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -170,6 +160,10 @@ static void fcopy_send_data(struct work_struct *dummy)
 		out_src = smsg_out;
 		break;
 
+	case WRITE_TO_FILE:
+		out_src = fcopy_transaction.fcopy_msg;
+		out_len = sizeof(struct hv_do_fcopy);
+		break;
 	default:
 		out_src = fcopy_transaction.fcopy_msg;
 		out_len = fcopy_transaction.recv_len;

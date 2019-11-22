@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2012 - 2014 Allwinner Tech
  * Pan Nan <pannan@allwinnertech.com>

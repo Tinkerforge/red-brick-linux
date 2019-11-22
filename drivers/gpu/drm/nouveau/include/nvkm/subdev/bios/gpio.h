@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #ifndef __NVBIOS_GPIO_H__
 #define __NVBIOS_GPIO_H__
 enum dcb_gpio_func_name {

@@ -72,16 +72,12 @@ object TTM to provide a pool for buffer object allocation by clients and
 the kernel itself. The type of this object should be
 TTM_GLOBAL_TTM_BO, and its size should be sizeof(struct
 ttm_bo_global). Again, driver-specific init and release functions may
-be provided, likely eventually calling ttm_bo_global_init() and
-ttm_bo_global_release(), respectively. Also, like the previous
+be provided, likely eventually calling ttm_bo_global_ref_init() and
+ttm_bo_global_ref_release(), respectively. Also, like the previous
 object, ttm_global_item_ref() is used to create an initial reference
 count for the TTM, which will call your initialization function.
 
 See the radeon_ttm.c file for an example of usage.
-
-.. kernel-doc:: drivers/gpu/drm/drm_global.c
-   :export:
-
 
 The Graphics Execution Manager (GEM)
 ====================================
@@ -191,7 +187,7 @@ acquired and release by :c:func:`calling drm_gem_object_get()` and
 holding the lock.
 
 When the last reference to a GEM object is released the GEM core calls
-the :c:type:`struct drm_driver <drm_driver>` gem_free_object
+the :c:type:`struct drm_driver <drm_driver>` gem_free_object_unlocked
 operation. That operation is mandatory for GEM-enabled drivers and must
 free the GEM object and all associated resources.
 
@@ -297,7 +293,7 @@ made up of several fields, the more interesting ones being:
 	struct vm_operations_struct {
 		void (*open)(struct vm_area_struct * area);
 		void (*close)(struct vm_area_struct * area);
-		int (*fault)(struct vm_fault *vmf);
+		vm_fault_t (*fault)(struct vm_fault *vmf);
 	};
 
 
@@ -383,6 +379,39 @@ GEM CMA Helper Functions Reference
 .. kernel-doc:: drivers/gpu/drm/drm_gem_cma_helper.c
    :export:
 
+VRAM Helper Function Reference
+==============================
+
+.. kernel-doc:: drivers/gpu/drm/drm_vram_helper_common.c
+   :doc: overview
+
+.. kernel-doc:: include/drm/drm_gem_vram_helper.h
+   :internal:
+
+GEM VRAM Helper Functions Reference
+-----------------------------------
+
+.. kernel-doc:: drivers/gpu/drm/drm_gem_vram_helper.c
+   :doc: overview
+
+.. kernel-doc:: include/drm/drm_gem_vram_helper.h
+   :internal:
+
+.. kernel-doc:: drivers/gpu/drm/drm_gem_vram_helper.c
+   :export:
+
+VRAM MM Helper Functions Reference
+----------------------------------
+
+.. kernel-doc:: drivers/gpu/drm/drm_vram_mm_helper.c
+   :doc: overview
+
+.. kernel-doc:: include/drm/drm_vram_mm_helper.h
+   :internal:
+
+.. kernel-doc:: drivers/gpu/drm/drm_vram_mm_helper.c
+   :export:
+
 VMA Offset Manager
 ==================
 
@@ -394,6 +423,8 @@ VMA Offset Manager
 
 .. kernel-doc:: drivers/gpu/drm/drm_vma_manager.c
    :export:
+
+.. _prime_buffer_sharing:
 
 PRIME Buffer Sharing
 ====================
@@ -492,7 +523,25 @@ DRM Sync Objects
    :doc: Overview
 
 .. kernel-doc:: include/drm/drm_syncobj.h
-   :export:
+   :internal:
 
 .. kernel-doc:: drivers/gpu/drm/drm_syncobj.c
+   :export:
+
+GPU Scheduler
+=============
+
+Overview
+--------
+
+.. kernel-doc:: drivers/gpu/drm/scheduler/sched_main.c
+   :doc: Overview
+
+Scheduler Function References
+-----------------------------
+
+.. kernel-doc:: include/drm/gpu_scheduler.h
+   :internal:
+
+.. kernel-doc:: drivers/gpu/drm/scheduler/sched_main.c
    :export:

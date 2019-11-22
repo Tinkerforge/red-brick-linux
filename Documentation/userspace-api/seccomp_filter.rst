@@ -87,11 +87,16 @@ Return values
 A seccomp filter may return any of the following values. If multiple
 filters exist, the return value for the evaluation of a given system
 call will always use the highest precedent value. (For example,
-``SECCOMP_RET_KILL`` will always take precedence.)
+``SECCOMP_RET_KILL_PROCESS`` will always take precedence.)
 
 In precedence order, they are:
 
-``SECCOMP_RET_KILL``:
+``SECCOMP_RET_KILL_PROCESS``:
+	Results in the entire process exiting immediately without executing
+	the system call.  The exit status of the task (``status & 0x7f``)
+	will be ``SIGSYS``, not ``SIGKILL``.
+
+``SECCOMP_RET_KILL_THREAD``:
 	Results in the task exiting immediately without executing the
 	system call.  The exit status of the task (``status & 0x7f``) will
 	be ``SIGSYS``, not ``SIGKILL``.
@@ -117,13 +122,18 @@ In precedence order, they are:
 	Results in the lower 16-bits of the return value being passed
 	to userland as the errno without executing the system call.
 
+``SECCOMP_RET_USER_NOTIF``:
+	Results in a ``struct seccomp_notif`` message sent on the userspace
+	notification fd, if it is attached, or ``-ENOSYS`` if it is not. See
+	below on discussion of how to handle user notifications.
+
 ``SECCOMP_RET_TRACE``:
 	When returned, this value will cause the kernel to attempt to
 	notify a ``ptrace()``-based tracer prior to executing the system
 	call.  If there is no tracer present, ``-ENOSYS`` is returned to
 	userland and the system call is not executed.
 
-	A tracer will be notified if it requests ``PTRACE_O_TRACESECCOM``P
+	A tracer will be notified if it requests ``PTRACE_O_TRACESECCOMP``
 	using ``ptrace(PTRACE_SETOPTIONS)``.  The tracer will be notified
 	of a ``PTRACE_EVENT_SECCOMP`` and the ``SECCOMP_RET_DATA`` portion of
 	the BPF program return value will be available to the tracer
@@ -140,6 +150,15 @@ In precedence order, they are:
 	notified.  (This means that seccomp-based sandboxes MUST NOT
 	allow use of ptrace, even of other sandboxed processes, without
 	extreme care; ptracers can use this mechanism to escape.)
+
+``SECCOMP_RET_LOG``:
+	Results in the system call being executed after it is logged. This
+	should be used by application developers to learn which syscalls their
+	application needs without having to iterate through multiple test and
+	development cycles to build the list.
+
+	This action will only be logged if "log" is present in the
+	actions_logged sysctl string.
 
 ``SECCOMP_RET_ALLOW``:
 	Results in the system call being executed.
@@ -169,7 +188,113 @@ The ``samples/seccomp/`` directory contains both an x86-specific example
 and a more generic example of a higher level macro interface for BPF
 program generation.
 
+Userspace Notification
+======================
 
+The ``SECCOMP_RET_USER_NOTIF`` return code lets seccomp filters pass a
+particular syscall to userspace to be handled. This may be useful for
+applications like container managers, which wish to intercept particular
+syscalls (``mount()``, ``finit_module()``, etc.) and change their behavior.
+
+To acquire a notification FD, use the ``SECCOMP_FILTER_FLAG_NEW_LISTENER``
+argument to the ``seccomp()`` syscall:
+
+.. code-block:: c
+
+    fd = seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_NEW_LISTENER, &prog);
+
+which (on success) will return a listener fd for the filter, which can then be
+passed around via ``SCM_RIGHTS`` or similar. Note that filter fds correspond to
+a particular filter, and not a particular task. So if this task then forks,
+notifications from both tasks will appear on the same filter fd. Reads and
+writes to/from a filter fd are also synchronized, so a filter fd can safely
+have many readers.
+
+The interface for a seccomp notification fd consists of two structures:
+
+.. code-block:: c
+
+    struct seccomp_notif_sizes {
+        __u16 seccomp_notif;
+        __u16 seccomp_notif_resp;
+        __u16 seccomp_data;
+    };
+
+    struct seccomp_notif {
+        __u64 id;
+        __u32 pid;
+        __u32 flags;
+        struct seccomp_data data;
+    };
+
+    struct seccomp_notif_resp {
+        __u64 id;
+        __s64 val;
+        __s32 error;
+        __u32 flags;
+    };
+
+The ``struct seccomp_notif_sizes`` structure can be used to determine the size
+of the various structures used in seccomp notifications. The size of ``struct
+seccomp_data`` may change in the future, so code should use:
+
+.. code-block:: c
+
+    struct seccomp_notif_sizes sizes;
+    seccomp(SECCOMP_GET_NOTIF_SIZES, 0, &sizes);
+
+to determine the size of the various structures to allocate. See
+samples/seccomp/user-trap.c for an example.
+
+Users can read via ``ioctl(SECCOMP_IOCTL_NOTIF_RECV)``  (or ``poll()``) on a
+seccomp notification fd to receive a ``struct seccomp_notif``, which contains
+five members: the input length of the structure, a unique-per-filter ``id``,
+the ``pid`` of the task which triggered this request (which may be 0 if the
+task is in a pid ns not visible from the listener's pid namespace), a ``flags``
+member which for now only has ``SECCOMP_NOTIF_FLAG_SIGNALED``, representing
+whether or not the notification is a result of a non-fatal signal, and the
+``data`` passed to seccomp. Userspace can then make a decision based on this
+information about what to do, and ``ioctl(SECCOMP_IOCTL_NOTIF_SEND)`` a
+response, indicating what should be returned to userspace. The ``id`` member of
+``struct seccomp_notif_resp`` should be the same ``id`` as in ``struct
+seccomp_notif``.
+
+It is worth noting that ``struct seccomp_data`` contains the values of register
+arguments to the syscall, but does not contain pointers to memory. The task's
+memory is accessible to suitably privileged traces via ``ptrace()`` or
+``/proc/pid/mem``. However, care should be taken to avoid the TOCTOU mentioned
+above in this document: all arguments being read from the tracee's memory
+should be read into the tracer's memory before any policy decisions are made.
+This allows for an atomic decision on syscall arguments.
+
+Sysctls
+=======
+
+Seccomp's sysctl files can be found in the ``/proc/sys/kernel/seccomp/``
+directory. Here's a description of each file in that directory:
+
+``actions_avail``:
+	A read-only ordered list of seccomp return values (refer to the
+	``SECCOMP_RET_*`` macros above) in string form. The ordering, from
+	left-to-right, is the least permissive return value to the most
+	permissive return value.
+
+	The list represents the set of seccomp return values supported
+	by the kernel. A userspace program may use this list to
+	determine if the actions found in the ``seccomp.h``, when the
+	program was built, differs from the set of actions actually
+	supported in the current running kernel.
+
+``actions_logged``:
+	A read-write ordered list of seccomp return values (refer to the
+	``SECCOMP_RET_*`` macros above) that are allowed to be logged. Writes
+	to the file do not need to be in ordered form but reads from the file
+	will be ordered in the same way as the actions_avail sysctl.
+
+	The ``allow`` string is not accepted in the ``actions_logged`` sysctl
+	as it is not possible to log ``SECCOMP_RET_ALLOW`` actions. Attempting
+	to write ``allow`` to the sysctl will result in an EINVAL being
+	returned.
 
 Adding architecture support
 ===========================

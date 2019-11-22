@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Match running platform with pre-defined OPP values for CPUFreq
  *
@@ -5,10 +6,6 @@
  *         Lee Jones <lee.jones@linaro.org>
  *
  * Copyright (C) 2015 STMicroelectronics (R&D) Limited
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the version 2 of the GNU General Public License as
- * published by the Free Software Foundation
  */
 
 #include <linux/cpu.h>
@@ -65,8 +62,8 @@ static int sti_cpufreq_fetch_major(void) {
 	ret = of_property_read_u32_index(np, "st,syscfg",
 					 MAJOR_ID_INDEX, &major_offset);
 	if (ret) {
-		dev_err(dev, "No major number offset provided in %s [%d]\n",
-			np->full_name, ret);
+		dev_err(dev, "No major number offset provided in %pOF [%d]\n",
+			np, ret);
 		return ret;
 	}
 
@@ -92,8 +89,8 @@ static int sti_cpufreq_fetch_minor(void)
 					 MINOR_ID_INDEX, &minor_offset);
 	if (ret) {
 		dev_err(dev,
-			"No minor number offset provided %s [%d]\n",
-			np->full_name, ret);
+			"No minor number offset provided %pOF [%d]\n",
+			np, ret);
 		return ret;
 	}
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: (GPL-2.0 OR MPL-1.1)
 /* src/prism2/driver/prism2sta.c
  *
  * Implements the station functionality for prism2
@@ -287,99 +288,93 @@ static int prism2sta_mlmerequest(struct wlandevice *wlandev,
 	int result = 0;
 
 	switch (msg->msgcode) {
-	case DIDmsg_dot11req_mibget:
+	case DIDMSG_DOT11REQ_MIBGET:
 		pr_debug("Received mibget request\n");
 		result = prism2mgmt_mibset_mibget(wlandev, msg);
 		break;
-	case DIDmsg_dot11req_mibset:
+	case DIDMSG_DOT11REQ_MIBSET:
 		pr_debug("Received mibset request\n");
 		result = prism2mgmt_mibset_mibget(wlandev, msg);
 		break;
-	case DIDmsg_dot11req_scan:
+	case DIDMSG_DOT11REQ_SCAN:
 		pr_debug("Received scan request\n");
 		result = prism2mgmt_scan(wlandev, msg);
 		break;
-	case DIDmsg_dot11req_scan_results:
+	case DIDMSG_DOT11REQ_SCAN_RESULTS:
 		pr_debug("Received scan_results request\n");
 		result = prism2mgmt_scan_results(wlandev, msg);
 		break;
-	case DIDmsg_dot11req_start:
+	case DIDMSG_DOT11REQ_START:
 		pr_debug("Received mlme start request\n");
 		result = prism2mgmt_start(wlandev, msg);
 		break;
 		/*
 		 * Prism2 specific messages
 		 */
-	case DIDmsg_p2req_readpda:
+	case DIDMSG_P2REQ_READPDA:
 		pr_debug("Received mlme readpda request\n");
 		result = prism2mgmt_readpda(wlandev, msg);
 		break;
-	case DIDmsg_p2req_ramdl_state:
+	case DIDMSG_P2REQ_RAMDL_STATE:
 		pr_debug("Received mlme ramdl_state request\n");
 		result = prism2mgmt_ramdl_state(wlandev, msg);
 		break;
-	case DIDmsg_p2req_ramdl_write:
+	case DIDMSG_P2REQ_RAMDL_WRITE:
 		pr_debug("Received mlme ramdl_write request\n");
 		result = prism2mgmt_ramdl_write(wlandev, msg);
 		break;
-	case DIDmsg_p2req_flashdl_state:
+	case DIDMSG_P2REQ_FLASHDL_STATE:
 		pr_debug("Received mlme flashdl_state request\n");
 		result = prism2mgmt_flashdl_state(wlandev, msg);
 		break;
-	case DIDmsg_p2req_flashdl_write:
+	case DIDMSG_P2REQ_FLASHDL_WRITE:
 		pr_debug("Received mlme flashdl_write request\n");
 		result = prism2mgmt_flashdl_write(wlandev, msg);
 		break;
 		/*
 		 * Linux specific messages
 		 */
-	case DIDmsg_lnxreq_hostwep:
+	case DIDMSG_LNXREQ_HOSTWEP:
 		break;		/* ignore me. */
-	case DIDmsg_lnxreq_ifstate:
-		{
-			struct p80211msg_lnxreq_ifstate *ifstatemsg;
+	case DIDMSG_LNXREQ_IFSTATE: {
+		struct p80211msg_lnxreq_ifstate *ifstatemsg;
 
-			pr_debug("Received mlme ifstate request\n");
-			ifstatemsg = (struct p80211msg_lnxreq_ifstate *)msg;
-			result =
-			    prism2sta_ifstate(wlandev,
-					      ifstatemsg->ifstate.data);
-			ifstatemsg->resultcode.status =
-			    P80211ENUM_msgitem_status_data_ok;
-			ifstatemsg->resultcode.data = result;
-			result = 0;
-		}
+		pr_debug("Received mlme ifstate request\n");
+		ifstatemsg = (struct p80211msg_lnxreq_ifstate *)msg;
+		result = prism2sta_ifstate(wlandev,
+					   ifstatemsg->ifstate.data);
+		ifstatemsg->resultcode.status =
+			P80211ENUM_msgitem_status_data_ok;
+		ifstatemsg->resultcode.data = result;
+		result = 0;
 		break;
-	case DIDmsg_lnxreq_wlansniff:
+	}
+	case DIDMSG_LNXREQ_WLANSNIFF:
 		pr_debug("Received mlme wlansniff request\n");
 		result = prism2mgmt_wlansniff(wlandev, msg);
 		break;
-	case DIDmsg_lnxreq_autojoin:
+	case DIDMSG_LNXREQ_AUTOJOIN:
 		pr_debug("Received mlme autojoin request\n");
 		result = prism2mgmt_autojoin(wlandev, msg);
 		break;
-	case DIDmsg_lnxreq_commsquality:{
-			struct p80211msg_lnxreq_commsquality *qualmsg;
+	case DIDMSG_LNXREQ_COMMSQUALITY: {
+		struct p80211msg_lnxreq_commsquality *qualmsg;
 
-			pr_debug("Received commsquality request\n");
+		pr_debug("Received commsquality request\n");
 
-			qualmsg = (struct p80211msg_lnxreq_commsquality *)msg;
+		qualmsg = (struct p80211msg_lnxreq_commsquality *)msg;
 
-			qualmsg->link.status =
-			    P80211ENUM_msgitem_status_data_ok;
-			qualmsg->level.status =
-			    P80211ENUM_msgitem_status_data_ok;
-			qualmsg->noise.status =
-			    P80211ENUM_msgitem_status_data_ok;
+		qualmsg->link.status = P80211ENUM_msgitem_status_data_ok;
+		qualmsg->level.status = P80211ENUM_msgitem_status_data_ok;
+		qualmsg->noise.status = P80211ENUM_msgitem_status_data_ok;
 
-			qualmsg->link.data = le16_to_cpu(hw->qual.cq_curr_bss);
-			qualmsg->level.data =
-				le16_to_cpu(hw->qual.asl_curr_bss);
-			qualmsg->noise.data = le16_to_cpu(hw->qual.anl_curr_fc);
-			qualmsg->txrate.data = hw->txrate;
+		qualmsg->link.data = le16_to_cpu(hw->qual.cq_curr_bss);
+		qualmsg->level.data = le16_to_cpu(hw->qual.asl_curr_bss);
+		qualmsg->noise.data = le16_to_cpu(hw->qual.anl_curr_fc);
+		qualmsg->txrate.data = hw->txrate;
 
-			break;
-		}
+		break;
+	}
 	default:
 		netdev_warn(wlandev->netdev,
 			    "Unknown mgmt request message 0x%08x",
@@ -763,16 +758,16 @@ static int prism2sta_getcardinfo(struct wlandevice *wlandev)
 
 	if (hw->cap_sup_sta.id == 0x04) {
 		netdev_info(wlandev->netdev,
-		       "STA:SUP:role=0x%02x:id=0x%02x:var=0x%02x:b/t=%d/%d\n",
-		       hw->cap_sup_sta.role, hw->cap_sup_sta.id,
-		       hw->cap_sup_sta.variant, hw->cap_sup_sta.bottom,
-		       hw->cap_sup_sta.top);
+			    "STA:SUP:role=0x%02x:id=0x%02x:var=0x%02x:b/t=%d/%d\n",
+			    hw->cap_sup_sta.role, hw->cap_sup_sta.id,
+			    hw->cap_sup_sta.variant, hw->cap_sup_sta.bottom,
+			    hw->cap_sup_sta.top);
 	} else {
 		netdev_info(wlandev->netdev,
-		       "AP:SUP:role=0x%02x:id=0x%02x:var=0x%02x:b/t=%d/%d\n",
-		       hw->cap_sup_sta.role, hw->cap_sup_sta.id,
-		       hw->cap_sup_sta.variant, hw->cap_sup_sta.bottom,
-		       hw->cap_sup_sta.top);
+			    "AP:SUP:role=0x%02x:id=0x%02x:var=0x%02x:b/t=%d/%d\n",
+			    hw->cap_sup_sta.role, hw->cap_sup_sta.id,
+			    hw->cap_sup_sta.variant, hw->cap_sup_sta.bottom,
+			    hw->cap_sup_sta.top);
 	}
 
 	/* Compatibility range, primary f/w actor, CFI supplier */
@@ -991,9 +986,9 @@ static void prism2sta_inf_tallies(struct wlandevice *wlandev,
 				  struct hfa384x_inf_frame *inf)
 {
 	struct hfa384x *hw = wlandev->priv;
-	u16 *src16;
+	__le16 *src16;
 	u32 *dst;
-	u32 *src32;
+	__le32 *src32;
 	int i;
 	int cnt;
 
@@ -1005,12 +1000,12 @@ static void prism2sta_inf_tallies(struct wlandevice *wlandev,
 	cnt = sizeof(struct hfa384x_comm_tallies_32) / sizeof(u32);
 	if (inf->framelen > 22) {
 		dst = (u32 *)&hw->tallies;
-		src32 = (u32 *)&inf->info.commtallies32;
+		src32 = (__le32 *)&inf->info.commtallies32;
 		for (i = 0; i < cnt; i++, dst++, src32++)
 			*dst += le32_to_cpu(*src32);
 	} else {
 		dst = (u32 *)&hw->tallies;
-		src16 = (u16 *)&inf->info.commtallies16;
+		src16 = (__le16 *)&inf->info.commtallies16;
 		for (i = 0; i < cnt; i++, dst++, src16++)
 			*dst += le16_to_cpu(*src16);
 	}
@@ -1136,7 +1131,7 @@ static void prism2sta_inf_chinforesults(struct wlandevice *wlandev,
 	unsigned int i, n;
 
 	hw->channel_info.results.scanchannels =
-	    le16_to_cpu(inf->info.chinforesult.scanchannels);
+	    inf->info.chinforesult.scanchannels;
 
 	for (i = 0, n = 0; i < HFA384x_CHINFORESULT_MAX; i++) {
 		struct hfa384x_ch_info_result_sub *result;
@@ -1147,16 +1142,16 @@ static void prism2sta_inf_chinforesults(struct wlandevice *wlandev,
 			continue;
 
 		result = &inf->info.chinforesult.result[n];
-		chan = le16_to_cpu(result->chid) - 1;
+		chan = result->chid - 1;
 
 		if (chan < 0 || chan >= HFA384x_CHINFORESULT_MAX)
 			continue;
 
 		chinforesult = &hw->channel_info.results.result[chan];
 		chinforesult->chid = chan;
-		chinforesult->anl = le16_to_cpu(result->anl);
-		chinforesult->pnl = le16_to_cpu(result->pnl);
-		chinforesult->active = le16_to_cpu(result->active);
+		chinforesult->anl = result->anl;
+		chinforesult->pnl = result->pnl;
+		chinforesult->active = result->active;
 
 		pr_debug("chinfo: channel %d, %s level (avg/peak)=%d/%d dB, pcf %d\n",
 			 chan + 1,
@@ -1188,7 +1183,6 @@ void prism2sta_processing_defer(struct work_struct *data)
 			inf = (struct hfa384x_inf_frame *)skb->data;
 			prism2sta_inf_authreq_defer(wlandev, inf);
 		}
-
 	}
 
 	/* Now let's handle the linkstatus stuff */
@@ -1240,9 +1234,9 @@ void prism2sta_processing_defer(struct work_struct *data)
 			/* Collect the BSSID, and set state to allow tx */
 
 			result = hfa384x_drvr_getconfig(hw,
-						HFA384x_RID_CURRENTBSSID,
-						wlandev->bssid,
-						WLAN_BSSID_LEN);
+							HFA384x_RID_CURRENTBSSID,
+							wlandev->bssid,
+							WLAN_BSSID_LEN);
 			if (result) {
 				pr_debug
 				    ("getconfig(0x%02x) failed, result = %d\n",
@@ -1259,14 +1253,13 @@ void prism2sta_processing_defer(struct work_struct *data)
 				     HFA384x_RID_CURRENTSSID, result);
 				return;
 			}
-			prism2mgmt_bytestr2pstr(
-					(struct hfa384x_bytestr *)&ssid,
-					(struct p80211pstrd *)&wlandev->ssid);
+			prism2mgmt_bytestr2pstr((struct hfa384x_bytestr *)&ssid,
+						(struct p80211pstrd *)&wlandev->ssid);
 
 			/* Collect the port status */
 			result = hfa384x_drvr_getconfig16(hw,
-							HFA384x_RID_PORTSTATUS,
-							&portstatus);
+							  HFA384x_RID_PORTSTATUS,
+							  &portstatus);
 			if (result) {
 				pr_debug
 				    ("getconfig(0x%02x) failed, result = %d\n",
@@ -1403,7 +1396,7 @@ void prism2sta_processing_defer(struct work_struct *data)
 					       &joinreq,
 					       HFA384x_RID_JOINREQUEST_LEN);
 			netdev_info(wlandev->netdev,
-			       "linkstatus=ASSOCFAIL (re-submitting join)\n");
+				    "linkstatus=ASSOCFAIL (re-submitting join)\n");
 		} else {
 			netdev_info(wlandev->netdev, "linkstatus=ASSOCFAIL (unhandled)\n");
 		}
@@ -1500,7 +1493,7 @@ static void prism2sta_inf_assocstatus(struct wlandevice *wlandev,
 	if (i >= hw->authlist.cnt) {
 		if (rec.assocstatus != HFA384x_ASSOCSTATUS_AUTHFAIL)
 			netdev_warn(wlandev->netdev,
-	"assocstatus info frame received for non-authenticated station.\n");
+				    "assocstatus info frame received for non-authenticated station.\n");
 	} else {
 		hw->authlist.assoc[i] =
 		    (rec.assocstatus == HFA384x_ASSOCSTATUS_STAASSOC ||
@@ -1508,7 +1501,7 @@ static void prism2sta_inf_assocstatus(struct wlandevice *wlandev,
 
 		if (rec.assocstatus == HFA384x_ASSOCSTATUS_AUTHFAIL)
 			netdev_warn(wlandev->netdev,
-"authfail assocstatus info frame received for authenticated station.\n");
+				    "authfail assocstatus info frame received for authenticated station.\n");
 	}
 }
 
@@ -1561,7 +1554,7 @@ static void prism2sta_inf_authreq_defer(struct wlandevice *wlandev,
 	 */
 
 	ether_addr_copy(rec.address, inf->info.authreq.sta_addr);
-	rec.status = P80211ENUM_status_unspec_failure;
+	rec.status = cpu_to_le16(P80211ENUM_status_unspec_failure);
 
 	/*
 	 * Authenticate based on the access mode.
@@ -1578,7 +1571,7 @@ static void prism2sta_inf_authreq_defer(struct wlandevice *wlandev,
 		for (i = 0; i < hw->authlist.cnt; i++)
 			if (ether_addr_equal(rec.address,
 					     hw->authlist.addr[i])) {
-				rec.status = P80211ENUM_status_successful;
+				rec.status = cpu_to_le16(P80211ENUM_status_successful);
 				break;
 			}
 
@@ -1590,7 +1583,7 @@ static void prism2sta_inf_authreq_defer(struct wlandevice *wlandev,
 		 * Allow all authentications.
 		 */
 
-		rec.status = P80211ENUM_status_successful;
+		rec.status = cpu_to_le16(P80211ENUM_status_successful);
 		break;
 
 	case WLAN_ACCESS_ALLOW:
@@ -1615,7 +1608,7 @@ static void prism2sta_inf_authreq_defer(struct wlandevice *wlandev,
 
 		for (i = 0; i < cnt; i++, addr += ETH_ALEN)
 			if (ether_addr_equal(rec.address, addr)) {
-				rec.status = P80211ENUM_status_successful;
+				rec.status = cpu_to_le16(P80211ENUM_status_successful);
 				break;
 			}
 
@@ -1641,11 +1634,11 @@ static void prism2sta_inf_authreq_defer(struct wlandevice *wlandev,
 			addr = hw->deny.addr1[0];
 		}
 
-		rec.status = P80211ENUM_status_successful;
+		rec.status = cpu_to_le16(P80211ENUM_status_successful);
 
 		for (i = 0; i < cnt; i++, addr += ETH_ALEN)
 			if (ether_addr_equal(rec.address, addr)) {
-				rec.status = P80211ENUM_status_unspec_failure;
+				rec.status = cpu_to_le16(P80211ENUM_status_unspec_failure);
 				break;
 			}
 
@@ -1663,7 +1656,7 @@ static void prism2sta_inf_authreq_defer(struct wlandevice *wlandev,
 
 	added = 0;
 
-	if (rec.status == P80211ENUM_status_successful) {
+	if (rec.status == cpu_to_le16(P80211ENUM_status_successful)) {
 		for (i = 0; i < hw->authlist.cnt; i++)
 			if (ether_addr_equal(rec.address,
 					     hw->authlist.addr[i]))
@@ -1671,11 +1664,10 @@ static void prism2sta_inf_authreq_defer(struct wlandevice *wlandev,
 
 		if (i >= hw->authlist.cnt) {
 			if (hw->authlist.cnt >= WLAN_AUTH_MAX) {
-				rec.status = P80211ENUM_status_ap_full;
+				rec.status = cpu_to_le16(P80211ENUM_status_ap_full);
 			} else {
-				ether_addr_copy(
-					hw->authlist.addr[hw->authlist.cnt],
-					rec.address);
+				ether_addr_copy(hw->authlist.addr[hw->authlist.cnt],
+						rec.address);
 				hw->authlist.cnt++;
 				added = 1;
 			}
@@ -1688,7 +1680,6 @@ static void prism2sta_inf_authreq_defer(struct wlandevice *wlandev,
 	 * it was added.
 	 */
 
-	rec.status = cpu_to_le16(rec.status);
 	rec.algorithm = inf->info.authreq.algorithm;
 
 	result = hfa384x_drvr_setconfig(hw, HFA384x_RID_AUTHENTICATESTA,
@@ -1697,8 +1688,8 @@ static void prism2sta_inf_authreq_defer(struct wlandevice *wlandev,
 		if (added)
 			hw->authlist.cnt--;
 		netdev_err(wlandev->netdev,
-		       "setconfig(authenticatestation) failed, result=%d\n",
-		       result);
+			   "setconfig(authenticatestation) failed, result=%d\n",
+			   result);
 	}
 }
 
@@ -1937,9 +1928,8 @@ void prism2sta_commsqual_defer(struct work_struct *data)
 
 	/* It only makes sense to poll these in non-IBSS */
 	if (wlandev->macmode != WLAN_MACMODE_IBSS_STA) {
-		result = hfa384x_drvr_getconfig(
-				hw, HFA384x_RID_DBMCOMMSQUALITY,
-				&hw->qual, HFA384x_RID_DBMCOMMSQUALITY_LEN);
+		result = hfa384x_drvr_getconfig(hw, HFA384x_RID_DBMCOMMSQUALITY,
+						&hw->qual, HFA384x_RID_DBMCOMMSQUALITY_LEN);
 
 		if (result) {
 			netdev_err(wlandev->netdev, "error fetching commsqual\n");
@@ -1953,8 +1943,8 @@ void prism2sta_commsqual_defer(struct work_struct *data)
 	}
 
 	/* Get the signal rate */
-	msg.msgcode = DIDmsg_dot11req_mibget;
-	mibitem->did = DIDmib_p2_p2MAC_p2CurrentTxRate;
+	msg.msgcode = DIDMSG_DOT11REQ_MIBGET;
+	mibitem->did = DIDMIB_P2_MAC_CURRENTTXRATE;
 	result = p80211req_dorequest(wlandev, (u8 *)&msg);
 
 	if (result) {
@@ -2005,9 +1995,9 @@ void prism2sta_commsqual_defer(struct work_struct *data)
 	mod_timer(&hw->commsqual_timer, jiffies + HZ);
 }
 
-void prism2sta_commsqual_timer(unsigned long data)
+void prism2sta_commsqual_timer(struct timer_list *t)
 {
-	struct hfa384x *hw = (struct hfa384x *)data;
+	struct hfa384x *hw = from_timer(hw, t, commsqual_timer);
 
 	schedule_work(&hw->commsqual_bh);
 }

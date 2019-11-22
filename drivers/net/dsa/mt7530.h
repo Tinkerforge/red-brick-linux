@@ -1,14 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2017 Sean Wang <sean.wang@mediatek.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #ifndef __MT7530_H
@@ -17,6 +9,12 @@
 #define MT7530_NUM_PORTS		7
 #define MT7530_CPU_PORT			6
 #define MT7530_NUM_FDB_RECORDS		2048
+#define MT7530_ALL_MEMBERS		0xff
+
+enum {
+	ID_MT7530 = 0,
+	ID_MT7621 = 1,
+};
 
 #define	NUM_TRGMII_CTRL			5
 
@@ -35,6 +33,9 @@
 #define  UNM_FFP(x)			(((x) & 0xff) << 16)
 #define  UNU_FFP(x)			(((x) & 0xff) << 8)
 #define  UNU_FFP_MASK			UNU_FFP(~0)
+#define  CPU_EN				BIT(7)
+#define  CPU_PORT(x)			((x) << 4)
+#define  CPU_MASK			(0xf << 4)
 
 /* Registers for address table access */
 #define MT7530_ATA1			0x74
@@ -88,21 +89,42 @@ enum mt7530_fdb_cmd {
 /* Register for vlan table control */
 #define MT7530_VTCR			0x90
 #define  VTCR_BUSY			BIT(31)
-#define  VTCR_FUNC			(((x) & 0xf) << 12)
-#define  VTCR_FUNC_RD_VID		0x1
-#define  VTCR_FUNC_WR_VID		0x2
-#define  VTCR_FUNC_INV_VID		0x3
-#define  VTCR_FUNC_VAL_VID		0x4
+#define  VTCR_INVALID			BIT(16)
+#define  VTCR_FUNC(x)			(((x) & 0xf) << 12)
 #define  VTCR_VID			((x) & 0xfff)
+
+enum mt7530_vlan_cmd {
+	/* Read/Write the specified VID entry from VAWD register based
+	 * on VID.
+	 */
+	MT7530_VTCR_RD_VID = 0,
+	MT7530_VTCR_WR_VID = 1,
+};
 
 /* Register for setup vlan and acl write data */
 #define MT7530_VAWD1			0x94
 #define  PORT_STAG			BIT(31)
+/* Independent VLAN Learning */
 #define  IVL_MAC			BIT(30)
+/* Per VLAN Egress Tag Control */
+#define  VTAG_EN			BIT(28)
+/* VLAN Member Control */
 #define  PORT_MEM(x)			(((x) & 0xff) << 16)
-#define  VALID				BIT(1)
+/* VLAN Entry Valid */
+#define  VLAN_VALID			BIT(0)
+#define  PORT_MEM_SHFT			16
+#define  PORT_MEM_MASK			0xff
 
 #define MT7530_VAWD2			0x98
+/* Egress Tag Control */
+#define  ETAG_CTRL_P(p, x)		(((x) & 0x3) << ((p) << 1))
+#define  ETAG_CTRL_P_MASK(p)		ETAG_CTRL_P(p, 3)
+
+enum mt7530_vlan_egress_attr {
+	MT7530_VLAN_EGRESS_UNTAG = 0,
+	MT7530_VLAN_EGRESS_TAG = 2,
+	MT7530_VLAN_EGRESS_STACK = 3,
+};
 
 /* Register for port STP state control */
 #define MT7530_SSP_P(x)			(0x2000 + ((x) * 0x100))
@@ -120,11 +142,23 @@ enum mt7530_stp_state {
 /* Register for port control */
 #define MT7530_PCR_P(x)			(0x2004 + ((x) * 0x100))
 #define  PORT_VLAN(x)			((x) & 0x3)
+
+enum mt7530_port_mode {
+	/* Port Matrix Mode: Frames are forwarded by the PCR_MATRIX members. */
+	MT7530_PORT_MATRIX_MODE = PORT_VLAN(0),
+
+	/* Security Mode: Discard any frame due to ingress membership
+	 * violation or VID missed on the VLAN table.
+	 */
+	MT7530_PORT_SECURITY_MODE = PORT_VLAN(3),
+};
+
 #define  PCR_MATRIX(x)			(((x) & 0xff) << 16)
 #define  PORT_PRI(x)			(((x) & 0x7) << 24)
 #define  EG_TAG(x)			(((x) & 0x3) << 28)
 #define  PCR_MATRIX_MASK		PCR_MATRIX(0xff)
 #define  PCR_MATRIX_CLR			PCR_MATRIX(0)
+#define  PCR_PORT_VLAN_MASK		PORT_VLAN(3)
 
 /* Register for port security control */
 #define MT7530_PSC_P(x)			(0x200c + ((x) * 0x100))
@@ -134,10 +168,20 @@ enum mt7530_stp_state {
 #define MT7530_PVC_P(x)			(0x2010 + ((x) * 0x100))
 #define  PORT_SPEC_TAG			BIT(5)
 #define  VLAN_ATTR(x)			(((x) & 0x3) << 6)
+#define  VLAN_ATTR_MASK			VLAN_ATTR(3)
+
+enum mt7530_vlan_port_attr {
+	MT7530_VLAN_USER = 0,
+	MT7530_VLAN_TRANSPARENT = 3,
+};
+
 #define  STAG_VPID			(((x) & 0xffff) << 16)
 
 /* Register for port port-and-protocol based vlan 1 control */
 #define MT7530_PPBV1_P(x)		(0x2014 + ((x) * 0x100))
+#define  G0_PORT_VID(x)			(((x) & 0xfff) << 0)
+#define  G0_PORT_VID_MASK		G0_PORT_VID(0xfff)
+#define  G0_PORT_VID_DEF		G0_PORT_VID(1)
 
 /* Register for port MAC control register */
 #define MT7530_PMCR_P(x)		(0x3000 + ((x) * 0x100))
@@ -200,6 +244,10 @@ enum mt7530_stp_state {
 
 /* Register for hw trap status */
 #define MT7530_HWTRAP			0x7800
+#define  HWTRAP_XTAL_MASK		(BIT(10) | BIT(9))
+#define  HWTRAP_XTAL_25MHZ		(BIT(10) | BIT(9))
+#define  HWTRAP_XTAL_40MHZ		(BIT(10))
+#define  HWTRAP_XTAL_20MHZ		(BIT(9))
 
 /* Register for hw trap modification */
 #define MT7530_MHWTRAP			0x7804
@@ -345,9 +393,19 @@ struct mt7530_fdb {
 	bool noarp;
 };
 
+/* struct mt7530_port -	This is the main data structure for holding the state
+ *			of the port.
+ * @enable:	The status used for show port is enabled or not.
+ * @pm:		The matrix used to show all connections with the port.
+ * @pvid:	The VLAN specified is to be considered a PVID at ingress.  Any
+ *		untagged frames will be assigned to the related VLAN.
+ * @vlan_filtering: The flags indicating whether the port that can recognize
+ *		    VLAN-tagged frames.
+ */
 struct mt7530_port {
 	bool enable;
 	u32 pm;
+	u16 pvid;
 };
 
 /* struct mt7530_priv -	This is the main data structure for holding the state
@@ -375,12 +433,29 @@ struct mt7530_priv {
 	struct regulator	*core_pwr;
 	struct regulator	*io_pwr;
 	struct gpio_desc	*reset;
+	unsigned int		id;
 	bool			mcm;
 
 	struct mt7530_port	ports[MT7530_NUM_PORTS];
 	/* protect among processes for registers access*/
 	struct mutex reg_mutex;
 };
+
+struct mt7530_hw_vlan_entry {
+	int port;
+	u8  old_members;
+	bool untagged;
+};
+
+static inline void mt7530_hw_vlan_entry_init(struct mt7530_hw_vlan_entry *e,
+					     int port, bool untagged)
+{
+	e->port = port;
+	e->untagged = untagged;
+}
+
+typedef void (*mt7530_vlan_op)(struct mt7530_priv *,
+			       struct mt7530_hw_vlan_entry *);
 
 struct mt7530_hw_stats {
 	const char	*string;

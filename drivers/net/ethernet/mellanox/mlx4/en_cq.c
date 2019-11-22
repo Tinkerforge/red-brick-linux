@@ -54,11 +54,8 @@ int mlx4_en_create_cq(struct mlx4_en_priv *priv,
 
 	cq = kzalloc_node(sizeof(*cq), GFP_KERNEL, node);
 	if (!cq) {
-		cq = kzalloc(sizeof(*cq), GFP_KERNEL);
-		if (!cq) {
-			en_err(priv, "Failed to allocate CQ structure\n");
-			return -ENOMEM;
-		}
+		en_err(priv, "Failed to allocate CQ structure\n");
+		return -ENOMEM;
 	}
 
 	cq->size = entries;
@@ -140,9 +137,10 @@ int mlx4_en_activate_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq,
 	    (cq->type == RX && priv->hwtstamp_config.rx_filter))
 		timestamp_en = 1;
 
+	cq->mcq.usage = MLX4_RES_USAGE_DRIVER;
 	err = mlx4_cq_alloc(mdev->dev, cq->size, &cq->wqres.mtt,
 			    &mdev->priv_uar, cq->wqres.db.dma, &cq->mcq,
-			    cq->vector, 0, timestamp_en);
+			    cq->vector, 0, timestamp_en, &cq->wqres.buf, false);
 	if (err)
 		goto free_eq;
 
@@ -208,12 +206,10 @@ int mlx4_en_set_cq_moder(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq)
 			      cq->moder_cnt, cq->moder_time);
 }
 
-int mlx4_en_arm_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq)
+void mlx4_en_arm_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq)
 {
 	mlx4_cq_arm(&cq->mcq, MLX4_CQ_DB_REQ_NOT, priv->mdev->uar_map,
 		    &priv->mdev->uar_lock);
-
-	return 0;
 }
 
 

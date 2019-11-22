@@ -1,24 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2010 OKI SEMICONDUCTOR Co., LTD.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307, USA.
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/pci.h>
-#include <linux/gpio.h>
+#include <linux/gpio/driver.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 
@@ -30,8 +18,6 @@
 #define IOH_IM_MASK		(BIT(0) | BIT(1) | BIT(2))
 
 #define IOH_IRQ_BASE		0
-
-#define PCI_VENDOR_ID_ROHM             0x10DB
 
 struct ioh_reg_comn {
 	u32	ien;
@@ -391,9 +377,10 @@ static int ioh_gpio_alloc_generic_chip(struct ioh_gpio *chip,
 {
 	struct irq_chip_generic *gc;
 	struct irq_chip_type *ct;
+	int rv;
 
-	gc = irq_alloc_generic_chip("ioh_gpio", 1, irq_start, chip->base,
-				    handle_simple_irq);
+	gc = devm_irq_alloc_generic_chip(chip->dev, "ioh_gpio", 1, irq_start,
+					 chip->base, handle_simple_irq);
 	if (!gc)
 		return -ENOMEM;
 
@@ -406,10 +393,11 @@ static int ioh_gpio_alloc_generic_chip(struct ioh_gpio *chip,
 	ct->chip.irq_disable = ioh_irq_disable;
 	ct->chip.irq_enable = ioh_irq_enable;
 
-	irq_setup_generic_chip(gc, IRQ_MSK(num), IRQ_GC_INIT_MASK_CACHE,
-			       IRQ_NOREQUEST | IRQ_NOPROBE, 0);
+	rv = devm_irq_setup_generic_chip(chip->dev, gc, IRQ_MSK(num),
+					 IRQ_GC_INIT_MASK_CACHE,
+					 IRQ_NOREQUEST | IRQ_NOPROBE, 0);
 
-	return 0;
+	return rv;
 }
 
 static int ioh_gpio_probe(struct pci_dev *pdev,
@@ -441,9 +429,8 @@ static int ioh_gpio_probe(struct pci_dev *pdev,
 		goto err_iomap;
 	}
 
-	chip_save = kzalloc(sizeof(*chip) * 8, GFP_KERNEL);
+	chip_save = kcalloc(8, sizeof(*chip), GFP_KERNEL);
 	if (chip_save == NULL) {
-		dev_err(&pdev->dev, "%s : kzalloc failed", __func__);
 		ret = -ENOMEM;
 		goto err_kzalloc;
 	}
@@ -495,9 +482,10 @@ static int ioh_gpio_probe(struct pci_dev *pdev,
 	return 0;
 
 err_gpiochip_add:
+	chip = chip_save;
 	while (--i >= 0) {
-		chip--;
 		gpiochip_remove(&chip->gpio);
+		chip++;
 	}
 	kfree(chip_save);
 

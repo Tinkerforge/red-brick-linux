@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "perf.h"
 #include "tests.h"
 #include "debug.h"
@@ -141,7 +142,7 @@ static int find_sample(struct sample *samples, size_t nr_samples,
 static int __validate_match(struct hists *hists)
 {
 	size_t count = 0;
-	struct rb_root *root;
+	struct rb_root_cached *root;
 	struct rb_node *node;
 
 	/*
@@ -152,7 +153,7 @@ static int __validate_match(struct hists *hists)
 	else
 		root = hists->entries_in;
 
-	node = rb_first(root);
+	node = rb_first_cached(root);
 	while (node) {
 		struct hist_entry *he;
 
@@ -191,7 +192,7 @@ static int __validate_link(struct hists *hists, int idx)
 	size_t count = 0;
 	size_t count_pair = 0;
 	size_t count_dummy = 0;
-	struct rb_root *root;
+	struct rb_root_cached *root;
 	struct rb_node *node;
 
 	/*
@@ -204,7 +205,7 @@ static int __validate_link(struct hists *hists, int idx)
 	else
 		root = hists->entries_in;
 
-	node = rb_first(root);
+	node = rb_first_cached(root);
 	while (node) {
 		struct hist_entry *he;
 
@@ -264,7 +265,7 @@ static int validate_link(struct hists *leader, struct hists *other)
 	return __validate_link(leader, 0) || __validate_link(other, 1);
 }
 
-int test__hists_link(int subtest __maybe_unused)
+int test__hists_link(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	int err = -1;
 	struct hists *hists, *first_hists;

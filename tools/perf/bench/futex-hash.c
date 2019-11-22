@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2013  Davidlohr Bueso <davidlohr@hp.com>
  *
@@ -17,15 +18,16 @@
 #include <stdlib.h>
 #include <linux/compiler.h>
 #include <linux/kernel.h>
+#include <linux/zalloc.h>
 #include <sys/time.h>
 
 #include "../util/stat.h"
 #include <subcmd/parse-options.h>
 #include "bench.h"
 #include "futex.h"
+#include "cpumap.h"
 
 #include <err.h>
-#include <sys/time.h>
 
 static unsigned int nthreads = 0;
 static unsigned int nsecs    = 10;
@@ -117,11 +119,12 @@ static void print_summary(void)
 int bench_futex_hash(int argc, const char **argv)
 {
 	int ret = 0;
-	cpu_set_t cpu;
+	cpu_set_t cpuset;
 	struct sigaction act;
-	unsigned int i, ncpus;
+	unsigned int i;
 	pthread_attr_t thread_attr;
 	struct worker *worker = NULL;
+	struct cpu_map *cpu;
 
 	argc = parse_options(argc, argv, options, bench_futex_hash_usage, 0);
 	if (argc) {
@@ -129,14 +132,16 @@ int bench_futex_hash(int argc, const char **argv)
 		exit(EXIT_FAILURE);
 	}
 
-	ncpus = sysconf(_SC_NPROCESSORS_ONLN);
+	cpu = cpu_map__new(NULL);
+	if (!cpu)
+		goto errmem;
 
 	sigfillset(&act.sa_mask);
 	act.sa_sigaction = toggle_done;
 	sigaction(SIGINT, &act, NULL);
 
 	if (!nthreads) /* default to the number of CPUs */
-		nthreads = ncpus;
+		nthreads = cpu->nr;
 
 	worker = calloc(nthreads, sizeof(*worker));
 	if (!worker)
@@ -162,10 +167,10 @@ int bench_futex_hash(int argc, const char **argv)
 		if (!worker[i].futex)
 			goto errmem;
 
-		CPU_ZERO(&cpu);
-		CPU_SET(i % ncpus, &cpu);
+		CPU_ZERO(&cpuset);
+		CPU_SET(cpu->map[i % cpu->nr], &cpuset);
 
-		ret = pthread_attr_setaffinity_np(&thread_attr, sizeof(cpu_set_t), &cpu);
+		ret = pthread_attr_setaffinity_np(&thread_attr, sizeof(cpu_set_t), &cpuset);
 		if (ret)
 			err(EXIT_FAILURE, "pthread_attr_setaffinity_np");
 
@@ -210,12 +215,13 @@ int bench_futex_hash(int argc, const char **argv)
 				       &worker[i].futex[nfutexes-1], t);
 		}
 
-		free(worker[i].futex);
+		zfree(&worker[i].futex);
 	}
 
 	print_summary();
 
 	free(worker);
+	free(cpu);
 	return ret;
 errmem:
 	err(EXIT_FAILURE, "calloc");

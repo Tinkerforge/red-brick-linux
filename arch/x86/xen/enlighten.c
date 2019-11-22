@@ -1,6 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0
+
+#ifdef CONFIG_XEN_BALLOON_MEMORY_HOTPLUG
+#include <linux/memblock.h>
+#endif
 #include <linux/cpu.h>
 #include <linux/kexec.h>
+#include <linux/slab.h>
 
+#include <xen/xen.h>
 #include <xen/features.h>
 #include <xen/page.h>
 
@@ -61,6 +68,13 @@ __read_mostly int xen_have_vector_callback;
 EXPORT_SYMBOL_GPL(xen_have_vector_callback);
 
 /*
+ * NB: needs to live in .data because it's used by xen_prepare_pvh which runs
+ * before clearing the bss.
+ */
+uint32_t xen_start_flags __attribute__((section(".data"))) = 0;
+EXPORT_SYMBOL(xen_start_flags);
+
+/*
  * Point at some empty memory to start with. We map the real shared_info
  * page as soon as fixmap is up and running.
  */
@@ -93,11 +107,11 @@ int xen_cpuhp_setup(int (*cpu_up_prepare_cb)(unsigned int),
 	int rc;
 
 	rc = cpuhp_setup_state_nocalls(CPUHP_XEN_PREPARE,
-				       "x86/xen/hvm_guest:prepare",
+				       "x86/xen/guest:prepare",
 				       cpu_up_prepare_cb, cpu_dead_cb);
 	if (rc >= 0) {
 		rc = cpuhp_setup_state_nocalls(CPUHP_AP_ONLINE_DYN,
-					       "x86/xen/hvm_guest:online",
+					       "x86/xen/guest:online",
 					       xen_cpu_up_online, NULL);
 		if (rc < 0)
 			cpuhp_remove_state_nocalls(CPUHP_XEN_PREPARE);

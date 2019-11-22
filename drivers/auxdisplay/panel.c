@@ -1,12 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Front panel driver for Linux
  * Copyright (C) 2000-2008, Willy Tarreau <w@1wt.eu>
  * Copyright (C) 2016-2017 Glider bvba
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version
- * 2 of the License, or (at your option) any later version.
  *
  * This code drives an LCD module (/dev/lcd), and a keypad (/dev/keypad)
  * connected to a parallel printer port.
@@ -59,7 +55,7 @@
 #include <linux/io.h>
 #include <linux/uaccess.h>
 
-#include <misc/charlcd.h>
+#include "charlcd.h"
 
 #define KEYPAD_MINOR		185
 
@@ -159,10 +155,9 @@ struct logical_input {
 			int release_data;
 		} std;
 		struct {	/* valid when type == INPUT_TYPE_KBD */
-			/* strings can be non null-terminated */
-			char press_str[sizeof(void *) + sizeof(int)];
-			char repeat_str[sizeof(void *) + sizeof(int)];
-			char release_str[sizeof(void *) + sizeof(int)];
+			char press_str[sizeof(void *) + sizeof(int)] __nonstring;
+			char repeat_str[sizeof(void *) + sizeof(int)] __nonstring;
+			char release_str[sizeof(void *) + sizeof(int)] __nonstring;
 		} kbd;
 	} u;
 };
@@ -877,21 +872,21 @@ static void lcd_clear_fast_tilcd(struct charlcd *charlcd)
 	spin_unlock_irq(&pprt_lock);
 }
 
-static struct charlcd_ops charlcd_serial_ops = {
+static const struct charlcd_ops charlcd_serial_ops = {
 	.write_cmd	= lcd_write_cmd_s,
 	.write_data	= lcd_write_data_s,
 	.clear_fast	= lcd_clear_fast_s,
 	.backlight	= lcd_backlight,
 };
 
-static struct charlcd_ops charlcd_parallel_ops = {
+static const struct charlcd_ops charlcd_parallel_ops = {
 	.write_cmd	= lcd_write_cmd_p8,
 	.write_data	= lcd_write_data_p8,
 	.clear_fast	= lcd_clear_fast_p8,
 	.backlight	= lcd_backlight,
 };
 
-static struct charlcd_ops charlcd_tilcd_ops = {
+static const struct charlcd_ops charlcd_tilcd_ops = {
 	.write_cmd	= lcd_write_cmd_tilcd,
 	.write_data	= lcd_write_data_tilcd,
 	.clear_fast	= lcd_clear_fast_tilcd,
@@ -1105,14 +1100,21 @@ static ssize_t keypad_read(struct file *file,
 
 static int keypad_open(struct inode *inode, struct file *file)
 {
-	if (!atomic_dec_and_test(&keypad_available))
-		return -EBUSY;	/* open only once at a time */
+	int ret;
 
+	ret = -EBUSY;
+	if (!atomic_dec_and_test(&keypad_available))
+		goto fail;	/* open only once at a time */
+
+	ret = -EPERM;
 	if (file->f_mode & FMODE_WRITE)	/* device is read-only */
-		return -EPERM;
+		goto fail;
 
 	keypad_buflen = 0;	/* flush the buffer on opening */
 	return 0;
+ fail:
+	atomic_inc(&keypad_available);
+	return ret;
 }
 
 static int keypad_release(struct inode *inode, struct file *file)
@@ -1365,7 +1367,7 @@ static void panel_process_inputs(void)
 				break;
 			input->rise_timer = 0;
 			input->state = INPUT_ST_RISING;
-			/* no break here, fall through */
+			/* fall through */
 		case INPUT_ST_RISING:
 			if ((phys_curr & input->mask) != input->value) {
 				input->state = INPUT_ST_LOW;
@@ -1378,18 +1380,18 @@ static void panel_process_inputs(void)
 			}
 			input->high_timer = 0;
 			input->state = INPUT_ST_HIGH;
-			/* no break here, fall through */
+			/* fall through */
 		case INPUT_ST_HIGH:
 			if (input_state_high(input))
 				break;
-			/* no break here, fall through */
+			/* fall through */
 		case INPUT_ST_FALLING:
 			input_state_falling(input);
 		}
 	}
 }
 
-static void panel_scan_timer(void)
+static void panel_scan_timer(struct timer_list *unused)
 {
 	if (keypad.enabled && keypad_initialized) {
 		if (spin_trylock_irq(&pprt_lock)) {
@@ -1414,7 +1416,7 @@ static void init_scan_timer(void)
 	if (scan_timer.function)
 		return;		/* already started */
 
-	setup_timer(&scan_timer, (void *)&panel_scan_timer, 0);
+	timer_setup(&scan_timer, panel_scan_timer, 0);
 	scan_timer.expires = jiffies + INPUT_POLL_TIME;
 	add_timer(&scan_timer);
 }
@@ -1615,10 +1617,12 @@ static void panel_attach(struct parport *port)
 	return;
 
 err_lcd_unreg:
+	if (scan_timer.function)
+		del_timer_sync(&scan_timer);
 	if (lcd.enabled)
 		charlcd_unregister(lcd.charlcd);
 err_unreg_device:
-	kfree(lcd.charlcd);
+	charlcd_free(lcd.charlcd);
 	lcd.charlcd = NULL;
 	parport_unregister_device(pprt);
 	pprt = NULL;
@@ -1645,7 +1649,7 @@ static void panel_detach(struct parport *port)
 	if (lcd.enabled) {
 		charlcd_unregister(lcd.charlcd);
 		lcd.initialized = false;
-		kfree(lcd.charlcd);
+		charlcd_free(lcd.charlcd);
 		lcd.charlcd = NULL;
 	}
 

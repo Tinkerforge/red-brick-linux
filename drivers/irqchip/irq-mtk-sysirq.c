@@ -1,15 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2014 MediaTek Inc.
  * Author: Joe.C <yingjoe.chen@mediatek.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #include <linux/irq.h>
@@ -178,8 +170,7 @@ static int __init mtk_sysirq_of_init(struct device_node *node,
 		chip_data->intpol_words[i] = size / 4;
 		chip_data->intpol_bases[i] = of_iomap(node, i);
 		if (ret || !chip_data->intpol_bases[i]) {
-			pr_err("%s: couldn't map region %d\n",
-			       node->full_name, i);
+			pr_err("%pOF: couldn't map region %d\n", node, i);
 			ret = -ENODEV;
 			goto out_free_intpol;
 		}

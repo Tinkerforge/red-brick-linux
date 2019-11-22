@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2014 Traphandler
  * Copyright (C) 2014 Free Electrons
@@ -5,18 +6,6 @@
  *
  * Author: Jean-Jacques Hiblot <jjhiblot@traphandler.com>
  * Author: Boris BREZILLON <boris.brezillon@free-electrons.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published by
- * the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifndef DRM_ATMEL_HLCDC_H
@@ -31,9 +20,11 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc.h>
-#include <drm/drm_crtc_helper.h>
+#include <drm/drm_probe_helper.h>
+#include <drm/drm_fb_helper.h>
 #include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_gem_cma_helper.h>
+#include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_panel.h>
 #include <drm/drm_plane_helper.h>
 #include <drm/drmP.h>
@@ -88,6 +79,11 @@
 #define ATMEL_HLCDC_YUV422SWP			BIT(17)
 #define ATMEL_HLCDC_DSCALEOPT			BIT(20)
 
+#define ATMEL_HLCDC_C1_MODE			ATMEL_HLCDC_CLUT_MODE(0)
+#define ATMEL_HLCDC_C2_MODE			ATMEL_HLCDC_CLUT_MODE(1)
+#define ATMEL_HLCDC_C4_MODE			ATMEL_HLCDC_CLUT_MODE(2)
+#define ATMEL_HLCDC_C8_MODE			ATMEL_HLCDC_CLUT_MODE(3)
+
 #define ATMEL_HLCDC_XRGB4444_MODE		ATMEL_HLCDC_RGB_MODE(0)
 #define ATMEL_HLCDC_ARGB4444_MODE		ATMEL_HLCDC_RGB_MODE(1)
 #define ATMEL_HLCDC_RGBA4444_MODE		ATMEL_HLCDC_RGB_MODE(2)
@@ -141,6 +137,8 @@
 #define ATMEL_HLCDC_DMA_CHANNEL_DSCR_LOADED	BIT(1)
 #define ATMEL_HLCDC_DMA_CHANNEL_DSCR_DONE	BIT(2)
 #define ATMEL_HLCDC_DMA_CHANNEL_DSCR_OVERRUN	BIT(3)
+
+#define ATMEL_HLCDC_CLUT_SIZE			256
 
 #define ATMEL_HLCDC_MAX_LAYERS			6
 
@@ -259,6 +257,7 @@ struct atmel_hlcdc_layer_desc {
 	int id;
 	int regs_offset;
 	int cfgs_offset;
+	int clut_offset;
 	struct atmel_hlcdc_formats *formats;
 	struct atmel_hlcdc_layer_cfg_layout layout;
 	int max_width;
@@ -289,7 +288,6 @@ struct atmel_hlcdc_layer {
 struct atmel_hlcdc_plane {
 	struct drm_plane base;
 	struct atmel_hlcdc_layer layer;
-	struct atmel_hlcdc_plane_properties *properties;
 };
 
 static inline struct atmel_hlcdc_plane *
@@ -319,6 +317,7 @@ atmel_hlcdc_layer_to_plane(struct atmel_hlcdc_layer *layer)
  * @max_hpw: maximum horizontal back/front porch width
  * @conflicting_output_formats: true if RGBXXX output formats conflict with
  *				each other.
+ * @fixed_clksrc: true if clock source is fixed
  * @layers: a layer description table describing available layers
  * @nlayers: layer description table size
  */
@@ -331,20 +330,9 @@ struct atmel_hlcdc_dc_desc {
 	int max_vpw;
 	int max_hpw;
 	bool conflicting_output_formats;
+	bool fixed_clksrc;
 	const struct atmel_hlcdc_layer_desc *layers;
 	int nlayers;
-};
-
-/**
- * Atmel HLCDC Plane properties.
- *
- * This structure stores plane property definitions.
- *
- * @alpha: alpha blending (or transparency) property
- * @rotation: rotation property
- */
-struct atmel_hlcdc_plane_properties {
-	struct drm_property *alpha;
 };
 
 /**
@@ -365,7 +353,6 @@ struct atmel_hlcdc_dc {
 	const struct atmel_hlcdc_dc_desc *desc;
 	struct dma_pool *dscrpool;
 	struct atmel_hlcdc *hlcdc;
-	struct drm_fbdev_cma *fbdev;
 	struct drm_crtc *crtc;
 	struct atmel_hlcdc_layer *layers[ATMEL_HLCDC_MAX_LAYERS];
 	struct workqueue_struct *wq;
@@ -414,6 +401,14 @@ static inline u32 atmel_hlcdc_layer_read_cfg(struct atmel_hlcdc_layer *layer,
 					  (cfgid * sizeof(u32)));
 }
 
+static inline void atmel_hlcdc_layer_write_clut(struct atmel_hlcdc_layer *layer,
+						unsigned int c, u32 val)
+{
+	regmap_write(layer->regmap,
+		     layer->desc->clut_offset + c * sizeof(u32),
+		     val);
+}
+
 static inline void atmel_hlcdc_layer_init(struct atmel_hlcdc_layer *layer,
 				const struct atmel_hlcdc_layer_desc *desc,
 				struct regmap *regmap)
@@ -437,5 +432,6 @@ void atmel_hlcdc_crtc_irq(struct drm_crtc *c);
 int atmel_hlcdc_crtc_create(struct drm_device *dev);
 
 int atmel_hlcdc_create_outputs(struct drm_device *dev);
+int atmel_hlcdc_encoder_get_bus_fmt(struct drm_encoder *encoder);
 
 #endif /* DRM_ATMEL_HLCDC_H */

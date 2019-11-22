@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /* SCTP kernel implementation
  * Copyright (c) 1999-2000 Cisco, Inc.
  * Copyright (c) 1999-2001 Motorola, Inc.
@@ -9,22 +10,6 @@
  * This file is part of the SCTP kernel implementation
  *
  * This abstraction represents an SCTP endpoint.
- *
- * The SCTP implementation is free software;
- * you can redistribute it and/or modify it under the terms of
- * the GNU General Public License as published by
- * the Free Software Foundation; either version 2, or (at your option)
- * any later version.
- *
- * The SCTP implementation is distributed in the hope that it
- * will be useful, but WITHOUT ANY WARRANTY; without even the implied
- *                 ************************
- * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See the GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with GNU CC; see the file COPYING.  If not, see
- * <http://www.gnu.org/licenses/>.
  *
  * Please send any bug reports or fixes you make to the
  * email address(es):
@@ -73,13 +58,13 @@ static struct sctp_endpoint *sctp_endpoint_init(struct sctp_endpoint *ep,
 		 * variables.  There are arrays that we encode directly
 		 * into parameters to make the rest of the operations easier.
 		 */
-		auth_hmacs = kzalloc(sizeof(sctp_hmac_algo_param_t) +
-				sizeof(__u16) * SCTP_AUTH_NUM_HMACS, gfp);
+		auth_hmacs = kzalloc(struct_size(auth_hmacs, hmac_ids,
+						 SCTP_AUTH_NUM_HMACS), gfp);
 		if (!auth_hmacs)
 			goto nomem;
 
-		auth_chunks = kzalloc(sizeof(sctp_chunks_param_t) +
-					SCTP_NUM_CHUNK_TYPES, gfp);
+		auth_chunks = kzalloc(sizeof(*auth_chunks) +
+				      SCTP_NUM_CHUNK_TYPES, gfp);
 		if (!auth_chunks)
 			goto nomem;
 
@@ -107,6 +92,13 @@ static struct sctp_endpoint *sctp_endpoint_init(struct sctp_endpoint *ep,
 			auth_chunks->param_hdr.length =
 					htons(sizeof(struct sctp_paramhdr) + 2);
 		}
+
+		/* Allocate and initialize transorms arrays for supported
+		 * HMACs.
+		 */
+		err = sctp_auth_init_hmacs(ep, gfp);
+		if (err)
+			goto nomem;
 	}
 
 	/* Initialize the base structure. */
@@ -125,10 +117,6 @@ static struct sctp_endpoint *sctp_endpoint_init(struct sctp_endpoint *ep,
 
 	/* Initialize the bind addr area */
 	sctp_bind_addr_init(&ep->base.bind_addr, 0);
-
-	/* Remember who we are attached to.  */
-	ep->base.sk = sk;
-	sock_hold(ep->base.sk);
 
 	/* Create the lists of associations.  */
 	INIT_LIST_HEAD(&ep->asocs);
@@ -150,14 +138,9 @@ static struct sctp_endpoint *sctp_endpoint_init(struct sctp_endpoint *ep,
 	INIT_LIST_HEAD(&ep->endpoint_shared_keys);
 	null_key = sctp_auth_shkey_create(0, gfp);
 	if (!null_key)
-		goto nomem;
+		goto nomem_shkey;
 
 	list_add(&null_key->key_list, &ep->endpoint_shared_keys);
-
-	/* Allocate and initialize transorms arrays for supported HMACs. */
-	err = sctp_auth_init_hmacs(ep, gfp);
-	if (err)
-		goto nomem_hmacs;
 
 	/* Add the null key to the endpoint shared keys list and
 	 * set the hmcas and chunks pointers.
@@ -167,10 +150,14 @@ static struct sctp_endpoint *sctp_endpoint_init(struct sctp_endpoint *ep,
 	ep->prsctp_enable = net->sctp.prsctp_enable;
 	ep->reconf_enable = net->sctp.reconf_enable;
 
+	/* Remember who we are attached to.  */
+	ep->base.sk = sk;
+	sock_hold(ep->base.sk);
+
 	return ep;
 
-nomem_hmacs:
-	sctp_auth_destroy_keys(&ep->endpoint_shared_keys);
+nomem_shkey:
+	sctp_auth_destroy_hmacs(ep->auth_hmacs);
 nomem:
 	/* Free all allocations */
 	kfree(auth_hmacs);
@@ -232,7 +219,7 @@ void sctp_endpoint_free(struct sctp_endpoint *ep)
 {
 	ep->base.dead = true;
 
-	ep->base.sk->sk_state = SCTP_SS_CLOSED;
+	inet_sk_set_state(ep->base.sk, SCTP_SS_CLOSED);
 
 	/* Unlink this endpoint, so we can't find it again! */
 	sctp_unhash_endpoint(ep);
@@ -349,8 +336,8 @@ out:
 /* Look for any peeled off association from the endpoint that matches the
  * given peer address.
  */
-int sctp_endpoint_is_peeled_off(struct sctp_endpoint *ep,
-				const union sctp_addr *paddr)
+bool sctp_endpoint_is_peeled_off(struct sctp_endpoint *ep,
+				 const union sctp_addr *paddr)
 {
 	struct sctp_sockaddr_entry *addr;
 	struct sctp_bind_addr *bp;
@@ -362,10 +349,10 @@ int sctp_endpoint_is_peeled_off(struct sctp_endpoint *ep,
 	 */
 	list_for_each_entry(addr, &bp->address_list, list) {
 		if (sctp_has_association(net, &addr->a, paddr))
-			return 1;
+			return true;
 	}
 
-	return 0;
+	return false;
 }
 
 /* Do delayed input processing.  This is scheduled by sctp_rcv().
@@ -382,8 +369,8 @@ static void sctp_endpoint_bh_rcv(struct work_struct *work)
 	struct sctp_transport *transport;
 	struct sctp_chunk *chunk;
 	struct sctp_inq *inqueue;
-	sctp_subtype_t subtype;
-	sctp_state_t state;
+	union sctp_subtype subtype;
+	enum sctp_state state;
 	int error = 0;
 	int first_time = 1;	/* is this the first time through the loop */
 

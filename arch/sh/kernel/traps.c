@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/bug.h>
 #include <linux/io.h>
 #include <linux/types.h>
@@ -140,7 +141,7 @@ BUILD_TRAP_HANDLER(debug)
 		       SIGTRAP) == NOTIFY_STOP)
 		return;
 
-	force_sig(SIGTRAP, current);
+	force_sig(SIGTRAP);
 }
 
 /*
@@ -166,7 +167,7 @@ BUILD_TRAP_HANDLER(bug)
 	}
 #endif
 
-	force_sig(SIGTRAP, current);
+	force_sig(SIGTRAP);
 }
 
 BUILD_TRAP_HANDLER(nmi)

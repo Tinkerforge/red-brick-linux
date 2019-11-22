@@ -1,4 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <stdio.h>
+#include <stdlib.h>
 #include <bpf/libbpf.h>
 #include <util/llvm-utils.h>
 #include <util/cache.h>
@@ -132,7 +134,7 @@ out:
 	return ret;
 }
 
-int test__llvm(int subtest)
+int test__llvm(struct test *test __maybe_unused, int subtest)
 {
 	int ret;
 	void *obj_buf = NULL;

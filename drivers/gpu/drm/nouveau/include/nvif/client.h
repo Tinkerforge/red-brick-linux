@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #ifndef __NVIF_CLIENT_H__
 #define __NVIF_CLIENT_H__
 

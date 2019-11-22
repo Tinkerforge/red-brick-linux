@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /* MTD-based superblock management
  *
  * Copyright © 2001-2007 Red Hat, Inc. All Rights Reserved.
@@ -5,11 +6,6 @@
  *
  * Written by:  David Howells <dhowells@redhat.com>
  *              David Woodhouse <dwmw2@infradead.org>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version
- * 2 of the License, or (at your option) any later version.
  */
 
 #include <linux/mtd/super.h>
@@ -79,14 +75,14 @@ static struct dentry *mount_mtd_aux(struct file_system_type *fs_type, int flags,
 	pr_debug("MTDSB: New superblock for device %d (\"%s\")\n",
 	      mtd->index, mtd->name);
 
-	ret = fill_super(sb, data, flags & MS_SILENT ? 1 : 0);
+	ret = fill_super(sb, data, flags & SB_SILENT ? 1 : 0);
 	if (ret < 0) {
 		deactivate_locked_super(sb);
 		return ERR_PTR(ret);
 	}
 
 	/* go */
-	sb->s_flags |= MS_ACTIVE;
+	sb->s_flags |= SB_ACTIVE;
 	return dget(sb->s_root);
 
 	/* new mountpoint for an already mounted superblock */
@@ -202,7 +198,7 @@ struct dentry *mount_mtd(struct file_system_type *fs_type, int flags,
 not_an_MTD_device:
 #endif /* CONFIG_BLOCK */
 
-	if (!(flags & MS_SILENT))
+	if (!(flags & SB_SILENT))
 		printk(KERN_NOTICE
 		       "MTD: Attempt to mount non-MTD device \"%s\"\n",
 		       dev_name);

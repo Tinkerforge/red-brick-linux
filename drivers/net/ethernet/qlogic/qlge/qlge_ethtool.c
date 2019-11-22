@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/module.h>
@@ -248,8 +249,8 @@ static void ql_update_stats(struct ql_adapter *qdev)
 
 	spin_lock(&qdev->stats_lock);
 	if (ql_sem_spinlock(qdev, qdev->xg_sem_mask)) {
-			netif_err(qdev, drv, qdev->ndev,
-				  "Couldn't get xgmac sem.\n");
+		netif_err(qdev, drv, qdev->ndev,
+			  "Couldn't get xgmac sem.\n");
 		goto quit;
 	}
 	/*

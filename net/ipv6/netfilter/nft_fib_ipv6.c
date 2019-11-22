@@ -1,8 +1,4 @@
-/*
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- */
+// SPDX-License-Identifier: GPL-2.0-only
 
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -25,9 +21,9 @@ static int get_ifindex(const struct net_device *dev)
 
 static int nft_fib6_flowi_init(struct flowi6 *fl6, const struct nft_fib *priv,
 			       const struct nft_pktinfo *pkt,
-			       const struct net_device *dev)
+			       const struct net_device *dev,
+			       struct ipv6hdr *iph)
 {
-	const struct ipv6hdr *iph = ipv6_hdr(pkt->skb);
 	int lookup_flags = 0;
 
 	if (priv->flags & NFTA_FIB_F_DADDR) {
@@ -55,11 +51,10 @@ static int nft_fib6_flowi_init(struct flowi6 *fl6, const struct nft_fib *priv,
 }
 
 static u32 __nft_fib6_eval_type(const struct nft_fib *priv,
-				const struct nft_pktinfo *pkt)
+				const struct nft_pktinfo *pkt,
+				struct ipv6hdr *iph)
 {
 	const struct net_device *dev = NULL;
-	const struct nf_ipv6_ops *v6ops;
-	const struct nf_afinfo *afinfo;
 	int route_err, addrtype;
 	struct rt6_info *rt;
 	struct flowi6 fl6 = {
@@ -68,23 +63,18 @@ static u32 __nft_fib6_eval_type(const struct nft_fib *priv,
 	};
 	u32 ret = 0;
 
-	afinfo = nf_get_afinfo(NFPROTO_IPV6);
-	if (!afinfo)
-		return RTN_UNREACHABLE;
-
 	if (priv->flags & NFTA_FIB_F_IIF)
 		dev = nft_in(pkt);
 	else if (priv->flags & NFTA_FIB_F_OIF)
 		dev = nft_out(pkt);
 
-	nft_fib6_flowi_init(&fl6, priv, pkt, dev);
+	nft_fib6_flowi_init(&fl6, priv, pkt, dev, iph);
 
-	v6ops = nf_get_ipv6_ops();
-	if (dev && v6ops && v6ops->chk_addr(nft_net(pkt), &fl6.daddr, dev, true))
+	if (dev && nf_ipv6_chk_addr(nft_net(pkt), &fl6.daddr, dev, true))
 		ret = RTN_LOCAL;
 
-	route_err = afinfo->route(nft_net(pkt), (struct dst_entry **)&rt,
-				  flowi6_to_flowi(&fl6), false);
+	route_err = nf_ip6_route(nft_net(pkt), (struct dst_entry **)&rt,
+				 flowi6_to_flowi(&fl6), false);
 	if (route_err)
 		goto err;
 
@@ -131,9 +121,17 @@ void nft_fib6_eval_type(const struct nft_expr *expr, struct nft_regs *regs,
 			const struct nft_pktinfo *pkt)
 {
 	const struct nft_fib *priv = nft_expr_priv(expr);
+	int noff = skb_network_offset(pkt->skb);
 	u32 *dest = &regs->data[priv->dreg];
+	struct ipv6hdr *iph, _iph;
 
-	*dest = __nft_fib6_eval_type(priv, pkt);
+	iph = skb_header_pointer(pkt->skb, noff, sizeof(_iph), &_iph);
+	if (!iph) {
+		regs->verdict.code = NFT_BREAK;
+		return;
+	}
+
+	*dest = __nft_fib6_eval_type(priv, pkt, iph);
 }
 EXPORT_SYMBOL_GPL(nft_fib6_eval_type);
 
@@ -141,8 +139,10 @@ void nft_fib6_eval(const struct nft_expr *expr, struct nft_regs *regs,
 		   const struct nft_pktinfo *pkt)
 {
 	const struct nft_fib *priv = nft_expr_priv(expr);
+	int noff = skb_network_offset(pkt->skb);
 	const struct net_device *oif = NULL;
 	u32 *dest = &regs->data[priv->dreg];
+	struct ipv6hdr *iph, _iph;
 	struct flowi6 fl6 = {
 		.flowi6_iif = LOOPBACK_IFINDEX,
 		.flowi6_proto = pkt->tprot,
@@ -155,18 +155,23 @@ void nft_fib6_eval(const struct nft_expr *expr, struct nft_regs *regs,
 	else if (priv->flags & NFTA_FIB_F_OIF)
 		oif = nft_out(pkt);
 
-	lookup_flags = nft_fib6_flowi_init(&fl6, priv, pkt, oif);
+	iph = skb_header_pointer(pkt->skb, noff, sizeof(_iph), &_iph);
+	if (!iph) {
+		regs->verdict.code = NFT_BREAK;
+		return;
+	}
+
+	lookup_flags = nft_fib6_flowi_init(&fl6, priv, pkt, oif, iph);
 
 	if (nft_hook(pkt) == NF_INET_PRE_ROUTING &&
 	    nft_fib_is_loopback(pkt->skb, nft_in(pkt))) {
-		nft_fib_store_result(dest, priv, pkt,
-				     nft_in(pkt)->ifindex);
+		nft_fib_store_result(dest, priv, nft_in(pkt));
 		return;
 	}
 
 	*dest = 0;
- again:
-	rt = (void *)ip6_route_lookup(nft_net(pkt), &fl6, lookup_flags);
+	rt = (void *)ip6_route_lookup(nft_net(pkt), &fl6, pkt->skb,
+				      lookup_flags);
 	if (rt->dst.error)
 		goto put_rt_err;
 
@@ -174,28 +179,10 @@ void nft_fib6_eval(const struct nft_expr *expr, struct nft_regs *regs,
 	if (rt->rt6i_flags & (RTF_REJECT | RTF_ANYCAST | RTF_LOCAL))
 		goto put_rt_err;
 
-	if (oif && oif != rt->rt6i_idev->dev) {
-		/* multipath route? Try again with F_IFACE */
-		if ((lookup_flags & RT6_LOOKUP_F_IFACE) == 0) {
-			lookup_flags |= RT6_LOOKUP_F_IFACE;
-			fl6.flowi6_oif = oif->ifindex;
-			ip6_rt_put(rt);
-			goto again;
-		}
-	}
+	if (oif && oif != rt->rt6i_idev->dev)
+		goto put_rt_err;
 
-	switch (priv->result) {
-	case NFT_FIB_RESULT_OIF:
-		*dest = rt->rt6i_idev->dev->ifindex;
-		break;
-	case NFT_FIB_RESULT_OIFNAME:
-		strncpy((char *)dest, rt->rt6i_idev->dev->name, IFNAMSIZ);
-		break;
-	default:
-		WARN_ON_ONCE(1);
-		break;
-	}
-
+	nft_fib_store_result(dest, priv, rt->rt6i_idev->dev);
  put_rt_err:
 	ip6_rt_put(rt);
 }

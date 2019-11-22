@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __M68KNOMMU_UACCESS_H
 #define __M68KNOMMU_UACCESS_H
 
@@ -9,7 +10,7 @@
 
 #include <asm/segment.h>
 
-#define access_ok(type,addr,size)	_access_ok((unsigned long)(addr),(size))
+#define access_ok(addr,size)	_access_ok((unsigned long)(addr),(size))
 
 /*
  * It is not enough to just have access_ok check for a real RAM address.

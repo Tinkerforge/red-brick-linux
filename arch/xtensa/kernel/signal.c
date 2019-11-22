@@ -28,8 +28,6 @@
 #include <asm/coprocessor.h>
 #include <asm/unistd.h>
 
-#define DEBUG_SIG  0
-
 extern struct task_struct *coproc_owners[];
 
 struct rt_sigframe
@@ -187,13 +185,13 @@ restore_sigcontext(struct pt_regs *regs, struct rt_sigframe __user *frame)
 	COPY(sar);
 #undef COPY
 
-	/* All registers were flushed to stack. Start with a prestine frame. */
+	/* All registers were flushed to stack. Start with a pristine frame. */
 
 	regs->wmask = 1;
 	regs->windowbase = 0;
 	regs->windowstart = 1;
 
-	regs->syscall = -1;		/* disable syscall checks */
+	regs->syscall = NO_SYSCALL;	/* disable syscall checks */
 
 	/* For PS, restore only PS.CALLINC.
 	 * Assume that all other bits are either the same as for the signal
@@ -253,7 +251,7 @@ asmlinkage long xtensa_rt_sigreturn(long a0, long a1, long a2, long a3,
 
 	frame = (struct rt_sigframe __user *) regs->areg[1];
 
-	if (!access_ok(VERIFY_READ, frame, sizeof(*frame)))
+	if (!access_ok(frame, sizeof(*frame)))
 		goto badframe;
 
 	if (__copy_from_user(&set, &frame->uc.uc_sigmask, sizeof(set)))
@@ -272,7 +270,7 @@ asmlinkage long xtensa_rt_sigreturn(long a0, long a1, long a2, long a3,
 	return ret;
 
 badframe:
-	force_sig(SIGSEGV, current);
+	force_sig(SIGSEGV);
 	return 0;
 }
 
@@ -350,7 +348,7 @@ static int setup_frame(struct ksignal *ksig, sigset_t *set,
 	if (regs->depc > 64)
 		panic ("Double exception sys_sigreturn\n");
 
-	if (!access_ok(VERIFY_WRITE, frame, sizeof(*frame))) {
+	if (!access_ok(frame, sizeof(*frame))) {
 		return -EFAULT;
 	}
 
@@ -399,10 +397,8 @@ static int setup_frame(struct ksignal *ksig, sigset_t *set,
 	regs->areg[8] = (unsigned long) &frame->uc;
 	regs->threadptr = tp;
 
-#if DEBUG_SIG
-	printk("SIG rt deliver (%s:%d): signal=%d sp=%p pc=%08x\n",
-		current->comm, current->pid, sig, frame, regs->pc);
-#endif
+	pr_debug("SIG rt deliver (%s:%d): signal=%d sp=%p pc=%08lx\n",
+		 current->comm, current->pid, sig, frame, regs->pc);
 
 	return 0;
 }
@@ -427,7 +423,7 @@ static void do_signal(struct pt_regs *regs)
 
 		/* Are we from a system call? */
 
-		if ((signed)regs->syscall >= 0) {
+		if (regs->syscall != NO_SYSCALL) {
 
 			/* If so, check system call restarting.. */
 
@@ -466,7 +462,7 @@ static void do_signal(struct pt_regs *regs)
 	}
 
 	/* Did we come from a system call? */
-	if ((signed) regs->syscall >= 0) {
+	if (regs->syscall != NO_SYSCALL) {
 		/* Restart the system call - no handlers present */
 		switch (regs->areg[2]) {
 		case -ERESTARTNOHAND:

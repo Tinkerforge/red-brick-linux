@@ -1,11 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _SPEAKUP_SERIAL_H
 #define _SPEAKUP_SERIAL_H
 
 #include <linux/serial.h>	/* for rs_table, serial constants */
 #include <linux/serial_reg.h>	/* for more serial constants */
-#ifndef __sparc__
-#include <linux/serial.h>
-#endif
 #include <linux/serial_core.h>
 
 #include "spk_priv.h"

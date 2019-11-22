@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #ifndef __NVBIOS_VOLT_H__
 #define __NVBIOS_VOLT_H__
 

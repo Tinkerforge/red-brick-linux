@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Driver for PCA9685 16-channel 12-bit PWM LED controller
  *
@@ -5,18 +6,6 @@
  * Copyright (C) 2015 Clemens Gruber <clemens.gruber@pqgruber.com>
  *
  * based on the pwm-twl-led.c driver
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published by
- * the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/acpi.h>
@@ -176,7 +165,6 @@ static void pca9685_pwm_gpio_free(struct gpio_chip *gpio, unsigned int offset)
 	pm_runtime_put(pca->chip.dev);
 	mutex_lock(&pca->lock);
 	pwm = &pca->chip.pwms[offset];
-	pwm_set_chip_data(pwm, NULL);
 	mutex_unlock(&pca->lock);
 }
 
@@ -241,11 +229,11 @@ static inline int pca9685_pwm_gpio_probe(struct pca9685 *pca)
 }
 #endif
 
-static void pca9685_set_sleep_mode(struct pca9685 *pca, int sleep)
+static void pca9685_set_sleep_mode(struct pca9685 *pca, bool enable)
 {
 	regmap_update_bits(pca->regmap, PCA9685_MODE1,
-			   MODE1_SLEEP, sleep ? MODE1_SLEEP : 0);
-	if (!sleep) {
+			   MODE1_SLEEP, enable ? MODE1_SLEEP : 0);
+	if (!enable) {
 		/* Wait 500us for the oscillator to be back up */
 		udelay(500);
 	}
@@ -272,13 +260,13 @@ static int pca9685_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 			 * state is guaranteed active here.
 			 */
 			/* Put chip into sleep mode */
-			pca9685_set_sleep_mode(pca, 1);
+			pca9685_set_sleep_mode(pca, true);
 
 			/* Change the chip-wide output frequency */
 			regmap_write(pca->regmap, PCA9685_PRESCALE, prescale);
 
 			/* Wake the chip up */
-			pca9685_set_sleep_mode(pca, 0);
+			pca9685_set_sleep_mode(pca, false);
 
 			pca->period_ns = period_ns;
 		} else {
@@ -534,7 +522,7 @@ static int pca9685_pwm_runtime_suspend(struct device *dev)
 	struct i2c_client *client = to_i2c_client(dev);
 	struct pca9685 *pca = i2c_get_clientdata(client);
 
-	pca9685_set_sleep_mode(pca, 1);
+	pca9685_set_sleep_mode(pca, true);
 	return 0;
 }
 
@@ -543,7 +531,7 @@ static int pca9685_pwm_runtime_resume(struct device *dev)
 	struct i2c_client *client = to_i2c_client(dev);
 	struct pca9685 *pca = i2c_get_clientdata(client);
 
-	pca9685_set_sleep_mode(pca, 0);
+	pca9685_set_sleep_mode(pca, false);
 	return 0;
 }
 #endif

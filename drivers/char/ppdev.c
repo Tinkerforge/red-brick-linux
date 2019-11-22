@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * linux/drivers/char/ppdev.c
  *
@@ -5,11 +6,6 @@
  * application to use the parport subsystem.
  *
  * Copyright (C) 1998-2000, 2002 Tim Waugh <tim@cyberelk.net>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version
- * 2 of the License, or (at your option) any later version.
  *
  * A /dev/parportx device node represents an arbitrary device
  * on port 'x'.  The following operations are possible:
@@ -100,9 +96,6 @@ static DEFINE_IDA(ida_index);
 #define PP_INTERRUPT_TIMEOUT (10 * HZ) /* 10s */
 #define PP_BUFFER_SIZE 1024
 #define PARDEVICE_MAX 8
-
-/* ROUND_UP macro from fs/select.c */
-#define ROUND_UP(x,y) (((x)+(y)-1)/(y))
 
 static DEFINE_MUTEX(pp_do_mutex);
 
@@ -772,14 +765,14 @@ static int pp_release(struct inode *inode, struct file *file)
 }
 
 /* No kernel lock held - fine */
-static unsigned int pp_poll(struct file *file, poll_table *wait)
+static __poll_t pp_poll(struct file *file, poll_table *wait)
 {
 	struct pp_struct *pp = file->private_data;
-	unsigned int mask = 0;
+	__poll_t mask = 0;
 
 	poll_wait(file, &pp->irq_wait, wait);
 	if (atomic_read(&pp->irqc))
-		mask |= POLLIN | POLLRDNORM;
+		mask |= EPOLLIN | EPOLLRDNORM;
 
 	return mask;
 }

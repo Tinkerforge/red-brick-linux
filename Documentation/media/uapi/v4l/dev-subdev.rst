@@ -1,4 +1,11 @@
-.. -*- coding: utf-8; mode: rst -*-
+.. Permission is granted to copy, distribute and/or modify this
+.. document under the terms of the GNU Free Documentation License,
+.. Version 1.1 or any later version published by the Free Software
+.. Foundation, with no Invariant Sections, no Front-Cover Texts
+.. and no Back-Cover Texts. A copy of the license is included at
+.. Documentation/media/uapi/fdl-appendix.rst.
+..
+.. TODO: replace it to GFDL-1.1-or-later WITH no-invariant-sections
 
 .. _subdev:
 
@@ -204,9 +211,9 @@ list entity names and pad numbers).
 
 .. raw:: latex
 
-    \begin{adjustbox}{width=\columnwidth}
+    \scriptsize
 
-.. tabularcolumns:: |p{4.5cm}|p{4.5cm}|p{4.5cm}|p{4.5cm}|p{4.5cm}|p{4.5cm}|p{4.5cm}|
+.. tabularcolumns:: |p{2.0cm}|p{2.3cm}|p{2.3cm}|p{2.3cm}|p{2.3cm}|p{2.3cm}|p{2.3cm}|
 
 .. _sample-pipeline-config:
 
@@ -216,44 +223,84 @@ list entity names and pad numbers).
     :widths: 5 5 5 5 5 5 5
 
     * -
-      - Sensor/0 format
-      - Frontend/0 format
-      - Frontend/1 format
-      - Scaler/0 format
-      - Scaler/0 compose selection rectangle
-      - Scaler/1 format
+      - Sensor/0
+
+        format
+      - Frontend/0
+
+        format
+      - Frontend/1
+
+        format
+      - Scaler/0
+
+        format
+      - Scaler/0
+
+        compose selection rectangle
+      - Scaler/1
+
+        format
     * - Initial state
-      - 2048x1536/SGRBG8_1X8
+      - 2048x1536
+
+        SGRBG8_1X8
       - (default)
       - (default)
       - (default)
       - (default)
       - (default)
     * - Configure frontend sink format
-      - 2048x1536/SGRBG8_1X8
-      - *2048x1536/SGRBG8_1X8*
-      - *2046x1534/SGRBG8_1X8*
+      - 2048x1536
+
+        SGRBG8_1X8
+      - *2048x1536*
+
+        *SGRBG8_1X8*
+      - *2046x1534*
+
+        *SGRBG8_1X8*
       - (default)
       - (default)
       - (default)
     * - Configure scaler sink format
-      - 2048x1536/SGRBG8_1X8
-      - 2048x1536/SGRBG8_1X8
-      - 2046x1534/SGRBG8_1X8
-      - *2046x1534/SGRBG8_1X8*
+      - 2048x1536
+
+        SGRBG8_1X8
+      - 2048x1536
+
+        SGRBG8_1X8
+      - 2046x1534
+
+        SGRBG8_1X8
+      - *2046x1534*
+
+        *SGRBG8_1X8*
       - *0,0/2046x1534*
-      - *2046x1534/SGRBG8_1X8*
+      - *2046x1534*
+
+        *SGRBG8_1X8*
     * - Configure scaler sink compose selection
-      - 2048x1536/SGRBG8_1X8
-      - 2048x1536/SGRBG8_1X8
-      - 2046x1534/SGRBG8_1X8
-      - 2046x1534/SGRBG8_1X8
+      - 2048x1536
+
+        SGRBG8_1X8
+      - 2048x1536
+
+        SGRBG8_1X8
+      - 2046x1534
+
+        SGRBG8_1X8
+      - 2046x1534
+
+        SGRBG8_1X8
       - *0,0/1280x960*
-      - *1280x960/SGRBG8_1X8*
+      - *1280x960*
+
+        *SGRBG8_1X8*
 
 .. raw:: latex
 
-    \end{adjustbox}\newline\newline
+    \normalsize
 
 1. Initial state. The sensor source pad format is set to its native 3MP
    size and V4L2_MBUS_FMT_SGRBG8_1X8 media bus code. Formats on the
@@ -370,7 +417,7 @@ circumstances. This may also cause the accessed rectangle to be adjusted
 by the driver, depending on the properties of the underlying hardware.
 
 The coordinates to a step always refer to the actual size of the
-previous step. The exception to this rule is the source compose
+previous step. The exception to this rule is the sink compose
 rectangle, which refers to the sink compose bounds rectangle --- if it
 is supported by the hardware.
 

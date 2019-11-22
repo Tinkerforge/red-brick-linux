@@ -1,22 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Parisc performance counters
  *  Copyright (C) 2001 Randolph Chung <tausq@debian.org>
  *
  *  This code is derived, with permission, from HP/UX sources.
- *
- *    This program is free software; you can redistribute it and/or modify
- *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation; either version 2, or (at your option)
- *    any later version.
- *
- *    This program is distributed in the hope that it will be useful,
- *    but WITHOUT ANY WARRANTY; without even the implied warranty of
- *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *    GNU General Public License for more details.
- *
- *    You should have received a copy of the GNU General Public License
- *    along with this program; if not, write to the Free Software
- *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 /*
@@ -69,7 +56,7 @@ struct rdr_tbl_ent {
 
 static int perf_processor_interface __read_mostly = UNKNOWN_INTF;
 static int perf_enabled __read_mostly;
-static spinlock_t perf_lock;
+static DEFINE_SPINLOCK(perf_lock);
 struct parisc_device *cpu_device __read_mostly;
 
 /* RDRs to write for PCX-W */
@@ -532,8 +519,6 @@ static int __init perf_init(void)
 
 	/* Patch the images to match the system */
     	perf_patch_images();
-
-	spin_lock_init(&perf_lock);
 
 	/* TODO: this only lets us access the first cpu.. what to do for SMP? */
 	cpu_device = per_cpu(cpu_data, 0).dev;

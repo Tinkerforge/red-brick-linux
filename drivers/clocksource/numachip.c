@@ -1,16 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  *
  * Copyright (C) 2015 Numascale AS. All rights reserved.
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
  */
 
 #include <linux/clockchips.h>
@@ -43,7 +34,7 @@ static int numachip2_set_next_event(unsigned long delta, struct clock_event_devi
 	return 0;
 }
 
-static struct clock_event_device numachip2_clockevent = {
+static const struct clock_event_device numachip2_clockevent __initconst = {
 	.name            = "numachip2",
 	.rating          = 400,
 	.set_next_event  = numachip2_set_next_event,

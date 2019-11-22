@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * csum_partial_copy - do IP checksumming and copy
  *
@@ -332,7 +333,7 @@ csum_partial_copy_from_user(const void __user *src, void *dst, int len,
 	unsigned long doff = 7 & (unsigned long) dst;
 
 	if (len) {
-		if (!access_ok(VERIFY_READ, src, len)) {
+		if (!access_ok(src, len)) {
 			if (errp) *errp = -EFAULT;
 			memset(dst, 0, len);
 			return sum;

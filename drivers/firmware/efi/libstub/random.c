@@ -1,10 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2016 Linaro Ltd;  <ard.biesheuvel@linaro.org>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
  */
 
 #include <linux/efi.h>
@@ -145,8 +141,6 @@ efi_status_t efi_random_alloc(efi_system_table_t *sys_table_arg,
 	return status;
 }
 
-#define RANDOM_SEED_SIZE	32
-
 efi_status_t efi_random_get_seed(efi_system_table_t *sys_table_arg)
 {
 	efi_guid_t rng_proto = EFI_RNG_PROTOCOL_GUID;
@@ -162,25 +156,25 @@ efi_status_t efi_random_get_seed(efi_system_table_t *sys_table_arg)
 		return status;
 
 	status = efi_call_early(allocate_pool, EFI_RUNTIME_SERVICES_DATA,
-				sizeof(*seed) + RANDOM_SEED_SIZE,
+				sizeof(*seed) + EFI_RANDOM_SEED_SIZE,
 				(void **)&seed);
 	if (status != EFI_SUCCESS)
 		return status;
 
-	status = rng->get_rng(rng, &rng_algo_raw, RANDOM_SEED_SIZE,
+	status = rng->get_rng(rng, &rng_algo_raw, EFI_RANDOM_SEED_SIZE,
 			      seed->bits);
 	if (status == EFI_UNSUPPORTED)
 		/*
 		 * Use whatever algorithm we have available if the raw algorithm
 		 * is not implemented.
 		 */
-		status = rng->get_rng(rng, NULL, RANDOM_SEED_SIZE,
+		status = rng->get_rng(rng, NULL, EFI_RANDOM_SEED_SIZE,
 				      seed->bits);
 
 	if (status != EFI_SUCCESS)
 		goto err_freepool;
 
-	seed->size = RANDOM_SEED_SIZE;
+	seed->size = EFI_RANDOM_SEED_SIZE;
 	status = efi_call_early(install_configuration_table, &rng_table_guid,
 				seed);
 	if (status != EFI_SUCCESS)

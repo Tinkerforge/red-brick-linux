@@ -56,11 +56,12 @@ Overview
 
 The basic object structure KMS presents to userspace is fairly simple.
 Framebuffers (represented by :c:type:`struct drm_framebuffer <drm_framebuffer>`,
-see `Frame Buffer Abstraction`_) feed into planes. One or more (or even no)
-planes feed their pixel data into a CRTC (represented by :c:type:`struct
-drm_crtc <drm_crtc>`, see `CRTC Abstraction`_) for blending. The precise
-blending step is explained in more detail in `Plane Composition Properties`_ and
-related chapters.
+see `Frame Buffer Abstraction`_) feed into planes. Planes are represented by
+:c:type:`struct drm_plane <drm_plane>`, see `Plane Abstraction`_ for more
+details. One or more (or even no) planes feed their pixel data into a CRTC
+(represented by :c:type:`struct drm_crtc <drm_crtc>`, see `CRTC Abstraction`_)
+for blending. The precise blending step is explained in more detail in `Plane
+Composition Properties`_ and related chapters.
 
 For the output routing the first step is encoders (represented by
 :c:type:`struct drm_encoder <drm_encoder>`, see `Encoder Abstraction`_). Those
@@ -263,13 +264,19 @@ Taken all together there's two consequences for the atomic design:
 
 - An atomic update is assembled and validated as an entirely free-standing pile
   of structures within the :c:type:`drm_atomic_state <drm_atomic_state>`
-  container. Again drivers can subclass that container for their own state
-  structure tracking needs. Only when a state is committed is it applied to the
-  driver and modeset objects. This way rolling back an update boils down to
-  releasing memory and unreferencing objects like framebuffers.
+  container. Driver private state structures are also tracked in the same
+  structure; see the next chapter.  Only when a state is committed is it applied
+  to the driver and modeset objects. This way rolling back an update boils down
+  to releasing memory and unreferencing objects like framebuffers.
 
 Read on in this chapter, and also in :ref:`drm_atomic_helper` for more detailed
 coverage of specific topics.
+
+Handling Driver Private State
+-----------------------------
+
+.. kernel-doc:: drivers/gpu/drm/drm_atomic.c
+   :doc: handling driver private state
 
 Atomic Mode Setting Function Reference
 --------------------------------------
@@ -278,6 +285,15 @@ Atomic Mode Setting Function Reference
    :internal:
 
 .. kernel-doc:: drivers/gpu/drm/drm_atomic.c
+   :export:
+
+Atomic Mode Setting IOCTL and UAPI Functions
+--------------------------------------------
+
+.. kernel-doc:: drivers/gpu/drm/drm_atomic_uapi.c
+   :doc: overview
+
+.. kernel-doc:: drivers/gpu/drm/drm_atomic_uapi.c
    :export:
 
 CRTC Abstraction
@@ -312,6 +328,12 @@ Frame Buffer Functions Reference
 
 DRM Format Handling
 ===================
+
+.. kernel-doc:: include/uapi/drm/drm_fourcc.h
+   :doc: overview
+
+Format Functions Reference
+--------------------------
 
 .. kernel-doc:: include/drm/drm_fourcc.h
    :internal:
@@ -364,6 +386,15 @@ Connector Functions Reference
 .. kernel-doc:: drivers/gpu/drm/drm_connector.c
    :export:
 
+Writeback Connectors
+--------------------
+
+.. kernel-doc:: drivers/gpu/drm/drm_writeback.c
+  :doc: overview
+
+.. kernel-doc:: drivers/gpu/drm/drm_writeback.c
+  :export:
+
 Encoder Abstraction
 ===================
 
@@ -378,102 +409,6 @@ Encoder Functions Reference
 
 .. kernel-doc:: drivers/gpu/drm/drm_encoder.c
    :export:
-
-KMS Initialization and Cleanup
-==============================
-
-A KMS device is abstracted and exposed as a set of planes, CRTCs,
-encoders and connectors. KMS drivers must thus create and initialize all
-those objects at load time after initializing mode setting.
-
-CRTCs (:c:type:`struct drm_crtc <drm_crtc>`)
---------------------------------------------
-
-A CRTC is an abstraction representing a part of the chip that contains a
-pointer to a scanout buffer. Therefore, the number of CRTCs available
-determines how many independent scanout buffers can be active at any
-given time. The CRTC structure contains several fields to support this:
-a pointer to some video memory (abstracted as a frame buffer object), a
-display mode, and an (x, y) offset into the video memory to support
-panning or configurations where one piece of video memory spans multiple
-CRTCs.
-
-CRTC Initialization
-~~~~~~~~~~~~~~~~~~~
-
-A KMS device must create and register at least one struct
-:c:type:`struct drm_crtc <drm_crtc>` instance. The instance is
-allocated and zeroed by the driver, possibly as part of a larger
-structure, and registered with a call to :c:func:`drm_crtc_init()`
-with a pointer to CRTC functions.
-
-
-Cleanup
--------
-
-The DRM core manages its objects' lifetime. When an object is not needed
-anymore the core calls its destroy function, which must clean up and
-free every resource allocated for the object. Every
-:c:func:`drm_\*_init()` call must be matched with a corresponding
-:c:func:`drm_\*_cleanup()` call to cleanup CRTCs
-(:c:func:`drm_crtc_cleanup()`), planes
-(:c:func:`drm_plane_cleanup()`), encoders
-(:c:func:`drm_encoder_cleanup()`) and connectors
-(:c:func:`drm_connector_cleanup()`). Furthermore, connectors that
-have been added to sysfs must be removed by a call to
-:c:func:`drm_connector_unregister()` before calling
-:c:func:`drm_connector_cleanup()`.
-
-Connectors state change detection must be cleanup up with a call to
-:c:func:`drm_kms_helper_poll_fini()`.
-
-Output discovery and initialization example
--------------------------------------------
-
-.. code-block:: c
-
-    void intel_crt_init(struct drm_device *dev)
-    {
-        struct drm_connector *connector;
-        struct intel_output *intel_output;
-
-        intel_output = kzalloc(sizeof(struct intel_output), GFP_KERNEL);
-        if (!intel_output)
-            return;
-
-        connector = &intel_output->base;
-        drm_connector_init(dev, &intel_output->base,
-                   &intel_crt_connector_funcs, DRM_MODE_CONNECTOR_VGA);
-
-        drm_encoder_init(dev, &intel_output->enc, &intel_crt_enc_funcs,
-                 DRM_MODE_ENCODER_DAC);
-
-        drm_mode_connector_attach_encoder(&intel_output->base,
-                          &intel_output->enc);
-
-        /* Set up the DDC bus. */
-        intel_output->ddc_bus = intel_i2c_create(dev, GPIOA, "CRTDDC_A");
-        if (!intel_output->ddc_bus) {
-            dev_printk(KERN_ERR, &dev->pdev->dev, "DDC bus registration "
-                   "failed.\n");
-            return;
-        }
-
-        intel_output->type = INTEL_OUTPUT_ANALOG;
-        connector->interlace_allowed = 0;
-        connector->doublescan_allowed = 0;
-
-        drm_encoder_helper_add(&intel_output->enc, &intel_crt_helper_funcs);
-        drm_connector_helper_add(connector, &intel_crt_connector_helper_funcs);
-
-        drm_connector_register(connector);
-    }
-
-In the example above (taken from the i915 driver), a CRTC, connector and
-encoder combination is created. A device-specific i2c bus is also
-created for fetching EDID data and performing monitor detection. Once
-the process is complete, the new connector is registered with sysfs to
-make its properties available to applications.
 
 KMS Locking
 ===========
@@ -508,6 +443,12 @@ Standard Connector Properties
 .. kernel-doc:: drivers/gpu/drm/drm_connector.c
    :doc: standard connector properties
 
+HDMI Specific Connector Properties
+----------------------------------
+
+.. kernel-doc:: drivers/gpu/drm/drm_connector.c
+   :doc: HDMI connector properties
+
 Plane Composition Properties
 ----------------------------
 
@@ -517,14 +458,23 @@ Plane Composition Properties
 .. kernel-doc:: drivers/gpu/drm/drm_blend.c
    :export:
 
+FB_DAMAGE_CLIPS
+~~~~~~~~~~~~~~~
+
+.. kernel-doc:: drivers/gpu/drm/drm_damage_helper.c
+   :doc: overview
+
+.. kernel-doc:: drivers/gpu/drm/drm_damage_helper.c
+   :export:
+
+.. kernel-doc:: include/drm/drm_damage_helper.h
+   :internal:
+
 Color Management Properties
 ---------------------------
 
 .. kernel-doc:: drivers/gpu/drm/drm_color_mgmt.c
    :doc: overview
-
-.. kernel-doc:: include/drm/drm_color_mgmt.h
-   :internal:
 
 .. kernel-doc:: drivers/gpu/drm/drm_color_mgmt.c
    :export:
@@ -538,14 +488,22 @@ Tile Group Property
 Explicit Fencing Properties
 ---------------------------
 
-.. kernel-doc:: drivers/gpu/drm/drm_atomic.c
+.. kernel-doc:: drivers/gpu/drm/drm_atomic_uapi.c
    :doc: explicit fencing properties
+
+
+Variable Refresh Properties
+---------------------------
+
+.. kernel-doc:: drivers/gpu/drm/drm_connector.c
+   :doc: Variable refresh properties
 
 Existing KMS Properties
 -----------------------
 
-The following table gives description of drm properties exposed by
-various modules/drivers.
+The following table gives description of drm properties exposed by various
+modules/drivers. Because this table is very unwieldy, do not add any new
+properties here. Instead document them in a section above.
 
 .. csv-table::
    :header-rows: 1
@@ -554,60 +512,8 @@ various modules/drivers.
 Vertical Blanking
 =================
 
-Vertical blanking plays a major role in graphics rendering. To achieve
-tear-free display, users must synchronize page flips and/or rendering to
-vertical blanking. The DRM API offers ioctls to perform page flips
-synchronized to vertical blanking and wait for vertical blanking.
-
-The DRM core handles most of the vertical blanking management logic,
-which involves filtering out spurious interrupts, keeping race-free
-blanking counters, coping with counter wrap-around and resets and
-keeping use counts. It relies on the driver to generate vertical
-blanking interrupts and optionally provide a hardware vertical blanking
-counter. Drivers must implement the following operations.
-
--  int (\*enable_vblank) (struct drm_device \*dev, int crtc); void
-   (\*disable_vblank) (struct drm_device \*dev, int crtc);
-   Enable or disable vertical blanking interrupts for the given CRTC.
-
--  u32 (\*get_vblank_counter) (struct drm_device \*dev, int crtc);
-   Retrieve the value of the vertical blanking counter for the given
-   CRTC. If the hardware maintains a vertical blanking counter its value
-   should be returned. Otherwise drivers can use the
-   :c:func:`drm_vblank_count()` helper function to handle this
-   operation.
-
-Drivers must initialize the vertical blanking handling core with a call
-to :c:func:`drm_vblank_init()` in their load operation.
-
-Vertical blanking interrupts can be enabled by the DRM core or by
-drivers themselves (for instance to handle page flipping operations).
-The DRM core maintains a vertical blanking use count to ensure that the
-interrupts are not disabled while a user still needs them. To increment
-the use count, drivers call :c:func:`drm_vblank_get()`. Upon
-return vertical blanking interrupts are guaranteed to be enabled.
-
-To decrement the use count drivers call
-:c:func:`drm_vblank_put()`. Only when the use count drops to zero
-will the DRM core disable the vertical blanking interrupts after a delay
-by scheduling a timer. The delay is accessible through the
-vblankoffdelay module parameter or the ``drm_vblank_offdelay`` global
-variable and expressed in milliseconds. Its default value is 5000 ms.
-Zero means never disable, and a negative value means disable
-immediately. Drivers may override the behaviour by setting the
-:c:type:`struct drm_device <drm_device>`
-vblank_disable_immediate flag, which when set causes vblank interrupts
-to be disabled immediately regardless of the drm_vblank_offdelay
-value. The flag should only be set if there's a properly working
-hardware vblank counter present.
-
-When a vertical blanking interrupt occurs drivers only need to call the
-:c:func:`drm_handle_vblank()` function to account for the
-interrupt.
-
-Resources allocated by :c:func:`drm_vblank_init()` must be freed
-with a call to :c:func:`drm_vblank_cleanup()` in the driver unload
-operation handler.
+.. kernel-doc:: drivers/gpu/drm/drm_vblank.c
+   :doc: vblank handling
 
 Vertical Blanking and Interrupt Handling Functions Reference
 ------------------------------------------------------------

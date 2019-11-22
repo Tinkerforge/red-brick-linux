@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MIT */
 #ifndef __NVKM_DISP_CONN_H__
 #define __NVKM_DISP_CONN_H__
 #include <engine/disp.h>

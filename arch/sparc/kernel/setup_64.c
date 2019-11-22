@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/arch/sparc64/kernel/setup.c
  *
@@ -31,7 +32,8 @@
 #include <linux/initrd.h>
 #include <linux/module.h>
 #include <linux/start_kernel.h>
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
+#include <uapi/linux/mount.h>
 
 #include <asm/io.h>
 #include <asm/processor.h>
@@ -293,11 +295,18 @@ static void __init sun4v_patch(void)
 	case SUN4V_CHIP_SPARC_M7:
 	case SUN4V_CHIP_SPARC_M8:
 	case SUN4V_CHIP_SPARC_SN:
+		sun4v_patch_1insn_range(&__sun_m7_1insn_patch,
+					&__sun_m7_1insn_patch_end);
 		sun_m7_patch_2insn_range(&__sun_m7_2insn_patch,
 					 &__sun_m7_2insn_patch_end);
 		break;
 	default:
 		break;
+	}
+
+	if (sun4v_chip_type != SUN4V_CHIP_NIAGARA1) {
+		sun4v_patch_1insn_range(&__fast_win_ctrl_1insn_patch,
+					&__fast_win_ctrl_1insn_patch_end);
 	}
 
 	sun4v_hvapi_init();
@@ -363,6 +372,7 @@ void __init start_early_boot(void)
 	check_if_starfire();
 	per_cpu_patch();
 	sun4v_patch();
+	smp_init_cpu_poke();
 
 	cpu = hard_smp_processor_id();
 	if (cpu >= NR_CPUS) {
@@ -612,12 +622,16 @@ void __init alloc_irqstack_bootmem(void)
 	for_each_possible_cpu(i) {
 		node = cpu_to_node(i);
 
-		softirq_stack[i] = __alloc_bootmem_node(NODE_DATA(node),
-							THREAD_SIZE,
-							THREAD_SIZE, 0);
-		hardirq_stack[i] = __alloc_bootmem_node(NODE_DATA(node),
-							THREAD_SIZE,
-							THREAD_SIZE, 0);
+		softirq_stack[i] = memblock_alloc_node(THREAD_SIZE,
+						       THREAD_SIZE, node);
+		if (!softirq_stack[i])
+			panic("%s: Failed to allocate %lu bytes align=%lx nid=%d\n",
+			      __func__, THREAD_SIZE, THREAD_SIZE, node);
+		hardirq_stack[i] = memblock_alloc_node(THREAD_SIZE,
+						       THREAD_SIZE, node);
+		if (!hardirq_stack[i])
+			panic("%s: Failed to allocate %lu bytes align=%lx nid=%d\n",
+			      __func__, THREAD_SIZE, THREAD_SIZE, node);
 	}
 }
 
@@ -635,9 +649,9 @@ void __init setup_arch(char **cmdline_p)
 		register_console(&prom_early_console);
 
 	if (tlb_type == hypervisor)
-		printk("ARCH: SUN4V\n");
+		pr_info("ARCH: SUN4V\n");
 	else
-		printk("ARCH: SUN4U\n");
+		pr_info("ARCH: SUN4U\n");
 
 #ifdef CONFIG_DUMMY_CONSOLE
 	conswitchp = &dummy_con;

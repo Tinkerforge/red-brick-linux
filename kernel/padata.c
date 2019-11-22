@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * padata.c - generic interface to process data streams in parallel
  *
@@ -131,6 +132,7 @@ int padata_do_parallel(struct padata_instance *pinst,
 	padata->cb_cpu = cb_cpu;
 
 	target_cpu = padata_cpu_hash(pd);
+	padata->cpu = target_cpu;
 	queue = per_cpu_ptr(pd->pqueue, target_cpu);
 
 	spin_lock(&queue->parallel.lock);
@@ -265,7 +267,12 @@ static void padata_reorder(struct parallel_data *pd)
 	 * The next object that needs serialization might have arrived to
 	 * the reorder queues in the meantime, we will be called again
 	 * from the timer function if no one else cares for it.
+	 *
+	 * Ensure reorder_objects is read after pd->lock is dropped so we see
+	 * an increment from another task in padata_do_serial.  Pairs with
+	 * smp_mb__after_atomic in padata_do_serial.
 	 */
+	smp_mb();
 	if (atomic_read(&pd->reorder_objects)
 			&& !(pinst->flags & PADATA_RESET))
 		mod_timer(&pd->timer, jiffies + HZ);
@@ -275,11 +282,51 @@ static void padata_reorder(struct parallel_data *pd)
 	return;
 }
 
-static void padata_reorder_timer(unsigned long arg)
+static void invoke_padata_reorder(struct work_struct *work)
 {
-	struct parallel_data *pd = (struct parallel_data *)arg;
+	struct padata_parallel_queue *pqueue;
+	struct parallel_data *pd;
 
+	local_bh_disable();
+	pqueue = container_of(work, struct padata_parallel_queue, reorder_work);
+	pd = pqueue->pd;
 	padata_reorder(pd);
+	local_bh_enable();
+}
+
+static void padata_reorder_timer(struct timer_list *t)
+{
+	struct parallel_data *pd = from_timer(pd, t, timer);
+	unsigned int weight;
+	int target_cpu, cpu;
+
+	cpu = get_cpu();
+
+	/* We don't lock pd here to not interfere with parallel processing
+	 * padata_reorder() calls on other CPUs. We just need any CPU out of
+	 * the cpumask.pcpu set. It would be nice if it's the right one but
+	 * it doesn't matter if we're off to the next one by using an outdated
+	 * pd->processed value.
+	 */
+	weight = cpumask_weight(pd->cpumask.pcpu);
+	target_cpu = padata_index_to_cpu(pd, pd->processed % weight);
+
+	/* ensure to call the reorder callback on the correct CPU */
+	if (cpu != target_cpu) {
+		struct padata_parallel_queue *pqueue;
+		struct padata_instance *pinst;
+
+		/* The timer function is serialized wrt itself -- no locking
+		 * needed.
+		 */
+		pinst = pd->pinst;
+		pqueue = per_cpu_ptr(pd->pqueue, target_cpu);
+		queue_work_on(target_cpu, pinst->wq, &pqueue->reorder_work);
+	} else {
+		padata_reorder(pd);
+	}
+
+	put_cpu();
 }
 
 static void padata_serial_worker(struct work_struct *serial_work)
@@ -323,10 +370,21 @@ void padata_do_serial(struct padata_priv *padata)
 	int cpu;
 	struct padata_parallel_queue *pqueue;
 	struct parallel_data *pd;
+	int reorder_via_wq = 0;
 
 	pd = padata->pd;
 
 	cpu = get_cpu();
+
+	/* We need to run on the same CPU padata_do_parallel(.., padata, ..)
+	 * was called on -- or, at least, enqueue the padata object into the
+	 * correct per-cpu queue.
+	 */
+	if (cpu != padata->cpu) {
+		reorder_via_wq = 1;
+		cpu = padata->cpu;
+	}
+
 	pqueue = per_cpu_ptr(pd->pqueue, cpu);
 
 	spin_lock(&pqueue->reorder.lock);
@@ -334,9 +392,22 @@ void padata_do_serial(struct padata_priv *padata)
 	list_add_tail(&padata->list, &pqueue->reorder.list);
 	spin_unlock(&pqueue->reorder.lock);
 
+	/*
+	 * Ensure the atomic_inc of reorder_objects above is ordered correctly
+	 * with the trylock of pd->lock in padata_reorder.  Pairs with smp_mb
+	 * in padata_reorder.
+	 */
+	smp_mb__after_atomic();
+
 	put_cpu();
 
-	padata_reorder(pd);
+	/* If we're running on the wrong CPU, call padata_reorder() via a
+	 * kernel worker.
+	 */
+	if (reorder_via_wq)
+		queue_work_on(cpu, pd->pinst->wq, &pqueue->reorder_work);
+	else
+		padata_reorder(pd);
 }
 EXPORT_SYMBOL(padata_do_serial);
 
@@ -384,8 +455,14 @@ static void padata_init_pqueues(struct parallel_data *pd)
 	struct padata_parallel_queue *pqueue;
 
 	cpu_index = 0;
-	for_each_cpu(cpu, pd->cpumask.pcpu) {
+	for_each_possible_cpu(cpu) {
 		pqueue = per_cpu_ptr(pd->pqueue, cpu);
+
+		if (!cpumask_test_cpu(cpu, pd->cpumask.pcpu)) {
+			pqueue->cpu_index = -1;
+			continue;
+		}
+
 		pqueue->pd = pd;
 		pqueue->cpu_index = cpu_index;
 		cpu_index++;
@@ -393,6 +470,7 @@ static void padata_init_pqueues(struct parallel_data *pd)
 		__padata_list_init(&pqueue->reorder);
 		__padata_list_init(&pqueue->parallel);
 		INIT_WORK(&pqueue->work, padata_parallel_worker);
+		INIT_WORK(&pqueue->reorder_work, invoke_padata_reorder);
 		atomic_set(&pqueue->num_obj, 0);
 	}
 }
@@ -420,7 +498,7 @@ static struct parallel_data *padata_alloc_pd(struct padata_instance *pinst,
 
 	padata_init_pqueues(pd);
 	padata_init_squeues(pd);
-	setup_timer(&pd->timer, padata_reorder_timer, (unsigned long)pd);
+	timer_setup(&pd->timer, padata_reorder_timer, 0);
 	atomic_set(&pd->seq_nr, -1);
 	atomic_set(&pd->reorder_objects, 0);
 	atomic_set(&pd->refcnt, 0);
@@ -654,7 +732,7 @@ int padata_start(struct padata_instance *pinst)
 	if (pinst->flags & PADATA_INVALID)
 		err = -EINVAL;
 
-	 __padata_start(pinst);
+	__padata_start(pinst);
 
 	mutex_unlock(&pinst->lock);
 
@@ -891,6 +969,7 @@ static struct attribute *padata_default_attrs[] = {
 	&parallel_cpumask_attr.attr,
 	NULL,
 };
+ATTRIBUTE_GROUPS(padata_default);
 
 static ssize_t padata_sysfs_show(struct kobject *kobj,
 				 struct attribute *attr, char *buf)
@@ -929,7 +1008,7 @@ static const struct sysfs_ops padata_sysfs_ops = {
 
 static struct kobj_type padata_attr_type = {
 	.sysfs_ops = &padata_sysfs_ops,
-	.default_attrs = padata_default_attrs,
+	.default_groups = padata_default_groups,
 	.release = padata_sysfs_release,
 };
 

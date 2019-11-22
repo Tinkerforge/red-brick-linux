@@ -1,12 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef _IP_SET_COUNTER_H
 #define _IP_SET_COUNTER_H
 
-/* Copyright (C) 2015 Jozsef Kadlecsik <kadlec@blackhole.kfki.hu>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- */
+/* Copyright (C) 2015 Jozsef Kadlecsik <kadlec@netfilter.org> */
 
 #ifdef __KERNEL__
 
@@ -34,19 +30,32 @@ ip_set_get_packets(const struct ip_set_counter *counter)
 	return (u64)atomic64_read(&(counter)->packets);
 }
 
+static inline bool
+ip_set_match_counter(u64 counter, u64 match, u8 op)
+{
+	switch (op) {
+	case IPSET_COUNTER_NONE:
+		return true;
+	case IPSET_COUNTER_EQ:
+		return counter == match;
+	case IPSET_COUNTER_NE:
+		return counter != match;
+	case IPSET_COUNTER_LT:
+		return counter < match;
+	case IPSET_COUNTER_GT:
+		return counter > match;
+	}
+	return false;
+}
+
 static inline void
 ip_set_update_counter(struct ip_set_counter *counter,
-		      const struct ip_set_ext *ext,
-		      struct ip_set_ext *mext, u32 flags)
+		      const struct ip_set_ext *ext, u32 flags)
 {
 	if (ext->packets != ULLONG_MAX &&
 	    !(flags & IPSET_FLAG_SKIP_COUNTER_UPDATE)) {
 		ip_set_add_bytes(ext->bytes, counter);
 		ip_set_add_packets(ext->packets, counter);
-	}
-	if (flags & IPSET_FLAG_MATCH_COUNTERS) {
-		mext->packets = ip_set_get_packets(counter);
-		mext->bytes = ip_set_get_bytes(counter);
 	}
 }
 

@@ -1,4 +1,11 @@
-.. -*- coding: utf-8; mode: rst -*-
+.. Permission is granted to copy, distribute and/or modify this
+.. document under the terms of the GNU Free Documentation License,
+.. Version 1.1 or any later version published by the Free Software
+.. Foundation, with no Invariant Sections, no Front-Cover Texts
+.. and no Back-Cover Texts. A copy of the license is included at
+.. Documentation/media/uapi/fdl-appendix.rst.
+..
+.. TODO: replace it to GFDL-1.1-or-later WITH no-invariant-sections
 
 .. _V4L2-PIX-FMT-INZI:
 
@@ -34,11 +41,12 @@ The second plane provides 16-bit per-pixel Depth data arranged in
 Each cell is a 16-bit word with more significant data stored at higher
 memory address (byte order is little-endian).
 
+
 .. raw:: latex
 
-    \newline\newline\begin{adjustbox}{width=\columnwidth}
+    \small
 
-.. tabularcolumns:: |p{4.0cm}|p{4.0cm}|p{4.0cm}|p{4.0cm}|p{4.0cm}|p{4.0cm}|
+.. tabularcolumns:: |p{2.5cm}|p{2.5cm}|p{2.5cm}|p{2.5cm}|p{2.5cm}|p{2.5cm}|
 
 .. flat-table::
     :header-rows:  0
@@ -78,4 +86,4 @@ memory address (byte order is little-endian).
 
 .. raw:: latex
 
-    \end{adjustbox}\newline\newline
+    \normalsize

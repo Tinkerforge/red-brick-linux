@@ -1,9 +1,12 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _PROBE_EVENT_H
 #define _PROBE_EVENT_H
 
 #include <linux/compiler.h>
 #include <stdbool.h>
-#include "intlist.h"
+
+struct intlist;
+struct nsinfo;
 
 /* Probe related configurations */
 struct probe_conf {
@@ -25,6 +28,7 @@ struct probe_trace_point {
 	char		*symbol;	/* Base symbol */
 	char		*module;	/* Module name */
 	unsigned long	offset;		/* Offset from symbol */
+	unsigned long	ref_ctr_offset;	/* SDT reference counter offset */
 	unsigned long	address;	/* Actual address of the trace point */
 	bool		retprobe;	/* Return probe flag */
 };
@@ -33,6 +37,7 @@ struct probe_trace_point {
 struct probe_trace_arg_ref {
 	struct probe_trace_arg_ref	*next;	/* Next reference */
 	long				offset;	/* Offset value */
+	bool				user_access;	/* User-memory access */
 };
 
 /* kprobe-tracer and uprobe-tracer tracing argument */
@@ -78,6 +83,7 @@ struct perf_probe_arg {
 	char				*var;	/* Variable name */
 	char				*type;	/* Type name */
 	struct perf_probe_arg_field	*field;	/* Structure fields */
+	bool				user_access;	/* User-memory access */
 };
 
 /* Perf probe probing event (point + arg) */
@@ -92,6 +98,7 @@ struct perf_probe_event {
 	struct perf_probe_arg	*args;	/* Arguments */
 	struct probe_trace_event *tevs;
 	int			ntevs;
+	struct nsinfo		*nsi;	/* Target namespace */
 };
 
 /* Line range */
@@ -163,10 +170,12 @@ int show_perf_probe_event(const char *group, const char *event,
 			  struct perf_probe_event *pev,
 			  const char *module, bool use_stdout);
 int show_perf_probe_events(struct strfilter *filter);
-int show_line_range(struct line_range *lr, const char *module, bool user);
+int show_line_range(struct line_range *lr, const char *module,
+		    struct nsinfo *nsi, bool user);
 int show_available_vars(struct perf_probe_event *pevs, int npevs,
 			struct strfilter *filter);
-int show_available_funcs(const char *module, struct strfilter *filter, bool user);
+int show_available_funcs(const char *module, struct nsinfo *nsi,
+			 struct strfilter *filter, bool user);
 void arch__fix_tev_from_maps(struct perf_probe_event *pev,
 			     struct probe_trace_event *tev, struct map *map,
 			     struct symbol *sym);
@@ -180,7 +189,7 @@ int e_snprintf(char *str, size_t size, const char *format, ...) __printf(3, 4);
 int copy_to_probe_trace_arg(struct probe_trace_arg *tvar,
 			    struct perf_probe_arg *pvar);
 
-struct map *get_target_map(const char *target, bool user);
+struct map *get_target_map(const char *target, struct nsinfo *nsi, bool user);
 
 void arch__post_process_probe_trace_events(struct perf_probe_event *pev,
 					   int ntevs);

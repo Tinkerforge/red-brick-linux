@@ -1,11 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /******************************************************************************
  *
  *   Copyright © International Business Machines  Corp., 2009
- *
- *   This program is free software;  you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
  *
  * DESCRIPTION
  *      Glibc independent futex library for testing kernel functionality.
@@ -109,22 +105,20 @@ void log_verbosity(int level)
  */
 void print_result(const char *test_name, int ret)
 {
-	const char *result = "Unknown return code";
-
 	switch (ret) {
 	case RET_PASS:
-		ksft_inc_pass_cnt();
-		result = PASS;
-		break;
+		ksft_test_result_pass("%s\n", test_name);
+		ksft_print_cnts();
+		return;
 	case RET_ERROR:
-		result = ERROR;
-		break;
+		ksft_test_result_error("%s\n", test_name);
+		ksft_print_cnts();
+		return;
 	case RET_FAIL:
-		ksft_inc_fail_cnt();
-		result = FAIL;
-		break;
+		ksft_test_result_fail("%s\n", test_name);
+		ksft_print_cnts();
+		return;
 	}
-	printf("selftests: %s [%s]\n", test_name, result);
 }
 
 /* log level macros */

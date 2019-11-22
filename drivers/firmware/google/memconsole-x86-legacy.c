@@ -1,18 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * memconsole-x86-legacy.c
  *
  * EBDA specific parts of the memory based BIOS console.
  *
  * Copyright 2017 Google Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License v2.0 as published by
- * the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #include <linux/kernel.h>
@@ -126,7 +118,7 @@ static bool memconsole_ebda_init(void)
 	return false;
 }
 
-static struct dmi_system_id memconsole_dmi_table[] __initdata = {
+static const struct dmi_system_id memconsole_dmi_table[] __initconst = {
 	{
 		.ident = "Google Board",
 		.matches = {

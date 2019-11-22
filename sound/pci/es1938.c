@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  Driver for ESS Solo-1 (ES1938, ES1946, ES1969) soundcard
  *  Copyright (c) by Jaromir Koutek <miri@punknet.cz>,
@@ -10,22 +11,6 @@
  *
  *  TODO:
  *    Rewrite better spinlocks
- *
- *
- *   This program is free software; you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
- *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
- *
- *   You should have received a copy of the GNU General Public License
- *   along with this program; if not, write to the Free Software
- *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
- *
  */
 
 /*
@@ -900,7 +885,7 @@ static int snd_es1938_pcm_hw_free(struct snd_pcm_substream *substream)
 /* ----------------------------------------------------------------------
  * Audio1 Capture (ADC)
  * ----------------------------------------------------------------------*/
-static struct snd_pcm_hardware snd_es1938_capture =
+static const struct snd_pcm_hardware snd_es1938_capture =
 {
 	.info =			(SNDRV_PCM_INFO_INTERLEAVED |
 				SNDRV_PCM_INFO_BLOCK_TRANSFER),
@@ -922,7 +907,7 @@ static struct snd_pcm_hardware snd_es1938_capture =
 /* -----------------------------------------------------------------------
  * Audio2 Playback (DAC)
  * -----------------------------------------------------------------------*/
-static struct snd_pcm_hardware snd_es1938_playback =
+static const struct snd_pcm_hardware snd_es1938_playback =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -1475,7 +1460,6 @@ static int es1938_suspend(struct device *dev)
 	unsigned char *s, *d;
 
 	snd_power_change_state(card, SNDRV_CTL_POWER_D3hot);
-	snd_pcm_suspend_all(chip->pcm);
 
 	/* save mixer-related registers */
 	for (s = saved_regs, d = chip->saved_regs; *s; s++, d++)

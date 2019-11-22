@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * PHY support for Xenon SDHC
  *
@@ -5,10 +6,6 @@
  *
  * Author:	Hu Ziji <huziji@marvell.com>
  * Date:	2016-8-24
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation version 2.
  */
 
 #include <linux/slab.h>
@@ -357,9 +354,13 @@ static int xenon_emmc_phy_enable_dll(struct sdhci_host *host)
 
 	/* Wait max 32 ms */
 	timeout = ktime_add_ms(ktime_get(), 32);
-	while (!(sdhci_readw(host, XENON_SLOT_EXT_PRESENT_STATE) &
-		XENON_DLL_LOCK_STATE)) {
-		if (ktime_after(ktime_get(), timeout)) {
+	while (1) {
+		bool timedout = ktime_after(ktime_get(), timeout);
+
+		if (sdhci_readw(host, XENON_SLOT_EXT_PRESENT_STATE) &
+		    XENON_DLL_LOCK_STATE)
+			break;
+		if (timedout) {
 			dev_err(mmc_dev(host->mmc), "Wait for DLL Lock time-out\n");
 			return -ETIMEDOUT;
 		}
@@ -409,17 +410,30 @@ static int xenon_emmc_phy_config_tuning(struct sdhci_host *host)
 	return 0;
 }
 
-static void xenon_emmc_phy_disable_data_strobe(struct sdhci_host *host)
+static void xenon_emmc_phy_disable_strobe(struct sdhci_host *host)
 {
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct xenon_priv *priv = sdhci_pltfm_priv(pltfm_host);
 	u32 reg;
 
-	/* Disable SDHC Data Strobe */
+	/* Disable both SDHC Data Strobe and Enhanced Strobe */
 	reg = sdhci_readl(host, XENON_SLOT_EMMC_CTRL);
-	reg &= ~XENON_ENABLE_DATA_STROBE;
+	reg &= ~(XENON_ENABLE_DATA_STROBE | XENON_ENABLE_RESP_STROBE);
 	sdhci_writel(host, reg, XENON_SLOT_EMMC_CTRL);
+
+	/* Clear Strobe line Pull down or Pull up */
+	if (priv->phy_type == EMMC_5_0_PHY) {
+		reg = sdhci_readl(host, XENON_EMMC_5_0_PHY_PAD_CONTROL);
+		reg &= ~(XENON_EMMC5_FC_QSP_PD | XENON_EMMC5_FC_QSP_PU);
+		sdhci_writel(host, reg, XENON_EMMC_5_0_PHY_PAD_CONTROL);
+	} else {
+		reg = sdhci_readl(host, XENON_EMMC_PHY_PAD_CONTROL1);
+		reg &= ~(XENON_EMMC5_1_FC_QSP_PD | XENON_EMMC5_1_FC_QSP_PU);
+		sdhci_writel(host, reg, XENON_EMMC_PHY_PAD_CONTROL1);
+	}
 }
 
-/* Set HS400 Data Strobe */
+/* Set HS400 Data Strobe and Enhanced Strobe */
 static void xenon_emmc_phy_strobe_delay_adj(struct sdhci_host *host)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
@@ -439,6 +453,15 @@ static void xenon_emmc_phy_strobe_delay_adj(struct sdhci_host *host)
 	/* Enable SDHC Data Strobe */
 	reg = sdhci_readl(host, XENON_SLOT_EMMC_CTRL);
 	reg |= XENON_ENABLE_DATA_STROBE;
+	/*
+	 * Enable SDHC Enhanced Strobe if supported
+	 * Xenon Enhanced Strobe should be enabled only when
+	 * 1. card is in HS400 mode and
+	 * 2. SDCLK is higher than 52MHz
+	 * 3. DLL is enabled
+	 */
+	if (host->mmc->ios.enhanced_strobe)
+		reg |= XENON_ENABLE_RESP_STROBE;
 	sdhci_writel(host, reg, XENON_SLOT_EMMC_CTRL);
 
 	/* Set Data Strobe Pull down */
@@ -504,6 +527,7 @@ static bool xenon_emmc_phy_slow_mode(struct sdhci_host *host,
 			ret = true;
 			break;
 		}
+		/* fall through */
 	default:
 		reg &= ~XENON_TIMING_ADJUST_SLOW_MODE;
 		ret = false;
@@ -615,7 +639,7 @@ static void xenon_emmc_phy_set(struct sdhci_host *host,
 		sdhci_writel(host, phy_regs->logic_timing_val,
 			     phy_regs->logic_timing_adj);
 	else
-		xenon_emmc_phy_disable_data_strobe(host);
+		xenon_emmc_phy_disable_strobe(host);
 
 phy_init:
 	xenon_emmc_phy_init(host);
@@ -637,8 +661,8 @@ static int get_dt_pad_ctrl_data(struct sdhci_host *host,
 		return 0;
 
 	if (of_address_to_resource(np, 1, &iomem)) {
-		dev_err(mmc_dev(host->mmc), "Unable to find SoC PAD ctrl register address for %s\n",
-			np->name);
+		dev_err(mmc_dev(host->mmc), "Unable to find SoC PAD ctrl register address for %pOFn\n",
+			np);
 		return -EINVAL;
 	}
 
@@ -705,7 +729,7 @@ void xenon_soc_pad_ctrl(struct sdhci_host *host,
 
 /*
  * Setting PHY when card is working in High Speed Mode.
- * HS400 set data strobe line.
+ * HS400 set Data Strobe and Enhanced Strobe if it is supported.
  * HS200/SDR104 set tuning config to prepare for tuning.
  */
 static int xenon_hs_delay_adj(struct sdhci_host *host)
@@ -792,15 +816,10 @@ static int xenon_add_phy(struct device_node *np, struct sdhci_host *host,
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct xenon_priv *priv = sdhci_pltfm_priv(pltfm_host);
-	int i, ret;
+	int ret;
 
-	for (i = 0; i < NR_PHY_TYPES; i++) {
-		if (!strcmp(phy_name, phy_types[i])) {
-			priv->phy_type = i;
-			break;
-		}
-	}
-	if (i == NR_PHY_TYPES) {
+	priv->phy_type = match_string(phy_types, NR_PHY_TYPES, phy_name);
+	if (priv->phy_type < 0) {
 		dev_err(mmc_dev(host->mmc),
 			"Unable to determine PHY name %s. Use default eMMC 5.1 PHY\n",
 			phy_name);

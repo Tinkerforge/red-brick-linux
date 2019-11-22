@@ -1,12 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Code to prepare detour buffer for optprobes in Kernel.
  *
  * Copyright 2017, Anju T, IBM Corp.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version
- * 2 of the License, or (at your option) any later version.
  */
 
 #include <asm/ppc_asm.h>
@@ -58,12 +54,8 @@ optprobe_template_entry:
 	std	r5,_XER(r1)
 	mfcr	r5
 	std	r5,_CCR(r1)
-	lbz     r5,PACASOFTIRQEN(r13)
+	lbz     r5,PACAIRQSOFTMASK(r13)
 	std     r5,SOFTE(r1)
-	mfdar	r5
-	std	r5,_DAR(r1)
-	mfdsisr	r5
-	std	r5,_DSISR(r1)
 
 	/*
 	 * We may get here from a module, so load the kernel TOC in r2.
@@ -122,10 +114,6 @@ optprobe_template_call_emulate:
 	mtxer	r5
 	ld	r5,_CCR(r1)
 	mtcr	r5
-	ld	r5,_DAR(r1)
-	mtdar	r5
-	ld	r5,_DSISR(r1)
-	mtdsisr	r5
 	REST_GPR(0,r1)
 	REST_10GPRS(2,r1)
 	REST_10GPRS(12,r1)

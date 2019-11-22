@@ -1,12 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2016 Marvell, All Rights Reserved.
  *
  * Author:	Hu Ziji <huziji@marvell.com>
  * Date:	2016-8-24
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation version 2.
  */
 #ifndef SDHCI_XENON_H_
 #define SDHCI_XENON_H_
@@ -33,6 +30,7 @@
 #define XENON_TUNING_STEP_DIVIDER		BIT(6)
 
 #define XENON_SLOT_EMMC_CTRL			0x0130
+#define XENON_ENABLE_RESP_STROBE		BIT(25)
 #define XENON_ENABLE_DATA_STROBE		BIT(24)
 
 #define XENON_SLOT_RETUNING_REQ_CTRL		0x0144
@@ -82,6 +80,7 @@ struct xenon_priv {
 	unsigned char	bus_width;
 	unsigned char	timing;
 	unsigned int	clock;
+	struct clk      *axi_clk;
 
 	int		phy_type;
 	/*
@@ -90,6 +89,7 @@ struct xenon_priv {
 	 */
 	void		*phy_params;
 	struct xenon_emmc_phy_regs *emmc_phy_regs;
+	bool restore_needed;
 };
 
 int xenon_phy_adj(struct sdhci_host *host, struct mmc_ios *ios);

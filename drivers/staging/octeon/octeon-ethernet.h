@@ -1,11 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * This file is based on code from OCTEON SDK by Cavium Networks.
  *
  * Copyright (c) 2003-2010 Cavium Networks
- *
- * This file is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License, Version 2, as
- * published by the Free Software Foundation.
  */
 
 /*
@@ -15,7 +12,7 @@
 #define OCTEON_ETHERNET_H
 
 #include <linux/of.h>
-
+#include <linux/phy.h>
 #include <asm/octeon/cvmx-helper-board.h>
 
 /**
@@ -36,6 +33,8 @@ struct octeon_ethernet {
 	 * cvmx_helper_interface_mode_t
 	 */
 	int imode;
+	/* PHY mode */
+	phy_interface_t phy_mode;
 	/* List of outstanding tx buffers per queue */
 	struct sk_buff_head tx_free_list[16];
 	unsigned int last_speed;

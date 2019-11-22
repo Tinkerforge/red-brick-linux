@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2017 Intel Corporation.
+ * Copyright(c) 2017 - 2018 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -67,8 +67,6 @@ static int setup_vnic_ctxt(struct hfi1_devdata *dd, struct hfi1_ctxtdata *uctxt)
 	unsigned int rcvctrl_ops = 0;
 	int ret;
 
-	hfi1_init_ctxt(uctxt->sc);
-
 	uctxt->do_interrupt = &handle_receive_interrupt;
 
 	/* Now allocate the RcvHdr queue and eager buffers. */
@@ -95,9 +93,7 @@ static int setup_vnic_ctxt(struct hfi1_devdata *dd, struct hfi1_ctxtdata *uctxt)
 	if (HFI1_CAP_KGET_MASK(uctxt->flags, DMA_RTAIL))
 		rcvctrl_ops |= HFI1_RCVCTRL_TAILUPD_ENB;
 
-	hfi1_rcvctrl(uctxt->dd, rcvctrl_ops, uctxt->ctxt);
-
-	uctxt->is_vnic = true;
+	hfi1_rcvctrl(uctxt->dd, rcvctrl_ops, uctxt);
 done:
 	return ret;
 }
@@ -106,22 +102,13 @@ static int allocate_vnic_ctxt(struct hfi1_devdata *dd,
 			      struct hfi1_ctxtdata **vnic_ctxt)
 {
 	struct hfi1_ctxtdata *uctxt;
-	unsigned int ctxt;
 	int ret;
 
 	if (dd->flags & HFI1_FROZEN)
 		return -EIO;
 
-	for (ctxt = dd->first_dyn_alloc_ctxt;
-	     ctxt < dd->num_rcv_contexts; ctxt++)
-		if (!dd->rcd[ctxt])
-			break;
-
-	if (ctxt == dd->num_rcv_contexts)
-		return -EBUSY;
-
-	uctxt = hfi1_create_ctxtdata(dd->pport, ctxt, dd->node);
-	if (!uctxt) {
+	ret = hfi1_create_ctxtdata(dd->pport, dd->node, &uctxt);
+	if (ret < 0) {
 		dd_dev_err(dd, "Unable to create ctxtdata, failing open\n");
 		return -ENOMEM;
 	}
@@ -131,52 +118,23 @@ static int allocate_vnic_ctxt(struct hfi1_devdata *dd,
 			HFI1_CAP_KGET(NODROP_EGR_FULL) |
 			HFI1_CAP_KGET(DMA_RTAIL);
 	uctxt->seq_cnt = 1;
+	uctxt->is_vnic = true;
 
-	/* Allocate and enable a PIO send context */
-	uctxt->sc = sc_alloc(dd, SC_VNIC, uctxt->rcvhdrqentsize,
-			     uctxt->numa_id);
-
-	ret = uctxt->sc ? 0 : -ENOMEM;
-	if (ret)
-		goto bail;
-
-	dd_dev_dbg(dd, "allocated vnic send context %u(%u)\n",
-		   uctxt->sc->sw_index, uctxt->sc->hw_context);
-	ret = sc_enable(uctxt->sc);
-	if (ret)
-		goto bail;
-
-	if (dd->num_msix_entries)
-		hfi1_set_vnic_msix_info(uctxt);
+	msix_request_rcd_irq(uctxt);
 
 	hfi1_stats.sps_ctxts++;
 	dd_dev_dbg(dd, "created vnic context %d\n", uctxt->ctxt);
 	*vnic_ctxt = uctxt;
 
-	return ret;
-bail:
-	/*
-	 * hfi1_free_ctxtdata() also releases send_context
-	 * structure if uctxt->sc is not null
-	 */
-	dd->rcd[uctxt->ctxt] = NULL;
-	hfi1_free_ctxtdata(dd, uctxt);
-	dd_dev_dbg(dd, "vnic allocation failed. rc %d\n", ret);
-	return ret;
+	return 0;
 }
 
 static void deallocate_vnic_ctxt(struct hfi1_devdata *dd,
 				 struct hfi1_ctxtdata *uctxt)
 {
-	unsigned long flags;
-
 	dd_dev_dbg(dd, "closing vnic context %d\n", uctxt->ctxt);
 	flush_wc();
 
-	if (dd->num_msix_entries)
-		hfi1_reset_vnic_msix_info(uctxt);
-
-	spin_lock_irqsave(&dd->uctxt_lock, flags);
 	/*
 	 * Disable receive context and interrupt available, reset all
 	 * RcvCtxtCtrl bits to default values.
@@ -186,39 +144,30 @@ static void deallocate_vnic_ctxt(struct hfi1_devdata *dd,
 		     HFI1_RCVCTRL_INTRAVAIL_DIS |
 		     HFI1_RCVCTRL_ONE_PKT_EGR_DIS |
 		     HFI1_RCVCTRL_NO_RHQ_DROP_DIS |
-		     HFI1_RCVCTRL_NO_EGR_DROP_DIS, uctxt->ctxt);
-	/*
-	 * VNIC contexts are allocated from user context pool.
-	 * Release them back to user context pool.
-	 *
-	 * Reset context integrity checks to default.
-	 * (writes to CSRs probably belong in chip.c)
-	 */
-	write_kctxt_csr(dd, uctxt->sc->hw_context, SEND_CTXT_CHECK_ENABLE,
-			hfi1_pkt_default_send_ctxt_mask(dd, SC_USER));
-	sc_disable(uctxt->sc);
+		     HFI1_RCVCTRL_NO_EGR_DROP_DIS, uctxt);
 
-	dd->send_contexts[uctxt->sc->sw_index].type = SC_USER;
-	spin_unlock_irqrestore(&dd->uctxt_lock, flags);
+	/* msix_intr will always be > 0, only clean up if this is true */
+	if (uctxt->msix_intr)
+		msix_free_irq(dd, uctxt->msix_intr);
 
-	dd->rcd[uctxt->ctxt] = NULL;
 	uctxt->event_flags = 0;
 
 	hfi1_clear_tids(uctxt);
 	hfi1_clear_ctxt_pkey(dd, uctxt);
 
 	hfi1_stats.sps_ctxts--;
-	hfi1_free_ctxtdata(dd, uctxt);
+
+	hfi1_free_ctxt(uctxt);
 }
 
 void hfi1_vnic_setup(struct hfi1_devdata *dd)
 {
-	idr_init(&dd->vnic.vesw_idr);
+	xa_init(&dd->vnic.vesws);
 }
 
 void hfi1_vnic_cleanup(struct hfi1_devdata *dd)
 {
-	idr_destroy(&dd->vnic.vesw_idr);
+	WARN_ON(!xa_empty(&dd->vnic.vesws));
 }
 
 #define SUM_GRP_COUNTERS(stats, qstats, x_grp) do {            \
@@ -474,8 +423,7 @@ tx_finish:
 
 static u16 hfi1_vnic_select_queue(struct net_device *netdev,
 				  struct sk_buff *skb,
-				  void *accel_priv,
-				  select_queue_fallback_t fallback)
+				  struct net_device *sb_dev)
 {
 	struct hfi1_vnic_vport_info *vinfo = opa_vnic_dev_priv(netdev);
 	struct opa_vnic_skb_mdata *mdata;
@@ -582,10 +530,10 @@ void hfi1_vnic_bypass_rcv(struct hfi1_packet *packet)
 	int l4_type, vesw_id = -1;
 	u8 q_idx;
 
-	l4_type = HFI1_GET_L4_TYPE(packet->ebuf);
-	if (likely(l4_type == OPA_VNIC_L4_ETHR)) {
+	l4_type = hfi1_16B_get_l4(packet->ebuf);
+	if (likely(l4_type == OPA_16B_L4_ETHR)) {
 		vesw_id = HFI1_VNIC_GET_VESWID(packet->ebuf);
-		vinfo = idr_find(&dd->vnic.vesw_idr, vesw_id);
+		vinfo = xa_load(&dd->vnic.vesws, vesw_id);
 
 		/*
 		 * In case of invalid vesw id, count the error on
@@ -593,9 +541,10 @@ void hfi1_vnic_bypass_rcv(struct hfi1_packet *packet)
 		 */
 		if (unlikely(!vinfo)) {
 			struct hfi1_vnic_vport_info *vinfo_tmp;
-			int id_tmp = 0;
+			unsigned long index = 0;
 
-			vinfo_tmp =  idr_get_next(&dd->vnic.vesw_idr, &id_tmp);
+			vinfo_tmp = xa_find(&dd->vnic.vesws, &index, ULONG_MAX,
+					XA_PRESENT);
 			if (vinfo_tmp) {
 				spin_lock(&vport_cntr_lock);
 				vinfo_tmp->stats[0].netstats.rx_nohandler++;
@@ -649,8 +598,7 @@ static int hfi1_vnic_up(struct hfi1_vnic_vport_info *vinfo)
 	if (!vinfo->vesw_id)
 		return -EINVAL;
 
-	rc = idr_alloc(&dd->vnic.vesw_idr, vinfo, vinfo->vesw_id,
-		       vinfo->vesw_id + 1, GFP_NOWAIT);
+	rc = xa_insert(&dd->vnic.vesws, vinfo->vesw_id, vinfo, GFP_KERNEL);
 	if (rc < 0)
 		return rc;
 
@@ -676,10 +624,10 @@ static void hfi1_vnic_down(struct hfi1_vnic_vport_info *vinfo)
 	clear_bit(HFI1_VNIC_UP, &vinfo->flags);
 	netif_carrier_off(vinfo->netdev);
 	netif_tx_disable(vinfo->netdev);
-	idr_remove(&dd->vnic.vesw_idr, vinfo->vesw_id);
+	xa_erase(&dd->vnic.vesws, vinfo->vesw_id);
 
 	/* ensure irqs see the change */
-	hfi1_vnic_synchronize_irq(dd);
+	msix_vnic_synchronize_irq(dd);
 
 	/* remove unread skbs */
 	for (i = 0; i < vinfo->num_rx_q; i++) {
@@ -743,14 +691,13 @@ static int hfi1_vnic_init(struct hfi1_vnic_vport_info *vinfo)
 		rc = hfi1_vnic_txreq_init(dd);
 		if (rc)
 			goto txreq_fail;
-
-		dd->vnic.msix_idx = dd->first_dyn_msix_idx;
 	}
 
 	for (i = dd->vnic.num_ctxt; i < vinfo->num_rx_q; i++) {
 		rc = hfi1_vnic_allot_ctxt(dd, &dd->vnic.ctxt[i]);
 		if (rc)
 			break;
+		hfi1_rcd_get(dd->vnic.ctxt[i]);
 		dd->vnic.ctxt[i]->vnic_q_idx = i;
 	}
 
@@ -762,6 +709,7 @@ static int hfi1_vnic_init(struct hfi1_vnic_vport_info *vinfo)
 		 */
 		while (i-- > dd->vnic.num_ctxt) {
 			deallocate_vnic_ctxt(dd, dd->vnic.ctxt[i]);
+			hfi1_rcd_put(dd->vnic.ctxt[i]);
 			dd->vnic.ctxt[i] = NULL;
 		}
 		goto alloc_fail;
@@ -791,6 +739,7 @@ static void hfi1_vnic_deinit(struct hfi1_vnic_vport_info *vinfo)
 	if (--dd->vnic.num_vports == 0) {
 		for (i = 0; i < dd->vnic.num_ctxt; i++) {
 			deallocate_vnic_ctxt(dd, dd->vnic.ctxt[i]);
+			hfi1_rcd_put(dd->vnic.ctxt[i]);
 			dd->vnic.ctxt[i] = NULL;
 		}
 		hfi1_deinit_vnic_rsm(dd);
@@ -855,6 +804,9 @@ struct net_device *hfi1_vnic_alloc_rn(struct ib_device *device,
 	struct rdma_netdev *rn;
 	int i, size, rc;
 
+	if (!dd->num_vnic_contexts)
+		return ERR_PTR(-ENOMEM);
+
 	if (!port_num || (port_num > dd->num_pports))
 		return ERR_PTR(-EINVAL);
 
@@ -863,15 +815,15 @@ struct net_device *hfi1_vnic_alloc_rn(struct ib_device *device,
 
 	size = sizeof(struct opa_vnic_rdma_netdev) + sizeof(*vinfo);
 	netdev = alloc_netdev_mqs(size, name, name_assign_type, setup,
-				  dd->chip_sdma_engines, HFI1_NUM_VNIC_CTXT);
+				  dd->num_sdma, dd->num_vnic_contexts);
 	if (!netdev)
 		return ERR_PTR(-ENOMEM);
 
 	rn = netdev_priv(netdev);
 	vinfo = opa_vnic_dev_priv(netdev);
 	vinfo->dd = dd;
-	vinfo->num_tx_q = dd->chip_sdma_engines;
-	vinfo->num_rx_q = HFI1_NUM_VNIC_CTXT;
+	vinfo->num_tx_q = dd->num_sdma;
+	vinfo->num_rx_q = dd->num_vnic_contexts;
 	vinfo->netdev = netdev;
 	rn->free_rdma_netdev = hfi1_vnic_free_rn;
 	rn->set_id = hfi1_vnic_set_vesw_id;

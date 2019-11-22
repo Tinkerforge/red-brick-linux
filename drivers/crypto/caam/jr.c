@@ -1,14 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * CAAM/SEC 4.x transport/backend driver
  * JobR backend functionality
  *
  * Copyright 2008-2012 Freescale Semiconductor, Inc.
+ * Copyright 2019 NXP
  */
 
 #include <linux/of_irq.h>
 #include <linux/of_address.h>
 
 #include "compat.h"
+#include "ctrl.h"
 #include "regs.h"
 #include "jr.h"
 #include "desc.h"
@@ -21,6 +24,43 @@ struct jr_driver_data {
 } ____cacheline_aligned;
 
 static struct jr_driver_data driver_data;
+static DEFINE_MUTEX(algs_lock);
+static unsigned int active_devs;
+
+static void register_algs(struct device *dev)
+{
+	mutex_lock(&algs_lock);
+
+	if (++active_devs != 1)
+		goto algs_unlock;
+
+	caam_algapi_init(dev);
+	caam_algapi_hash_init(dev);
+	caam_pkc_init(dev);
+	caam_rng_init(dev);
+	caam_qi_algapi_init(dev);
+
+algs_unlock:
+	mutex_unlock(&algs_lock);
+}
+
+static void unregister_algs(void)
+{
+	mutex_lock(&algs_lock);
+
+	if (--active_devs != 0)
+		goto algs_unlock;
+
+	caam_qi_algapi_exit();
+
+	caam_rng_exit();
+	caam_pkc_exit();
+	caam_algapi_hash_exit();
+	caam_algapi_exit();
+
+algs_unlock:
+	mutex_unlock(&algs_lock);
+}
 
 static int caam_reset_hw_jr(struct device *dev)
 {
@@ -107,6 +147,9 @@ static int caam_jr_remove(struct platform_device *pdev)
 		return -EBUSY;
 	}
 
+	/* Unregister JR-based RNG & crypto algorithms */
+	unregister_algs();
+
 	/* Remove the node from Physical JobR list maintained by driver */
 	spin_lock(&driver_data.jr_alloc_lock);
 	list_del(&jrpriv->list_node);
@@ -168,12 +211,12 @@ static void caam_jr_dequeue(unsigned long devarg)
 	void (*usercall)(struct device *dev, u32 *desc, u32 status, void *arg);
 	u32 *userdesc, userstatus;
 	void *userarg;
+	u32 outring_used = 0;
 
-	while (rd_reg32(&jrp->rregs->outring_used)) {
+	while (outring_used ||
+	       (outring_used = rd_reg32(&jrp->rregs->outring_used))) {
 
-		head = ACCESS_ONCE(jrp->head);
-
-		spin_lock(&jrp->outlock);
+		head = READ_ONCE(jrp->head);
 
 		sw_idx = tail = jrp->tail;
 		hw_idx = jrp->out_ring_read_index;
@@ -189,14 +232,15 @@ static void caam_jr_dequeue(unsigned long devarg)
 		BUG_ON(CIRC_CNT(head, tail + i, JOBR_DEPTH) <= 0);
 
 		/* Unmap just-run descriptor so we can post-process */
-		dma_unmap_single(dev, jrp->outring[hw_idx].desc,
+		dma_unmap_single(dev,
+				 caam_dma_to_cpu(jrp->outring[hw_idx].desc),
 				 jrp->entinfo[sw_idx].desc_size,
 				 DMA_TO_DEVICE);
 
 		/* mark completed, avoid matching on a recycled desc addr */
 		jrp->entinfo[sw_idx].desc_addr_dma = 0;
 
-		/* Stash callback params for use outside of lock */
+		/* Stash callback params */
 		usercall = jrp->entinfo[sw_idx].callbk;
 		userarg = jrp->entinfo[sw_idx].cbkarg;
 		userdesc = jrp->entinfo[sw_idx].desc_addr_virt;
@@ -229,10 +273,9 @@ static void caam_jr_dequeue(unsigned long devarg)
 			jrp->tail = tail;
 		}
 
-		spin_unlock(&jrp->outlock);
-
 		/* Finally, execute user's callback */
 		usercall(dev, userdesc, userstatus, userarg);
+		outring_used--;
 	}
 
 	/* reenable / unmask IRQs */
@@ -340,9 +383,9 @@ int caam_jr_enqueue(struct device *dev, u32 *desc,
 	spin_lock_bh(&jrp->inplock);
 
 	head = jrp->head;
-	tail = ACCESS_ONCE(jrp->tail);
+	tail = READ_ONCE(jrp->tail);
 
-	if (!rd_reg32(&jrp->rregs->inpring_avail) ||
+	if (!jrp->inpring_avail ||
 	    CIRC_SPACE(head, tail, JOBR_DEPTH) <= 0) {
 		spin_unlock_bh(&jrp->inplock);
 		dma_unmap_single(dev, desc_dma, desc_size, DMA_TO_DEVICE);
@@ -356,7 +399,7 @@ int caam_jr_enqueue(struct device *dev, u32 *desc,
 	head_entry->cbkarg = areq;
 	head_entry->desc_addr_dma = desc_dma;
 
-	jrp->inpring[jrp->inp_ring_write_index] = cpu_to_caam_dma(desc_dma);
+	jrp->inpring[head] = cpu_to_caam_dma(desc_dma);
 
 	/*
 	 * Guarantee that the descriptor's DMA address has been written to
@@ -365,17 +408,21 @@ int caam_jr_enqueue(struct device *dev, u32 *desc,
 	 */
 	smp_wmb();
 
-	jrp->inp_ring_write_index = (jrp->inp_ring_write_index + 1) &
-				    (JOBR_DEPTH - 1);
 	jrp->head = (head + 1) & (JOBR_DEPTH - 1);
 
 	/*
 	 * Ensure that all job information has been written before
-	 * notifying CAAM that a new job was added to the input ring.
+	 * notifying CAAM that a new job was added to the input ring
+	 * using a memory barrier. The wr_reg32() uses api iowrite32()
+	 * to do the register write. iowrite32() issues a memory barrier
+	 * before the write operation.
 	 */
-	wmb();
 
 	wr_reg32(&jrp->rregs->inpring_jobadd, 1);
+
+	jrp->inpring_avail--;
+	if (!jrp->inpring_avail)
+		jrp->inpring_avail = rd_reg32(&jrp->rregs->inpring_avail);
 
 	spin_unlock_bh(&jrp->inplock);
 
@@ -428,7 +475,6 @@ static int caam_jr_init(struct device *dev)
 		jrp->entinfo[i].desc_addr_dma = !0;
 
 	/* Setup rings */
-	jrp->inp_ring_write_index = 0;
 	jrp->out_ring_read_index = 0;
 	jrp->head = 0;
 	jrp->tail = 0;
@@ -438,10 +484,9 @@ static int caam_jr_init(struct device *dev)
 	wr_reg32(&jrp->rregs->inpring_size, JOBR_DEPTH);
 	wr_reg32(&jrp->rregs->outring_size, JOBR_DEPTH);
 
-	jrp->ringsize = JOBR_DEPTH;
+	jrp->inpring_avail = JOBR_DEPTH;
 
 	spin_lock_init(&jrp->inplock);
-	spin_lock_init(&jrp->outlock);
 
 	/* Select interrupt coalescing parameters */
 	clrsetbits_32(&jrp->rregs->rconfig_lo, 0, JOBR_INTC |
@@ -499,7 +544,11 @@ static int caam_jr_probe(struct platform_device *pdev)
 	jrpriv->rregs = (struct caam_job_ring __iomem __force *)ctrl;
 
 	if (sizeof(dma_addr_t) == sizeof(u64)) {
-		if (of_device_is_compatible(nprop, "fsl,sec-v5.0-job-ring"))
+		if (caam_dpaa2)
+			error = dma_set_mask_and_coherent(jrdev,
+							  DMA_BIT_MASK(49));
+		else if (of_device_is_compatible(nprop,
+						 "fsl,sec-v5.0-job-ring"))
 			error = dma_set_mask_and_coherent(jrdev,
 							  DMA_BIT_MASK(40));
 		else
@@ -532,6 +581,8 @@ static int caam_jr_probe(struct platform_device *pdev)
 	spin_unlock(&driver_data.jr_alloc_lock);
 
 	atomic_set(&jrpriv->tfm_count, 0);
+
+	register_algs(jrdev->parent);
 
 	return 0;
 }

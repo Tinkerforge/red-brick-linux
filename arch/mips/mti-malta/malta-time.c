@@ -1,19 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Carsten Langgaard, carstenl@mips.com
  * Copyright (C) 1999,2000 MIPS Technologies, Inc.  All rights reserved.
- *
- *  This program is free software; you can distribute it and/or modify it
- *  under the terms of the GNU General Public License (Version 2) as
- *  published by the Free Software Foundation.
- *
- *  This program is distributed in the hope it will be useful, but WITHOUT
- *  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- *  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
- *  for more details.
- *
- *  You should have received a copy of the GNU General Public License along
- *  with this program; if not, write to the Free Software Foundation, Inc.,
- *  59 Temple Place - Suite 330, Boston MA 02111-1307, USA.
  *
  * Setting up the clock on the MIPS boards.
  */
@@ -26,7 +14,6 @@
 #include <linux/sched.h>
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
-#include <linux/irqchip/mips-gic.h>
 #include <linux/timex.h>
 #include <linux/mc146818rtc.h>
 
@@ -40,6 +27,7 @@
 #include <asm/time.h>
 #include <asm/mc146818-time.h>
 #include <asm/msc01_ic.h>
+#include <asm/mips-cps.h>
 
 #include <asm/mips-boards/generic.h>
 #include <asm/mips-boards/maltaint.h>
@@ -85,8 +73,8 @@ static void __init estimate_frequencies(void)
 
 	local_irq_save(flags);
 
-	if (gic_present)
-		gic_start_count();
+	if (mips_gic_present())
+		clear_gic_config(GIC_CONFIG_COUNTSTOP);
 
 	/*
 	 * Read counters exactly on rising edge of update flag.
@@ -95,8 +83,8 @@ static void __init estimate_frequencies(void)
 	while (CMOS_READ(RTC_REG_A) & RTC_UIP);
 	while (!(CMOS_READ(RTC_REG_A) & RTC_UIP));
 	start = read_c0_count();
-	if (gic_present)
-		gicstart = gic_read_count();
+	if (mips_gic_present())
+		gicstart = read_gic_counter();
 
 	/* Wait for falling edge before reading RTC. */
 	while (CMOS_READ(RTC_REG_A) & RTC_UIP);
@@ -105,8 +93,8 @@ static void __init estimate_frequencies(void)
 	/* Read counters again exactly on rising edge of update flag. */
 	while (!(CMOS_READ(RTC_REG_A) & RTC_UIP));
 	count = read_c0_count();
-	if (gic_present)
-		giccount = gic_read_count();
+	if (mips_gic_present())
+		giccount = read_gic_counter();
 
 	/* Wait for falling edge before reading RTC again. */
 	while (CMOS_READ(RTC_REG_A) & RTC_UIP);
@@ -128,13 +116,13 @@ static void __init estimate_frequencies(void)
 	count /= secs;
 	mips_hpt_frequency = count;
 
-	if (gic_present) {
+	if (mips_gic_present()) {
 		giccount = div_u64(giccount - gicstart, secs);
 		gic_frequency = giccount;
 	}
 }
 
-void read_persistent_clock(struct timespec *ts)
+void read_persistent_clock64(struct timespec64 *ts)
 {
 	ts->tv_sec = mc146818_get_cmos_time();
 	ts->tv_nsec = 0;
@@ -154,7 +142,7 @@ int get_c0_fdc_int(void)
 
 	if (cpu_has_veic)
 		return -1;
-	else if (gic_present)
+	else if (mips_gic_present())
 		return gic_get_c0_fdc_int();
 	else if (cp0_fdc_irq >= 0)
 		return MIPS_CPU_IRQ_BASE + cp0_fdc_irq;
@@ -167,7 +155,7 @@ int get_c0_perfcount_int(void)
 	if (cpu_has_veic) {
 		set_vi_handler(MSC01E_INT_PERFCTR, mips_perf_dispatch);
 		mips_cpu_perf_irq = MSC01E_INT_BASE + MSC01E_INT_PERFCTR;
-	} else if (gic_present) {
+	} else if (mips_gic_present()) {
 		mips_cpu_perf_irq = gic_get_c0_perfcount_int();
 	} else if (cp0_perfcount_irq >= 0) {
 		mips_cpu_perf_irq = MIPS_CPU_IRQ_BASE + cp0_perfcount_irq;
@@ -184,7 +172,7 @@ unsigned int get_c0_compare_int(void)
 	if (cpu_has_veic) {
 		set_vi_handler(MSC01E_INT_CPUCTR, mips_timer_dispatch);
 		mips_cpu_timer_irq = MSC01E_INT_BASE + MSC01E_INT_CPUCTR;
-	} else if (gic_present) {
+	} else if (mips_gic_present()) {
 		mips_cpu_timer_irq = gic_get_c0_compare_int();
 	} else {
 		mips_cpu_timer_irq = MIPS_CPU_IRQ_BASE + cp0_compare_irq;
@@ -251,15 +239,12 @@ void __init plat_time_init(void)
 	printk("CPU frequency %d.%02d MHz\n", freq/1000000,
 	       (freq%1000000)*100/1000000);
 
-	mips_scroll_message();
-
 #ifdef CONFIG_I8253
 	/* Only Malta has a PIT. */
 	setup_pit_timer();
 #endif
 
-#ifdef CONFIG_MIPS_GIC
-	if (gic_present) {
+	if (mips_gic_present()) {
 		freq = freqround(gic_frequency, 5000);
 		printk("GIC frequency %d.%02d MHz\n", freq/1000000,
 		       (freq%1000000)*100/1000000);
@@ -268,5 +253,4 @@ void __init plat_time_init(void)
 		timer_probe();
 #endif
 	}
-#endif
 }

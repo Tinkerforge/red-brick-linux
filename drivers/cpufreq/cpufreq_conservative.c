@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  drivers/cpufreq/cpufreq_conservative.c
  *
@@ -5,10 +6,6 @@
  *            (C)  2003 Venkatesh Pallipadi <venkatesh.pallipadi@intel.com>.
  *                      Jun Nakajima <jun.nakajima@intel.com>
  *            (C)  2009 Alexander Clouter <alex@digriz.org.uk>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/slab.h>
@@ -80,8 +77,10 @@ static unsigned int cs_dbs_update(struct cpufreq_policy *policy)
 	 * changed in the meantime, so fall back to current frequency in that
 	 * case.
 	 */
-	if (requested_freq > policy->max || requested_freq < policy->min)
+	if (requested_freq > policy->max || requested_freq < policy->min) {
 		requested_freq = policy->cur;
+		dbs_info->requested_freq = requested_freq;
+	}
 
 	freq_step = get_freq_step(cs_tuners, policy);
 
@@ -92,7 +91,7 @@ static unsigned int cs_dbs_update(struct cpufreq_policy *policy)
 	if (policy_dbs->idle_periods < UINT_MAX) {
 		unsigned int freq_steps = policy_dbs->idle_periods * freq_step;
 
-		if (requested_freq > freq_steps)
+		if (requested_freq > policy->min + freq_steps)
 			requested_freq -= freq_steps;
 		else
 			requested_freq = policy->min;
@@ -246,7 +245,6 @@ gov_show_one_common(sampling_rate);
 gov_show_one_common(sampling_down_factor);
 gov_show_one_common(up_threshold);
 gov_show_one_common(ignore_nice_load);
-gov_show_one_common(min_sampling_rate);
 gov_show_one(cs, down_threshold);
 gov_show_one(cs, freq_step);
 
@@ -254,12 +252,10 @@ gov_attr_rw(sampling_rate);
 gov_attr_rw(sampling_down_factor);
 gov_attr_rw(up_threshold);
 gov_attr_rw(ignore_nice_load);
-gov_attr_ro(min_sampling_rate);
 gov_attr_rw(down_threshold);
 gov_attr_rw(freq_step);
 
 static struct attribute *cs_attributes[] = {
-	&min_sampling_rate.attr,
 	&sampling_rate.attr,
 	&sampling_down_factor.attr,
 	&up_threshold.attr,
@@ -297,10 +293,7 @@ static int cs_init(struct dbs_data *dbs_data)
 	dbs_data->up_threshold = DEF_FREQUENCY_UP_THRESHOLD;
 	dbs_data->sampling_down_factor = DEF_SAMPLING_DOWN_FACTOR;
 	dbs_data->ignore_nice_load = 0;
-
 	dbs_data->tuners = tuners;
-	dbs_data->min_sampling_rate = MIN_SAMPLING_RATE_RATIO *
-		jiffies_to_usecs(10);
 
 	return 0;
 }

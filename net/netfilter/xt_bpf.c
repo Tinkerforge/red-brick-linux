@@ -1,13 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* Xtables module to match packets using a BPF filter.
  * Copyright 2013 Google Inc.
  * Written by Willem de Bruijn <willemb@google.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/module.h>
+#include <linux/syscalls.h>
 #include <linux/skbuff.h>
 #include <linux/filter.h>
 #include <linux/bpf.h>
@@ -26,11 +26,14 @@ static int __bpf_mt_check_bytecode(struct sock_filter *insns, __u16 len,
 {
 	struct sock_fprog_kern program;
 
+	if (len > XT_BPF_MAX_NUM_INSTR)
+		return -EINVAL;
+
 	program.len = len;
 	program.filter = insns;
 
 	if (bpf_prog_create(ret, &program)) {
-		pr_info("bpf: check failed: parse error\n");
+		pr_info_ratelimited("check failed: parse error\n");
 		return -EINVAL;
 	}
 
@@ -47,6 +50,15 @@ static int __bpf_mt_check_fd(int fd, struct bpf_prog **ret)
 
 	*ret = prog;
 	return 0;
+}
+
+static int __bpf_mt_check_path(const char *path, struct bpf_prog **ret)
+{
+	if (strnlen(path, XT_BPF_PATH_MAX) == XT_BPF_PATH_MAX)
+		return -EINVAL;
+
+	*ret = bpf_prog_get_type_path(path, BPF_PROG_TYPE_SOCKET_FILTER);
+	return PTR_ERR_OR_ZERO(*ret);
 }
 
 static int bpf_mt_check(const struct xt_mtchk_param *par)
@@ -66,9 +78,10 @@ static int bpf_mt_check_v1(const struct xt_mtchk_param *par)
 		return __bpf_mt_check_bytecode(info->bpf_program,
 					       info->bpf_program_num_elem,
 					       &info->filter);
-	else if (info->mode == XT_BPF_MODE_FD_PINNED ||
-		 info->mode == XT_BPF_MODE_FD_ELF)
+	else if (info->mode == XT_BPF_MODE_FD_ELF)
 		return __bpf_mt_check_fd(info->fd, &info->filter);
+	else if (info->mode == XT_BPF_MODE_PATH_PINNED)
+		return __bpf_mt_check_path(info->path, &info->filter);
 	else
 		return -EINVAL;
 }

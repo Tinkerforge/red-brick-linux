@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Debug controller
  *
@@ -49,7 +50,7 @@ static int current_css_set_read(struct seq_file *seq, void *v)
 
 	spin_lock_irq(&css_set_lock);
 	rcu_read_lock();
-	cset = rcu_dereference(current->cgroups);
+	cset = task_css_set(current);
 	refcnt = refcount_read(&cset->refcount);
 	seq_printf(seq, "css_set %pK %d", cset, refcnt);
 	if (refcnt > cset->nr_tasks)
@@ -63,8 +64,8 @@ static int current_css_set_read(struct seq_file *seq, void *v)
 		css = cset->subsys[ss->id];
 		if (!css)
 			continue;
-		seq_printf(seq, "%2d: %-4s\t- %lx[%d]\n", ss->id, ss->name,
-			  (unsigned long)css, css->id);
+		seq_printf(seq, "%2d: %-4s\t- %p[%d]\n", ss->id, ss->name,
+			  css, css->id);
 	}
 	rcu_read_unlock();
 	spin_unlock_irq(&css_set_lock);
@@ -95,7 +96,7 @@ static int current_css_set_cg_links_read(struct seq_file *seq, void *v)
 
 	spin_lock_irq(&css_set_lock);
 	rcu_read_lock();
-	cset = rcu_dereference(current->cgroups);
+	cset = task_css_set(current);
 	list_for_each_entry(link, &cset->cgrp_links, cgrp_link) {
 		struct cgroup *c = link->cgrp;
 
@@ -114,27 +115,49 @@ static int cgroup_css_links_read(struct seq_file *seq, void *v)
 {
 	struct cgroup_subsys_state *css = seq_css(seq);
 	struct cgrp_cset_link *link;
-	int dead_cnt = 0, extra_refs = 0;
+	int dead_cnt = 0, extra_refs = 0, threaded_csets = 0;
 
 	spin_lock_irq(&css_set_lock);
+
 	list_for_each_entry(link, &css->cgroup->cset_links, cset_link) {
 		struct css_set *cset = link->cset;
 		struct task_struct *task;
 		int count = 0;
 		int refcnt = refcount_read(&cset->refcount);
 
-		seq_printf(seq, " %d", refcnt);
-		if (refcnt - cset->nr_tasks > 0) {
-			int extra = refcnt - cset->nr_tasks;
+		/*
+		 * Print out the proc_cset and threaded_cset relationship
+		 * and highlight difference between refcount and task_count.
+		 */
+		seq_printf(seq, "css_set %pK", cset);
+		if (rcu_dereference_protected(cset->dom_cset, 1) != cset) {
+			threaded_csets++;
+			seq_printf(seq, "=>%pK", cset->dom_cset);
+		}
+		if (!list_empty(&cset->threaded_csets)) {
+			struct css_set *tcset;
+			int idx = 0;
 
-			seq_printf(seq, " +%d", extra);
-			/*
-			 * Take out the one additional reference in
-			 * init_css_set.
-			 */
-			if (cset == &init_css_set)
-				extra--;
-			extra_refs += extra;
+			list_for_each_entry(tcset, &cset->threaded_csets,
+					    threaded_csets_node) {
+				seq_puts(seq, idx ? "," : "<=");
+				seq_printf(seq, "%pK", tcset);
+				idx++;
+			}
+		} else {
+			seq_printf(seq, " %d", refcnt);
+			if (refcnt - cset->nr_tasks > 0) {
+				int extra = refcnt - cset->nr_tasks;
+
+				seq_printf(seq, " +%d", extra);
+				/*
+				 * Take out the one additional reference in
+				 * init_css_set.
+				 */
+				if (cset == &init_css_set)
+					extra--;
+				extra_refs += extra;
+			}
 		}
 		seq_puts(seq, "\n");
 
@@ -163,10 +186,12 @@ static int cgroup_css_links_read(struct seq_file *seq, void *v)
 	}
 	spin_unlock_irq(&css_set_lock);
 
-	if (!dead_cnt && !extra_refs)
+	if (!dead_cnt && !extra_refs && !threaded_csets)
 		return 0;
 
 	seq_puts(seq, "\n");
+	if (threaded_csets)
+		seq_printf(seq, "threaded css_sets = %d\n", threaded_csets);
 	if (extra_refs)
 		seq_printf(seq, "extra references = %d\n", extra_refs);
 	if (dead_cnt)
@@ -199,8 +224,8 @@ static int cgroup_subsys_states_read(struct seq_file *seq, void *v)
 		if (css->parent)
 			snprintf(pbuf, sizeof(pbuf) - 1, " P=%d",
 				 css->parent->id);
-		seq_printf(seq, "%2d: %-4s\t- %lx[%d] %d%s\n", ss->id, ss->name,
-			  (unsigned long)css, css->id,
+		seq_printf(seq, "%2d: %-4s\t- %p[%d] %d%s\n", ss->id, ss->name,
+			  css, css->id,
 			  atomic_read(&css->online_cnt), pbuf);
 	}
 
@@ -348,10 +373,9 @@ struct cgroup_subsys debug_cgrp_subsys = {
  * On v2, debug is an implicit controller enabled by "cgroup_debug" boot
  * parameter.
  */
-static int __init enable_cgroup_debug(char *str)
+void __init enable_debug_cgroup(void)
 {
 	debug_cgrp_subsys.dfl_cftypes = debug_files;
 	debug_cgrp_subsys.implicit_on_dfl = true;
-	return 1;
+	debug_cgrp_subsys.threaded = true;
 }
-__setup("cgroup_debug", enable_cgroup_debug);

@@ -25,6 +25,8 @@
  *
  */
 
+#include "gt/intel_engine.h"
+
 #include "i915_drv.h"
 
 /**
@@ -798,22 +800,15 @@ struct cmd_node {
  */
 static inline u32 cmd_header_key(u32 x)
 {
-	u32 shift;
-
 	switch (x >> INSTR_CLIENT_SHIFT) {
 	default:
 	case INSTR_MI_CLIENT:
-		shift = STD_MI_OPCODE_SHIFT;
-		break;
+		return x >> STD_MI_OPCODE_SHIFT;
 	case INSTR_RC_CLIENT:
-		shift = STD_3D_OPCODE_SHIFT;
-		break;
+		return x >> STD_3D_OPCODE_SHIFT;
 	case INSTR_BC_CLIENT:
-		shift = STD_2D_OPCODE_SHIFT;
-		break;
+		return x >> STD_2D_OPCODE_SHIFT;
 	}
-
-	return x >> shift;
 }
 
 static int init_hash_table(struct intel_engine_cs *engine,
@@ -871,11 +866,11 @@ void intel_engine_init_cmd_parser(struct intel_engine_cs *engine)
 	int cmd_table_count;
 	int ret;
 
-	if (!IS_GEN7(engine->i915))
+	if (!IS_GEN(engine->i915, 7))
 		return;
 
-	switch (engine->id) {
-	case RCS:
+	switch (engine->class) {
+	case RENDER_CLASS:
 		if (IS_HASWELL(engine->i915)) {
 			cmd_tables = hsw_render_ring_cmds;
 			cmd_table_count =
@@ -895,12 +890,12 @@ void intel_engine_init_cmd_parser(struct intel_engine_cs *engine)
 
 		engine->get_cmd_length_mask = gen7_render_get_cmd_length_mask;
 		break;
-	case VCS:
+	case VIDEO_DECODE_CLASS:
 		cmd_tables = gen7_video_cmds;
 		cmd_table_count = ARRAY_SIZE(gen7_video_cmds);
 		engine->get_cmd_length_mask = gen7_bsd_get_cmd_length_mask;
 		break;
-	case BCS:
+	case COPY_ENGINE_CLASS:
 		if (IS_HASWELL(engine->i915)) {
 			cmd_tables = hsw_blt_ring_cmds;
 			cmd_table_count = ARRAY_SIZE(hsw_blt_ring_cmds);
@@ -919,14 +914,14 @@ void intel_engine_init_cmd_parser(struct intel_engine_cs *engine)
 
 		engine->get_cmd_length_mask = gen7_blt_get_cmd_length_mask;
 		break;
-	case VECS:
+	case VIDEO_ENHANCEMENT_CLASS:
 		cmd_tables = hsw_vebox_cmds;
 		cmd_table_count = ARRAY_SIZE(hsw_vebox_cmds);
 		/* VECS can use the same length_mask function as VCS */
 		engine->get_cmd_length_mask = gen7_bsd_get_cmd_length_mask;
 		break;
 	default:
-		MISSING_CASE(engine->id);
+		MISSING_CASE(engine->class);
 		return;
 	}
 
@@ -947,7 +942,7 @@ void intel_engine_init_cmd_parser(struct intel_engine_cs *engine)
 		return;
 	}
 
-	engine->needs_cmd_parser = true;
+	engine->flags |= I915_ENGINE_NEEDS_CMD_PARSER;
 }
 
 /**
@@ -959,7 +954,7 @@ void intel_engine_init_cmd_parser(struct intel_engine_cs *engine)
  */
 void intel_engine_cleanup_cmd_parser(struct intel_engine_cs *engine)
 {
-	if (!engine->needs_cmd_parser)
+	if (!intel_engine_needs_cmd_parser(engine))
 		return;
 
 	fini_hash_table(engine);
@@ -1038,7 +1033,7 @@ find_reg(const struct intel_engine_cs *engine, bool is_master, u32 addr)
 	const struct drm_i915_reg_table *table = engine->reg_tables;
 	int count = engine->reg_table_count;
 
-	do {
+	for (; count > 0; ++table, --count) {
 		if (!table->master || is_master) {
 			const struct drm_i915_reg_descriptor *reg;
 
@@ -1046,7 +1041,7 @@ find_reg(const struct intel_engine_cs *engine, bool is_master, u32 addr)
 			if (reg != NULL)
 				return reg;
 		}
-	} while (table++, --count);
+	}
 
 	return NULL;
 }
@@ -1063,19 +1058,20 @@ static u32 *copy_batch(struct drm_i915_gem_object *dst_obj,
 	void *dst, *src;
 	int ret;
 
-	ret = i915_gem_obj_prepare_shmem_read(src_obj, &src_needs_clflush);
+	ret = i915_gem_object_prepare_write(dst_obj, &dst_needs_clflush);
 	if (ret)
 		return ERR_PTR(ret);
 
-	ret = i915_gem_obj_prepare_shmem_write(dst_obj, &dst_needs_clflush);
-	if (ret) {
-		dst = ERR_PTR(ret);
-		goto unpin_src;
-	}
-
-	dst = i915_gem_object_pin_map(dst_obj, I915_MAP_WB);
+	dst = i915_gem_object_pin_map(dst_obj, I915_MAP_FORCE_WB);
+	i915_gem_object_finish_access(dst_obj);
 	if (IS_ERR(dst))
-		goto unpin_dst;
+		return dst;
+
+	ret = i915_gem_object_prepare_read(src_obj, &src_needs_clflush);
+	if (ret) {
+		i915_gem_object_unpin_map(dst_obj);
+		return ERR_PTR(ret);
+	}
 
 	src = ERR_PTR(-ENODEV);
 	if (src_needs_clflush &&
@@ -1121,13 +1117,11 @@ static u32 *copy_batch(struct drm_i915_gem_object *dst_obj,
 		}
 	}
 
+	i915_gem_object_finish_access(src_obj);
+
 	/* dst_obj is returned with vmap pinned */
 	*needs_clflush_after = dst_needs_clflush & CLFLUSH_AFTER;
 
-unpin_dst:
-	i915_gem_obj_finish_shmem_access(dst_obj);
-unpin_src:
-	i915_gem_obj_finish_shmem_access(src_obj);
 	return dst;
 }
 
@@ -1216,6 +1210,12 @@ static bool check_cmd(const struct intel_engine_cs *engine,
 
 				if (condition == 0)
 					continue;
+			}
+
+			if (desc->bits[i].offset >= length) {
+				DRM_DEBUG_DRIVER("CMD: Rejected command 0x%08X, too short to check bitmask (%s)\n",
+						 *cmd, engine->name);
+				return false;
 			}
 
 			dword = cmd[desc->bits[i].offset] &
@@ -1357,7 +1357,7 @@ int i915_cmd_parser_get_version(struct drm_i915_private *dev_priv)
 
 	/* If the command parser is not enabled, report 0 - unsupported */
 	for_each_engine(engine, dev_priv, id) {
-		if (engine->needs_cmd_parser) {
+		if (intel_engine_needs_cmd_parser(engine)) {
 			active = true;
 			break;
 		}

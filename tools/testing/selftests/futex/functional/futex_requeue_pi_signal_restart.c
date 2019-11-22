@@ -1,11 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /******************************************************************************
  *
  *   Copyright © International Business Machines  Corp., 2006-2008
- *
- *   This program is free software;  you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
- *   (at your option) any later version.
  *
  * DESCRIPTION
  *      This test exercises the futex_wait_requeue_pi() signal handling both
@@ -143,9 +139,11 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	printf("%s: Test signal handling during requeue_pi\n",
+	ksft_print_header();
+	ksft_set_plan(1);
+	ksft_print_msg("%s: Test signal handling during requeue_pi\n",
 	       basename(argv[0]));
-	printf("\tArguments: <none>\n");
+	ksft_print_msg("\tArguments: <none>\n");
 
 	sa.sa_handler = handle_signal;
 	sigemptyset(&sa.sa_mask);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright 2001 MontaVista Software Inc.
  * Author: Jun Sun, jsun@mvista.com or jsun@junsun.net
@@ -7,11 +8,6 @@
  *	Author: Maciej W. Rozycki <macro@mips.com>
  *
  * This file define the irq handler for MIPS CPU interrupts.
- *
- * This program is free software; you can redistribute	it and/or modify it
- * under  the terms of	the GNU General	 Public License as published by the
- * Free Software Foundation;  either version 2 of the  License, or (at your
- * option) any later version.
  */
 
 /*
@@ -101,7 +97,7 @@ static void mips_mt_send_ipi(struct irq_data *d, unsigned int cpu)
 	local_irq_save(flags);
 
 	/* We can only send IPIs to VPEs within the local core */
-	WARN_ON(cpu_data[cpu].core != current_cpu_data.core);
+	WARN_ON(!cpus_are_siblings(smp_processor_id(), cpu));
 
 	vpflags = dvpe();
 	settc(cpu_vpe_id(&cpu_data[cpu]));

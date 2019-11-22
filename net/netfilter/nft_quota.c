@@ -1,9 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016 Pablo Neira Ayuso <pablo@netfilter.org>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -61,7 +58,7 @@ static void nft_quota_obj_eval(struct nft_object *obj,
 
 	if (overquota &&
 	    !test_and_set_bit(NFT_QUOTA_DEPLETED_BIT, &priv->flags))
-		nft_obj_notify(nft_net(pkt), obj->table, obj, 0, 0,
+		nft_obj_notify(nft_net(pkt), obj->key.table, obj, 0, 0,
 			       NFT_MSG_NEWOBJ, nft_pf(pkt), 0, GFP_ATOMIC);
 }
 
@@ -151,14 +148,20 @@ static int nft_quota_obj_dump(struct sk_buff *skb, struct nft_object *obj,
 	return nft_quota_do_dump(skb, priv, reset);
 }
 
-static struct nft_object_type nft_quota_obj __read_mostly = {
-	.type		= NFT_OBJECT_QUOTA,
+static struct nft_object_type nft_quota_obj_type;
+static const struct nft_object_ops nft_quota_obj_ops = {
+	.type		= &nft_quota_obj_type,
 	.size		= sizeof(struct nft_quota),
-	.maxattr	= NFTA_QUOTA_MAX,
-	.policy		= nft_quota_policy,
 	.init		= nft_quota_obj_init,
 	.eval		= nft_quota_obj_eval,
 	.dump		= nft_quota_obj_dump,
+};
+
+static struct nft_object_type nft_quota_obj_type __read_mostly = {
+	.type		= NFT_OBJECT_QUOTA,
+	.ops		= &nft_quota_obj_ops,
+	.maxattr	= NFTA_QUOTA_MAX,
+	.policy		= nft_quota_policy,
 	.owner		= THIS_MODULE,
 };
 
@@ -209,7 +212,7 @@ static int __init nft_quota_module_init(void)
 {
 	int err;
 
-	err = nft_register_obj(&nft_quota_obj);
+	err = nft_register_obj(&nft_quota_obj_type);
 	if (err < 0)
 		return err;
 
@@ -219,14 +222,14 @@ static int __init nft_quota_module_init(void)
 
 	return 0;
 err1:
-	nft_unregister_obj(&nft_quota_obj);
+	nft_unregister_obj(&nft_quota_obj_type);
 	return err;
 }
 
 static void __exit nft_quota_module_exit(void)
 {
 	nft_unregister_expr(&nft_quota_type);
-	nft_unregister_obj(&nft_quota_obj);
+	nft_unregister_obj(&nft_quota_obj_type);
 }
 
 module_init(nft_quota_module_init);

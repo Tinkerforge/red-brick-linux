@@ -1,10 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2014 Imagination Technologies
  * Authors:  Will Thomas, James Hartley
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as published
- * by the Free Software Foundation.
  *
  *	Interface structure taken from omap-sham driver
  */
@@ -1054,7 +1051,7 @@ res_err:
 
 static int img_hash_remove(struct platform_device *pdev)
 {
-	static struct img_hash_dev *hdev;
+	struct img_hash_dev *hdev;
 
 	hdev = platform_get_drvdata(pdev);
 	spin_lock(&img_hash.lock);

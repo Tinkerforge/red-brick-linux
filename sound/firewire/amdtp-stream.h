@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef SOUND_FIREWIRE_AMDTP_H_INCLUDED
 #define SOUND_FIREWIRE_AMDTP_H_INCLUDED
 
@@ -107,10 +108,31 @@ struct amdtp_stream {
 	struct iso_packets_buffer buffer;
 	int packet_index;
 	int tag;
-	int (*handle_packet)(struct amdtp_stream *s,
-			unsigned int payload_quadlets, unsigned int cycle,
-			unsigned int index);
-	unsigned int max_payload_length;
+	union {
+		struct {
+			unsigned int ctx_header_size;
+
+			// limit for payload of iso packet.
+			unsigned int max_ctx_payload_length;
+
+			// For quirks of CIP headers.
+			// Fixed interval of dbc between previos/current
+			// packets.
+			unsigned int dbc_interval;
+			// Indicate the value of dbc field in a first packet.
+			unsigned int first_dbc;
+		} tx;
+		struct {
+			// To calculate CIP data blocks and tstamp.
+			unsigned int transfer_delay;
+			unsigned int data_block_state;
+			unsigned int last_syt_offset;
+			unsigned int syt_offset_state;
+
+			// To generate CIP header.
+			unsigned int fdf;
+		} rx;
+	} ctx_data;
 
 	/* For CIP headers. */
 	unsigned int source_node_id_field;
@@ -118,19 +140,10 @@ struct amdtp_stream {
 	unsigned int data_block_counter;
 	unsigned int sph;
 	unsigned int fmt;
-	unsigned int fdf;
-	/* quirk: fixed interval of dbc between previos/current packets. */
-	unsigned int tx_dbc_interval;
-	/* quirk: indicate the value of dbc field in a first packet. */
-	unsigned int tx_first_dbc;
 
 	/* Internal flags. */
 	enum cip_sfc sfc;
 	unsigned int syt_interval;
-	unsigned int transfer_delay;
-	unsigned int data_block_state;
-	unsigned int last_syt_offset;
-	unsigned int syt_offset_state;
 
 	/* For a PCM substream processing. */
 	struct snd_pcm_substream *pcm;
@@ -220,7 +233,7 @@ static inline bool amdtp_stream_pcm_running(struct amdtp_stream *s)
 static inline void amdtp_stream_pcm_trigger(struct amdtp_stream *s,
 					    struct snd_pcm_substream *pcm)
 {
-	ACCESS_ONCE(s->pcm) = pcm;
+	WRITE_ONCE(s->pcm, pcm);
 }
 
 static inline bool cip_sfc_is_base_44100(enum cip_sfc sfc)

@@ -566,8 +566,9 @@ static int technisat_usb2_frontend_attach(struct dvb_usb_adapter *a)
 			a->fe_adap[0].fe->ops.set_voltage = technisat_usb2_set_voltage;
 
 			/* if everything was successful assign a nice name to the frontend */
-			strlcpy(a->fe_adap[0].fe->ops.info.name, a->dev->desc->name,
-					sizeof(a->fe_adap[0].fe->ops.info.name));
+			strscpy(a->fe_adap[0].fe->ops.info.name,
+				a->dev->desc->name,
+				sizeof(a->fe_adap[0].fe->ops.info.name));
 		} else {
 			dvb_frontend_detach(a->fe_adap[0].fe);
 			a->fe_adap[0].fe = NULL;
@@ -749,7 +750,7 @@ static struct dvb_usb_device_properties technisat_usb2_devices = {
 		.rc_codes    = RC_MAP_TECHNISAT_USB2,
 		.module_name = "technisat-usb2",
 		.rc_query    = technisat_usb2_rc_query,
-		.allowed_protos = RC_BIT_ALL_IR_DECODER,
+		.allowed_protos = RC_PROTO_BIT_ALL_IR_DECODER,
 		.driver_type    = RC_DRIVER_IR_RAW,
 	}
 };

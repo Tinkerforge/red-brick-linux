@@ -1,17 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU Library General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
  
 /*
@@ -30,7 +18,7 @@
 #define VORTEX_PCM_TYPE(x) (x->name[40])
 
 /* hardware definition */
-static struct snd_pcm_hardware snd_vortex_playback_hw_adb = {
+static const struct snd_pcm_hardware snd_vortex_playback_hw_adb = {
 	.info =
 	    (SNDRV_PCM_INFO_MMAP | /* SNDRV_PCM_INFO_RESUME | */
 	     SNDRV_PCM_INFO_PAUSE | SNDRV_PCM_INFO_INTERLEAVED |
@@ -51,7 +39,7 @@ static struct snd_pcm_hardware snd_vortex_playback_hw_adb = {
 };
 
 #ifndef CHIP_AU8820
-static struct snd_pcm_hardware snd_vortex_playback_hw_a3d = {
+static const struct snd_pcm_hardware snd_vortex_playback_hw_a3d = {
 	.info =
 	    (SNDRV_PCM_INFO_MMAP | /* SNDRV_PCM_INFO_RESUME | */
 	     SNDRV_PCM_INFO_PAUSE | SNDRV_PCM_INFO_INTERLEAVED |
@@ -71,7 +59,7 @@ static struct snd_pcm_hardware snd_vortex_playback_hw_a3d = {
 	.periods_max = 64,
 };
 #endif
-static struct snd_pcm_hardware snd_vortex_playback_hw_spdif = {
+static const struct snd_pcm_hardware snd_vortex_playback_hw_spdif = {
 	.info =
 	    (SNDRV_PCM_INFO_MMAP | /* SNDRV_PCM_INFO_RESUME | */
 	     SNDRV_PCM_INFO_PAUSE | SNDRV_PCM_INFO_INTERLEAVED |
@@ -94,7 +82,7 @@ static struct snd_pcm_hardware snd_vortex_playback_hw_spdif = {
 };
 
 #ifndef CHIP_AU8810
-static struct snd_pcm_hardware snd_vortex_playback_hw_wt = {
+static const struct snd_pcm_hardware snd_vortex_playback_hw_wt = {
 	.info = (SNDRV_PCM_INFO_MMAP |
 		 SNDRV_PCM_INFO_INTERLEAVED |
 		 SNDRV_PCM_INFO_BLOCK_TRANSFER | SNDRV_PCM_INFO_MMAP_VALID),
@@ -439,7 +427,7 @@ static snd_pcm_uframes_t snd_vortex_pcm_pointer(struct snd_pcm_substream *substr
 }
 
 /* operators */
-static struct snd_pcm_ops snd_vortex_playback_ops = {
+static const struct snd_pcm_ops snd_vortex_playback_ops = {
 	.open = snd_vortex_pcm_open,
 	.close = snd_vortex_pcm_close,
 	.ioctl = snd_pcm_lib_ioctl,

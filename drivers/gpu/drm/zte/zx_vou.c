@@ -1,11 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright 2016 Linaro Ltd.
  * Copyright 2016 ZTE Corporation.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
  */
 
 #include <linux/clk.h>
@@ -15,12 +11,12 @@
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc.h>
-#include <drm/drm_crtc_helper.h>
 #include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_fb_helper.h>
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_of.h>
 #include <drm/drm_plane_helper.h>
+#include <drm/drm_probe_helper.h>
 #include <drm/drmP.h>
 
 #include "zx_common_regs.h"
@@ -350,7 +346,8 @@ static inline void vou_chn_set_update(struct zx_crtc *zcrtc)
 	zx_writel(zcrtc->chnreg + CHN_UPDATE, 1);
 }
 
-static void zx_crtc_enable(struct drm_crtc *crtc)
+static void zx_crtc_atomic_enable(struct drm_crtc *crtc,
+				  struct drm_crtc_state *old_state)
 {
 	struct drm_display_mode *mode = &crtc->state->adjusted_mode;
 	bool interlaced = mode->flags & DRM_MODE_FLAG_INTERLACE;
@@ -454,7 +451,8 @@ static void zx_crtc_enable(struct drm_crtc *crtc)
 		DRM_DEV_ERROR(vou->dev, "failed to enable pixclk: %d\n", ret);
 }
 
-static void zx_crtc_disable(struct drm_crtc *crtc)
+static void zx_crtc_atomic_disable(struct drm_crtc *crtc,
+				   struct drm_crtc_state *old_state)
 {
 	struct zx_crtc *zcrtc = to_zx_crtc(crtc);
 	const struct zx_crtc_bits *bits = zcrtc->bits;
@@ -490,9 +488,9 @@ static void zx_crtc_atomic_flush(struct drm_crtc *crtc,
 }
 
 static const struct drm_crtc_helper_funcs zx_crtc_helper_funcs = {
-	.enable = zx_crtc_enable,
-	.disable = zx_crtc_disable,
 	.atomic_flush = zx_crtc_atomic_flush,
+	.atomic_enable = zx_crtc_atomic_enable,
+	.atomic_disable = zx_crtc_atomic_disable,
 };
 
 static int zx_vou_enable_vblank(struct drm_crtc *crtc)
@@ -625,9 +623,10 @@ void zx_vou_layer_enable(struct drm_plane *plane)
 	zx_writel_mask(vou->osd + OSD_CTRL0, bits->enable, bits->enable);
 }
 
-void zx_vou_layer_disable(struct drm_plane *plane)
+void zx_vou_layer_disable(struct drm_plane *plane,
+			  struct drm_plane_state *old_state)
 {
-	struct zx_crtc *zcrtc = to_zx_crtc(plane->crtc);
+	struct zx_crtc *zcrtc = to_zx_crtc(old_state->crtc);
 	struct zx_vou_hw *vou = zcrtc->vou;
 	struct zx_plane *zplane = to_zx_plane(plane);
 	const struct vou_layer_bits *bits = zplane->bits;

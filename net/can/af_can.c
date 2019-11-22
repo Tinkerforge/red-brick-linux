@@ -72,13 +72,13 @@ MODULE_AUTHOR("Urs Thuermann <urs.thuermann@volkswagen.de>, "
 MODULE_ALIAS_NETPROTO(PF_CAN);
 
 static int stats_timer __read_mostly = 1;
-module_param(stats_timer, int, S_IRUGO);
+module_param(stats_timer, int, 0444);
 MODULE_PARM_DESC(stats_timer, "enable timer for statistics (default:on)");
 
 static struct kmem_cache *rcv_cache __read_mostly;
 
 /* table of registered CAN protocols */
-static const struct can_proto *proto_tab[CAN_NPROTO] __read_mostly;
+static const struct can_proto __rcu *proto_tab[CAN_NPROTO] __read_mostly;
 static DEFINE_MUTEX(proto_tab_lock);
 
 static atomic_t skbcounter = ATOMIC_INIT(0);
@@ -89,13 +89,7 @@ static atomic_t skbcounter = ATOMIC_INIT(0);
 
 int can_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 {
-	struct sock *sk = sock->sk;
-
 	switch (cmd) {
-
-	case SIOCGSTAMP:
-		return sock_get_timestamp(sk, (struct timeval __user *)arg);
-
 	default:
 		return -ENOIOCTLCMD;
 	}
@@ -105,6 +99,7 @@ EXPORT_SYMBOL(can_ioctl);
 static void can_sock_destruct(struct sock *sk)
 {
 	skb_queue_purge(&sk->sk_receive_queue);
+	skb_queue_purge(&sk->sk_error_queue);
 }
 
 static const struct can_proto *can_get_proto(int protocol)
@@ -321,13 +316,13 @@ EXPORT_SYMBOL(can_send);
  * af_can rx path
  */
 
-static struct dev_rcv_lists *find_dev_rcv_lists(struct net *net,
+static struct can_dev_rcv_lists *find_dev_rcv_lists(struct net *net,
 						struct net_device *dev)
 {
 	if (!dev)
 		return net->can.can_rx_alldev_list;
 	else
-		return (struct dev_rcv_lists *)dev->ml_priv;
+		return (struct can_dev_rcv_lists *)dev->ml_priv;
 }
 
 /**
@@ -381,7 +376,7 @@ static unsigned int effhash(canid_t can_id)
  *  Reduced can_id to have a preprocessed filter compare value.
  */
 static struct hlist_head *find_rcv_list(canid_t *can_id, canid_t *mask,
-					struct dev_rcv_lists *d)
+					struct can_dev_rcv_lists *d)
 {
 	canid_t inv = *can_id & CAN_INV_FILTER; /* save flag before masking */
 
@@ -464,7 +459,7 @@ int can_rx_register(struct net *net, struct net_device *dev, canid_t can_id,
 {
 	struct receiver *r;
 	struct hlist_head *rl;
-	struct dev_rcv_lists *d;
+	struct can_dev_rcv_lists *d;
 	struct s_pstats *can_pstats = net->can.can_pstats;
 	int err = 0;
 
@@ -542,7 +537,7 @@ void can_rx_unregister(struct net *net, struct net_device *dev, canid_t can_id,
 	struct receiver *r = NULL;
 	struct hlist_head *rl;
 	struct s_pstats *can_pstats = net->can.can_pstats;
-	struct dev_rcv_lists *d;
+	struct can_dev_rcv_lists *d;
 
 	if (dev && dev->type != ARPHRD_CAN)
 		return;
@@ -615,7 +610,7 @@ static inline void deliver(struct sk_buff *skb, struct receiver *r)
 	r->matches++;
 }
 
-static int can_rcv_filter(struct dev_rcv_lists *d, struct sk_buff *skb)
+static int can_rcv_filter(struct can_dev_rcv_lists *d, struct sk_buff *skb)
 {
 	struct receiver *r;
 	int matches = 0;
@@ -682,7 +677,7 @@ static int can_rcv_filter(struct dev_rcv_lists *d, struct sk_buff *skb)
 
 static void can_receive(struct sk_buff *skb, struct net_device *dev)
 {
-	struct dev_rcv_lists *d;
+	struct can_dev_rcv_lists *d;
 	struct net *net = dev_net(dev);
 	struct s_stats *can_stats = net->can.can_stats;
 	int matches;
@@ -721,20 +716,16 @@ static int can_rcv(struct sk_buff *skb, struct net_device *dev,
 {
 	struct canfd_frame *cfd = (struct canfd_frame *)skb->data;
 
-	if (WARN_ONCE(dev->type != ARPHRD_CAN ||
-		      skb->len != CAN_MTU ||
-		      cfd->len > CAN_MAX_DLEN,
-		      "PF_CAN: dropped non conform CAN skbuf: "
-		      "dev type %d, len %d, datalen %d\n",
-		      dev->type, skb->len, cfd->len))
-		goto drop;
+	if (unlikely(dev->type != ARPHRD_CAN || skb->len != CAN_MTU ||
+		     cfd->len > CAN_MAX_DLEN)) {
+		pr_warn_once("PF_CAN: dropped non conform CAN skbuf: dev type %d, len %d, datalen %d\n",
+			     dev->type, skb->len, cfd->len);
+		kfree_skb(skb);
+		return NET_RX_DROP;
+	}
 
 	can_receive(skb, dev);
 	return NET_RX_SUCCESS;
-
-drop:
-	kfree_skb(skb);
-	return NET_RX_DROP;
 }
 
 static int canfd_rcv(struct sk_buff *skb, struct net_device *dev,
@@ -742,20 +733,16 @@ static int canfd_rcv(struct sk_buff *skb, struct net_device *dev,
 {
 	struct canfd_frame *cfd = (struct canfd_frame *)skb->data;
 
-	if (WARN_ONCE(dev->type != ARPHRD_CAN ||
-		      skb->len != CANFD_MTU ||
-		      cfd->len > CANFD_MAX_DLEN,
-		      "PF_CAN: dropped non conform CAN FD skbuf: "
-		      "dev type %d, len %d, datalen %d\n",
-		      dev->type, skb->len, cfd->len))
-		goto drop;
+	if (unlikely(dev->type != ARPHRD_CAN || skb->len != CANFD_MTU ||
+		     cfd->len > CANFD_MAX_DLEN)) {
+		pr_warn_once("PF_CAN: dropped non conform CAN FD skbuf: dev type %d, len %d, datalen %d\n",
+			     dev->type, skb->len, cfd->len);
+		kfree_skb(skb);
+		return NET_RX_DROP;
+	}
 
 	can_receive(skb, dev);
 	return NET_RX_SUCCESS;
-
-drop:
-	kfree_skb(skb);
-	return NET_RX_DROP;
 }
 
 /*
@@ -788,7 +775,7 @@ int can_proto_register(const struct can_proto *cp)
 
 	mutex_lock(&proto_tab_lock);
 
-	if (proto_tab[proto]) {
+	if (rcu_access_pointer(proto_tab[proto])) {
 		pr_err("can: protocol %d already registered\n", proto);
 		err = -EBUSY;
 	} else
@@ -812,7 +799,7 @@ void can_proto_unregister(const struct can_proto *cp)
 	int proto = cp->protocol;
 
 	mutex_lock(&proto_tab_lock);
-	BUG_ON(proto_tab[proto] != cp);
+	BUG_ON(rcu_access_pointer(proto_tab[proto]) != cp);
 	RCU_INIT_POINTER(proto_tab[proto], NULL);
 	mutex_unlock(&proto_tab_lock);
 
@@ -829,7 +816,7 @@ static int can_notifier(struct notifier_block *nb, unsigned long msg,
 			void *ptr)
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
-	struct dev_rcv_lists *d;
+	struct can_dev_rcv_lists *d;
 
 	if (dev->type != ARPHRD_CAN)
 		return NOTIFY_DONE;
@@ -874,16 +861,21 @@ static int can_pernet_init(struct net *net)
 {
 	spin_lock_init(&net->can.can_rcvlists_lock);
 	net->can.can_rx_alldev_list =
-		kzalloc(sizeof(struct dev_rcv_lists), GFP_KERNEL);
-
+		kzalloc(sizeof(struct can_dev_rcv_lists), GFP_KERNEL);
+	if (!net->can.can_rx_alldev_list)
+		goto out;
 	net->can.can_stats = kzalloc(sizeof(struct s_stats), GFP_KERNEL);
+	if (!net->can.can_stats)
+		goto out_free_alldev_list;
 	net->can.can_pstats = kzalloc(sizeof(struct s_pstats), GFP_KERNEL);
+	if (!net->can.can_pstats)
+		goto out_free_can_stats;
 
 	if (IS_ENABLED(CONFIG_PROC_FS)) {
 		/* the statistics are updated every second (timer triggered) */
 		if (stats_timer) {
-			setup_timer(&net->can.can_stattimer, can_stat_update,
-				    (unsigned long)net);
+			timer_setup(&net->can.can_stattimer, can_stat_update,
+				    0);
 			mod_timer(&net->can.can_stattimer,
 				  round_jiffies(jiffies + HZ));
 		}
@@ -892,6 +884,13 @@ static int can_pernet_init(struct net *net)
 	}
 
 	return 0;
+
+ out_free_can_stats:
+	kfree(net->can.can_stats);
+ out_free_alldev_list:
+	kfree(net->can.can_rx_alldev_list);
+ out:
+	return -ENOMEM;
 }
 
 static void can_pernet_exit(struct net *net)
@@ -908,7 +907,7 @@ static void can_pernet_exit(struct net *net)
 	rcu_read_lock();
 	for_each_netdev_rcu(net, dev) {
 		if (dev->type == ARPHRD_CAN && dev->ml_priv) {
-			struct dev_rcv_lists *d = dev->ml_priv;
+			struct can_dev_rcv_lists *d = dev->ml_priv;
 
 			BUG_ON(d->entries);
 			kfree(d);
@@ -954,6 +953,8 @@ static struct pernet_operations can_pernet_ops __read_mostly = {
 
 static __init int can_init(void)
 {
+	int err;
+
 	/* check for correct padding to be able to use the structs similarly */
 	BUILD_BUG_ON(offsetof(struct can_frame, can_dlc) !=
 		     offsetof(struct canfd_frame, len) ||
@@ -967,15 +968,31 @@ static __init int can_init(void)
 	if (!rcv_cache)
 		return -ENOMEM;
 
-	register_pernet_subsys(&can_pernet_ops);
+	err = register_pernet_subsys(&can_pernet_ops);
+	if (err)
+		goto out_pernet;
 
 	/* protocol register */
-	sock_register(&can_family_ops);
-	register_netdevice_notifier(&can_netdev_notifier);
+	err = sock_register(&can_family_ops);
+	if (err)
+		goto out_sock;
+	err = register_netdevice_notifier(&can_netdev_notifier);
+	if (err)
+		goto out_notifier;
+
 	dev_add_pack(&can_packet);
 	dev_add_pack(&canfd_packet);
 
 	return 0;
+
+out_notifier:
+	sock_unregister(PF_CAN);
+out_sock:
+	unregister_pernet_subsys(&can_pernet_ops);
+out_pernet:
+	kmem_cache_destroy(rcv_cache);
+
+	return err;
 }
 
 static __exit void can_exit(void)

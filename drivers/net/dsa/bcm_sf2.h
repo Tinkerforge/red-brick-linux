@@ -1,12 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Broadcom Starfighter2 private context
  *
  * Copyright (C) 2014, Broadcom Corporation
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #ifndef __BCM_SF2_H
@@ -48,15 +44,15 @@ struct bcm_sf2_hw_params {
 
 struct bcm_sf2_port_status {
 	unsigned int link;
-
-	struct ethtool_eee eee;
 };
 
 struct bcm_sf2_cfp_priv {
 	/* Mutex protecting concurrent accesses to the CFP registers */
 	struct mutex lock;
 	DECLARE_BITMAP(used, CFP_NUM_RULES);
+	DECLARE_BITMAP(unique, CFP_NUM_RULES);
 	unsigned int rules_cnt;
+	struct list_head rules_list;
 };
 
 struct bcm_sf2_priv {
@@ -86,9 +82,6 @@ struct bcm_sf2_priv {
 
 	/* Backing b53_device */
 	struct b53_device		*dev;
-
-	/* Mutex protecting access to the MIB counters */
-	struct mutex			stats_mutex;
 
 	struct bcm_sf2_hw_params	hw_params;
 
@@ -131,12 +124,12 @@ static inline u32 bcm_sf2_mangle_addr(struct bcm_sf2_priv *priv, u32 off)
 #define SF2_IO_MACRO(name) \
 static inline u32 name##_readl(struct bcm_sf2_priv *priv, u32 off)	\
 {									\
-	return __raw_readl(priv->name + off);				\
+	return readl_relaxed(priv->name + off);				\
 }									\
 static inline void name##_writel(struct bcm_sf2_priv *priv,		\
 				  u32 val, u32 off)			\
 {									\
-	__raw_writel(val, priv->name + off);				\
+	writel_relaxed(val, priv->name + off);				\
 }									\
 
 /* Accesses to 64-bits register requires us to latch the hi/lo pairs
@@ -180,23 +173,23 @@ static inline void intrl2_##which##_mask_set(struct bcm_sf2_priv *priv, \
 static inline u32 core_readl(struct bcm_sf2_priv *priv, u32 off)
 {
 	u32 tmp = bcm_sf2_mangle_addr(priv, off);
-	return __raw_readl(priv->core + tmp);
+	return readl_relaxed(priv->core + tmp);
 }
 
 static inline void core_writel(struct bcm_sf2_priv *priv, u32 val, u32 off)
 {
 	u32 tmp = bcm_sf2_mangle_addr(priv, off);
-	__raw_writel(val, priv->core + tmp);
+	writel_relaxed(val, priv->core + tmp);
 }
 
 static inline u32 reg_readl(struct bcm_sf2_priv *priv, u16 off)
 {
-	return __raw_readl(priv->reg + priv->reg_offsets[off]);
+	return readl_relaxed(priv->reg + priv->reg_offsets[off]);
 }
 
 static inline void reg_writel(struct bcm_sf2_priv *priv, u32 val, u16 off)
 {
-	__raw_writel(val, priv->reg + priv->reg_offsets[off]);
+	writel_relaxed(val, priv->reg + priv->reg_offsets[off]);
 }
 
 SF2_IO64_MACRO(core);
@@ -214,5 +207,12 @@ int bcm_sf2_get_rxnfc(struct dsa_switch *ds, int port,
 int bcm_sf2_set_rxnfc(struct dsa_switch *ds, int port,
 		      struct ethtool_rxnfc *nfc);
 int bcm_sf2_cfp_rst(struct bcm_sf2_priv *priv);
+void bcm_sf2_cfp_exit(struct dsa_switch *ds);
+int bcm_sf2_cfp_resume(struct dsa_switch *ds);
+void bcm_sf2_cfp_get_strings(struct dsa_switch *ds, int port,
+			     u32 stringset, uint8_t *data);
+void bcm_sf2_cfp_get_ethtool_stats(struct dsa_switch *ds, int port,
+				   uint64_t *data);
+int bcm_sf2_cfp_get_sset_count(struct dsa_switch *ds, int port, int sset);
 
 #endif /* __BCM_SF2_H */

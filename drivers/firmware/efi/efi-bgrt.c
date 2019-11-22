@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright 2012 Intel Corporation
  * Author: Josh Triplett <josh@joshtriplett.org>
@@ -5,10 +6,6 @@
  * Based on the bgrt driver:
  * Copyright 2012 Red Hat, Inc <mjg@redhat.com>
  * Author: Matthew Garrett
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -20,32 +17,12 @@
 #include <linux/efi-bgrt.h>
 
 struct acpi_table_bgrt bgrt_tab;
-size_t __initdata bgrt_image_size;
+size_t bgrt_image_size;
 
 struct bmp_header {
 	u16 id;
 	u32 size;
 } __packed;
-
-static bool efi_bgrt_addr_valid(u64 addr)
-{
-	efi_memory_desc_t *md;
-
-	for_each_efi_memory_desc(md) {
-		u64 size;
-		u64 end;
-
-		if (md->type != EFI_BOOT_SERVICES_DATA)
-			continue;
-
-		size = md->num_pages << EFI_PAGE_SHIFT;
-		end = md->phys_addr + size;
-		if (addr >= md->phys_addr && addr < end)
-			return true;
-	}
-
-	return false;
-}
 
 void __init efi_bgrt_init(struct acpi_table_header *table)
 {
@@ -70,11 +47,6 @@ void __init efi_bgrt_init(struct acpi_table_header *table)
 		       bgrt->version);
 		goto out;
 	}
-	if (bgrt->status & 0xfe) {
-		pr_notice("Ignoring BGRT: reserved status bits are non-zero %u\n",
-		       bgrt->status);
-		goto out;
-	}
 	if (bgrt->image_type != 0) {
 		pr_notice("Ignoring BGRT: invalid image type %u (expected 0)\n",
 		       bgrt->image_type);
@@ -85,7 +57,7 @@ void __init efi_bgrt_init(struct acpi_table_header *table)
 		goto out;
 	}
 
-	if (!efi_bgrt_addr_valid(bgrt->image_address)) {
+	if (efi_mem_type(bgrt->image_address) != EFI_BOOT_SERVICES_DATA) {
 		pr_notice("Ignoring BGRT: invalid image address\n");
 		goto out;
 	}

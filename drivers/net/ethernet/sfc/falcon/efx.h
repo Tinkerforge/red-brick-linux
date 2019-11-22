@@ -1,11 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /****************************************************************************
  * Driver for Solarflare network controllers and boards
  * Copyright 2005-2006 Fen Systems Ltd.
  * Copyright 2006-2013 Solarflare Communications Inc.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published
- * by the Free Software Foundation, incorporated herein by reference.
  */
 
 #ifndef EF4_EFX_H
@@ -32,8 +29,8 @@ netdev_tx_t ef4_hard_start_xmit(struct sk_buff *skb,
 				struct net_device *net_dev);
 netdev_tx_t ef4_enqueue_skb(struct ef4_tx_queue *tx_queue, struct sk_buff *skb);
 void ef4_xmit_done(struct ef4_tx_queue *tx_queue, unsigned int index);
-int ef4_setup_tc(struct net_device *net_dev, u32 handle, u32 chain_index,
-		 __be16 proto, struct tc_to_netdev *tc);
+int ef4_setup_tc(struct net_device *net_dev, enum tc_setup_type type,
+		 void *type_data);
 unsigned int ef4_tx_max_skb_descs(struct ef4_nic *efx);
 extern bool ef4_separate_tx_channels;
 
@@ -45,7 +42,7 @@ void ef4_remove_rx_queue(struct ef4_rx_queue *rx_queue);
 void ef4_init_rx_queue(struct ef4_rx_queue *rx_queue);
 void ef4_fini_rx_queue(struct ef4_rx_queue *rx_queue);
 void ef4_fast_push_rx_descriptors(struct ef4_rx_queue *rx_queue, bool atomic);
-void ef4_rx_slow_fill(unsigned long context);
+void ef4_rx_slow_fill(struct timer_list *t);
 void __ef4_rx_packet(struct ef4_channel *channel);
 void ef4_rx_packet(struct ef4_rx_queue *rx_queue, unsigned int index,
 		   unsigned int n_frags, unsigned int len, u16 flags);

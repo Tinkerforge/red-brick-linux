@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * NUMA support for s390
  *
@@ -7,7 +8,7 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/cpumask.h>
 #include <linux/list.h>
 #include <linux/list_sort.h>
@@ -33,7 +34,7 @@ struct toptree __ref *toptree_alloc(int level, int id)
 	if (slab_is_available())
 		res = kzalloc(sizeof(*res), GFP_KERNEL);
 	else
-		res = memblock_virt_alloc(sizeof(*res), 8);
+		res = memblock_alloc(sizeof(*res), 8);
 	if (!res)
 		return res;
 

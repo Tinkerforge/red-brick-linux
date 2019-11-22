@@ -1,14 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Key-agreement Protocol Primitives (KPP)
  *
  * Copyright (c) 2016, Intel Corporation
  * Authors: Salvatore Benedetto <salvatore.benedetto@intel.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the Free
- * Software Foundation; either version 2 of the License, or (at your option)
- * any later version.
- *
  */
 
 #ifndef _CRYPTO_KPP_
@@ -145,6 +140,16 @@ static inline struct crypto_kpp *crypto_kpp_reqtfm(struct kpp_request *req)
 	return __crypto_kpp_tfm(req->base.tfm);
 }
 
+static inline u32 crypto_kpp_get_flags(struct crypto_kpp *tfm)
+{
+	return crypto_tfm_get_flags(crypto_kpp_tfm(tfm));
+}
+
+static inline void crypto_kpp_set_flags(struct crypto_kpp *tfm, u32 flags)
+{
+	crypto_tfm_set_flags(crypto_kpp_tfm(tfm), flags);
+}
+
 /**
  * crypto_free_kpp() - free KPP tfm handle
  *
@@ -277,8 +282,13 @@ static inline int crypto_kpp_set_secret(struct crypto_kpp *tfm,
 					const void *buffer, unsigned int len)
 {
 	struct kpp_alg *alg = crypto_kpp_alg(tfm);
+	struct crypto_alg *calg = tfm->base.__crt_alg;
+	int ret;
 
-	return alg->set_secret(tfm, buffer, len);
+	crypto_stats_get(calg);
+	ret = alg->set_secret(tfm, buffer, len);
+	crypto_stats_kpp_set_secret(calg, ret);
+	return ret;
 }
 
 /**
@@ -298,8 +308,13 @@ static inline int crypto_kpp_generate_public_key(struct kpp_request *req)
 {
 	struct crypto_kpp *tfm = crypto_kpp_reqtfm(req);
 	struct kpp_alg *alg = crypto_kpp_alg(tfm);
+	struct crypto_alg *calg = tfm->base.__crt_alg;
+	int ret;
 
-	return alg->generate_public_key(req);
+	crypto_stats_get(calg);
+	ret = alg->generate_public_key(req);
+	crypto_stats_kpp_generate_public_key(calg, ret);
+	return ret;
 }
 
 /**
@@ -316,8 +331,13 @@ static inline int crypto_kpp_compute_shared_secret(struct kpp_request *req)
 {
 	struct crypto_kpp *tfm = crypto_kpp_reqtfm(req);
 	struct kpp_alg *alg = crypto_kpp_alg(tfm);
+	struct crypto_alg *calg = tfm->base.__crt_alg;
+	int ret;
 
-	return alg->compute_shared_secret(req);
+	crypto_stats_get(calg);
+	ret = alg->compute_shared_secret(req);
+	crypto_stats_kpp_compute_shared_secret(calg, ret);
+	return ret;
 }
 
 /**

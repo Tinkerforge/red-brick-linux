@@ -1,15 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * BTS PMU driver for perf
  * Copyright (c) 2013-2014, Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
  */
 
 #undef DEBUG
@@ -23,7 +15,7 @@
 #include <linux/device.h>
 #include <linux/coredump.h>
 
-#include <asm-generic/sizes.h>
+#include <linux/sizes.h>
 #include <asm/perf_event.h>
 
 #include "../perf_event.h"
@@ -77,10 +69,12 @@ static size_t buf_size(struct page *page)
 }
 
 static void *
-bts_buffer_setup_aux(int cpu, void **pages, int nr_pages, bool overwrite)
+bts_buffer_setup_aux(struct perf_event *event, void **pages,
+		     int nr_pages, bool overwrite)
 {
 	struct bts_buffer *buf;
 	struct page *page;
+	int cpu = event->cpu;
 	int node = (cpu == -1) ? cpu : cpu_to_node(cpu);
 	unsigned long offset;
 	size_t size = nr_pages << PAGE_SHIFT;
@@ -268,7 +262,7 @@ static void bts_event_start(struct perf_event *event, int flags)
 	bts->ds_back.bts_absolute_maximum = cpuc->ds->bts_absolute_maximum;
 	bts->ds_back.bts_interrupt_threshold = cpuc->ds->bts_interrupt_threshold;
 
-	event->hw.itrace_started = 1;
+	perf_event_itrace_started(event);
 	event->hw.state = 0;
 
 	__bts_event_start(event);
@@ -546,9 +540,6 @@ static int bts_event_init(struct perf_event *event)
 	if (event->attr.type != bts_pmu.type)
 		return -ENOENT;
 
-	if (x86_add_exclusive(x86_lbr_exclusive_bts))
-		return -EBUSY;
-
 	/*
 	 * BTS leaks kernel addresses even when CPL0 tracing is
 	 * disabled, so disallow intel_bts driver for unprivileged
@@ -561,6 +552,9 @@ static int bts_event_init(struct perf_event *event)
 	if (event->attr.exclude_kernel && perf_paranoid_kernel() &&
 	    !capable(CAP_SYS_ADMIN))
 		return -EACCES;
+
+	if (x86_add_exclusive(x86_lbr_exclusive_bts))
+		return -EBUSY;
 
 	ret = x86_reserve_hardware();
 	if (ret) {
@@ -581,6 +575,24 @@ static __init int bts_init(void)
 {
 	if (!boot_cpu_has(X86_FEATURE_DTES64) || !x86_pmu.bts)
 		return -ENODEV;
+
+	if (boot_cpu_has(X86_FEATURE_PTI)) {
+		/*
+		 * BTS hardware writes through a virtual memory map we must
+		 * either use the kernel physical map, or the user mapping of
+		 * the AUX buffer.
+		 *
+		 * However, since this driver supports per-CPU and per-task inherit
+		 * we cannot use the user mapping since it will not be available
+		 * if we're not running the owning process.
+		 *
+		 * With PTI we can't use the kernal map either, because its not
+		 * there when we run userspace.
+		 *
+		 * For now, disable this driver when using PTI.
+		 */
+		return -ENODEV;
+	}
 
 	bts_pmu.capabilities	= PERF_PMU_CAP_AUX_NO_SG | PERF_PMU_CAP_ITRACE |
 				  PERF_PMU_CAP_EXCLUSIVE;

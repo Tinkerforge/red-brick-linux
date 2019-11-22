@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
  * Format of an instruction in memory.
  *
@@ -54,9 +55,9 @@ enum spec_op {
 	spec3_unused_op, spec4_unused_op, slt_op, sltu_op,
 	dadd_op, daddu_op, dsub_op, dsubu_op,
 	tge_op, tgeu_op, tlt_op, tltu_op,
-	teq_op, spec5_unused_op, tne_op, spec6_unused_op,
-	dsll_op, spec7_unused_op, dsrl_op, dsra_op,
-	dsll32_op, spec8_unused_op, dsrl32_op, dsra32_op
+	teq_op, seleqz_op, tne_op, selnez_op,
+	dsll_op, spec5_unused_op, dsrl_op, dsra_op,
+	dsll32_op, spec6_unused_op, dsrl32_op, dsra32_op
 };
 
 /*
@@ -368,8 +369,9 @@ enum mm_32a_minor_op {
 	mm_ext_op = 0x02c,
 	mm_pool32axf_op = 0x03c,
 	mm_srl32_op = 0x040,
+	mm_srlv32_op = 0x050,
 	mm_sra_op = 0x080,
-	mm_srlv32_op = 0x090,
+	mm_srav_op = 0x090,
 	mm_rotr_op = 0x0c0,
 	mm_lwxs_op = 0x118,
 	mm_addu32_op = 0x150,
@@ -981,7 +983,7 @@ struct mm16_r3_format {		/* Load from global pointer format */
 struct mm16_r5_format {		/* Load/store from stack pointer format */
 	__BITFIELD_FIELD(unsigned int opcode : 6,
 	__BITFIELD_FIELD(unsigned int rt : 5,
-	__BITFIELD_FIELD(signed int simmediate : 5,
+	__BITFIELD_FIELD(unsigned int imm : 5,
 	__BITFIELD_FIELD(unsigned int : 16, /* Ignored */
 	;))))
 };

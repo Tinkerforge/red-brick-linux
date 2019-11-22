@@ -1,16 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * skl-sst-ipc.c - Intel skl IPC Support
  *
  * Copyright (C) 2014-15, Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as version 2, as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
  */
 #include <linux/device.h>
 
@@ -249,6 +241,8 @@ enum skl_ipc_glb_reply {
 	IPC_GLB_REPLY_INVALID_CONFIG_DATA_LEN = 121,
 	IPC_GLB_REPLY_GATEWAY_NOT_INITIALIZED = 140,
 	IPC_GLB_REPLY_GATEWAY_NOT_EXIST = 141,
+	IPC_GLB_REPLY_SCLK_ALREADY_RUNNING = 150,
+	IPC_GLB_REPLY_MCLK_ALREADY_RUNNING = 151,
 
 	IPC_GLB_REPLY_PPL_NOT_INITIALIZED = 160,
 	IPC_GLB_REPLY_PPL_NOT_EXIST = 161,
@@ -283,7 +277,7 @@ enum skl_ipc_module_msg {
 	IPC_MOD_SET_D0IX = 8
 };
 
-static void skl_ipc_tx_data_copy(struct ipc_message *msg, char *tx_data,
+void skl_ipc_tx_data_copy(struct ipc_message *msg, char *tx_data,
 		size_t tx_size)
 {
 	if (tx_size)
@@ -342,12 +336,13 @@ static struct ipc_message *skl_ipc_reply_get_msg(struct sst_generic_ipc *ipc,
 
 	msg = list_first_entry(&ipc->rx_list, struct ipc_message, list);
 
+	list_del(&msg->list);
 out:
 	return msg;
 
 }
 
-static int skl_ipc_process_notification(struct sst_generic_ipc *ipc,
+int skl_ipc_process_notification(struct sst_generic_ipc *ipc,
 		struct skl_ipc_header header)
 {
 	struct skl_sst *skl = container_of(ipc, struct skl_sst, ipc);
@@ -392,21 +387,50 @@ static int skl_ipc_process_notification(struct sst_generic_ipc *ipc,
 	return 0;
 }
 
-static int skl_ipc_set_reply_error_code(u32 reply)
+struct skl_ipc_err_map {
+	const char *msg;
+	enum skl_ipc_glb_reply reply;
+	int err;
+};
+
+static struct skl_ipc_err_map skl_err_map[] = {
+	{"DSP out of memory", IPC_GLB_REPLY_OUT_OF_MEMORY, -ENOMEM},
+	{"DSP busy", IPC_GLB_REPLY_BUSY, -EBUSY},
+	{"SCLK already running", IPC_GLB_REPLY_SCLK_ALREADY_RUNNING,
+			IPC_GLB_REPLY_SCLK_ALREADY_RUNNING},
+	{"MCLK already running", IPC_GLB_REPLY_MCLK_ALREADY_RUNNING,
+			IPC_GLB_REPLY_MCLK_ALREADY_RUNNING},
+};
+
+static int skl_ipc_set_reply_error_code(struct sst_generic_ipc *ipc, u32 reply)
 {
-	switch (reply) {
-	case IPC_GLB_REPLY_OUT_OF_MEMORY:
-		return -ENOMEM;
+	int i;
 
-	case IPC_GLB_REPLY_BUSY:
-		return -EBUSY;
+	for (i = 0; i < ARRAY_SIZE(skl_err_map); i++) {
+		if (skl_err_map[i].reply == reply)
+			break;
+	}
 
-	default:
+	if (i == ARRAY_SIZE(skl_err_map)) {
+		dev_err(ipc->dev, "ipc FW reply: %d FW Error Code: %u\n",
+				reply,
+				ipc->dsp->fw_ops.get_fw_errcode(ipc->dsp));
 		return -EINVAL;
 	}
+
+	if (skl_err_map[i].err < 0)
+		dev_err(ipc->dev, "ipc FW reply: %s FW Error Code: %u\n",
+				skl_err_map[i].msg,
+				ipc->dsp->fw_ops.get_fw_errcode(ipc->dsp));
+	else
+		dev_info(ipc->dev, "ipc FW reply: %s FW Error Code: %u\n",
+				skl_err_map[i].msg,
+				ipc->dsp->fw_ops.get_fw_errcode(ipc->dsp));
+
+	return skl_err_map[i].err;
 }
 
-static void skl_ipc_process_reply(struct sst_generic_ipc *ipc,
+void skl_ipc_process_reply(struct sst_generic_ipc *ipc,
 		struct skl_ipc_header header)
 {
 	struct ipc_message *msg;
@@ -441,10 +465,7 @@ static void skl_ipc_process_reply(struct sst_generic_ipc *ipc,
 
 		}
 	} else {
-		msg->errno = skl_ipc_set_reply_error_code(reply);
-		dev_err(ipc->dev, "ipc FW reply: reply=%d\n", reply);
-		dev_err(ipc->dev, "FW Error Code: %u\n",
-			ipc->dsp->fw_ops.get_fw_errcode(ipc->dsp));
+		msg->errno = skl_ipc_set_reply_error_code(ipc, reply);
 		switch (IPC_GLB_NOTIFY_MSG_TYPE(header.primary)) {
 		case IPC_GLB_LOAD_MULTIPLE_MODS:
 		case IPC_GLB_LOAD_LIBRARY:
@@ -460,7 +481,6 @@ static void skl_ipc_process_reply(struct sst_generic_ipc *ipc,
 	}
 
 	spin_lock_irqsave(&ipc->dsp->spinlock, flags);
-	list_del(&msg->list);
 	sst_ipc_tx_msg_reply_complete(ipc, msg);
 	spin_unlock_irqrestore(&ipc->dsp->spinlock, flags);
 }
@@ -483,6 +503,7 @@ irqreturn_t skl_dsp_irq_thread_handler(int irq, void *context)
 
 	hipcie = sst_dsp_shim_read_unlocked(dsp, SKL_ADSP_REG_HIPCIE);
 	hipct = sst_dsp_shim_read_unlocked(dsp, SKL_ADSP_REG_HIPCT);
+	hipcte = sst_dsp_shim_read_unlocked(dsp, SKL_ADSP_REG_HIPCTE);
 
 	/* reply message from DSP */
 	if (hipcie & SKL_ADSP_REG_HIPCIE_DONE) {
@@ -502,7 +523,6 @@ irqreturn_t skl_dsp_irq_thread_handler(int irq, void *context)
 
 	/* New message from DSP */
 	if (hipct & SKL_ADSP_REG_HIPCT_BUSY) {
-		hipcte = sst_dsp_shim_read_unlocked(dsp, SKL_ADSP_REG_HIPCTE);
 		header.primary = hipct;
 		header.extension = hipcte;
 		dev_dbg(dsp->dev, "IPC irq: Firmware respond primary:%x\n",

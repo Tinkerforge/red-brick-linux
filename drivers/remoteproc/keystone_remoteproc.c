@@ -1,16 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * TI Keystone DSP remoteproc driver
  *
  * Copyright (C) 2015-2017 Texas Instruments Incorporated - http://www.ti.com/
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
  */
 
 #include <linux/module.h>
@@ -410,7 +402,7 @@ static int keystone_rproc_probe(struct platform_device *pdev)
 	if (ret)
 		goto free_rproc;
 
-	ksproc->reset = devm_reset_control_get(dev, NULL);
+	ksproc->reset = devm_reset_control_get_exclusive(dev, NULL);
 	if (IS_ERR(ksproc->reset)) {
 		ret = PTR_ERR(ksproc->reset);
 		goto free_rproc;
@@ -505,6 +497,7 @@ static const struct of_device_id keystone_rproc_of_match[] = {
 	{ .compatible = "ti,k2hk-dsp", },
 	{ .compatible = "ti,k2l-dsp", },
 	{ .compatible = "ti,k2e-dsp", },
+	{ .compatible = "ti,k2g-dsp", },
 	{ /* sentinel */ },
 };
 MODULE_DEVICE_TABLE(of, keystone_rproc_of_match);

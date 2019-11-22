@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * net/core/dst.c	Protocol independent destination cache.
  *
@@ -21,27 +22,11 @@
 #include <linux/sched.h>
 #include <linux/prefetch.h>
 #include <net/lwtunnel.h>
+#include <net/xfrm.h>
 
 #include <net/dst.h>
 #include <net/dst_metadata.h>
 
-/*
- * Theory of operations:
- * 1) We use a list, protected by a spinlock, to add
- *    new entries from both BH and non-BH context.
- * 2) In order to keep spinlock held for a small delay,
- *    we use a second list where are stored long lived
- *    entries, that are handled by the garbage collect thread
- *    fired by a workqueue.
- * 3) This list is guarded by a mutex,
- *    so that the gc_task and dst_dev_event() can be synchronized.
- */
-
-/*
- * We want to keep lock & list close together
- * to dirty as few cache lines as possible in __dst_free().
- * As this is not a very strong hint, we dont force an alignment on SMP.
- */
 int dst_discard_out(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
 	kfree_skb(skb);
@@ -55,22 +40,20 @@ const struct dst_metrics dst_default_metrics = {
 	 * We really want to avoid false sharing on this variable, and catch
 	 * any writes on it.
 	 */
-	.refcnt = ATOMIC_INIT(1),
+	.refcnt = REFCOUNT_INIT(1),
 };
+EXPORT_SYMBOL(dst_default_metrics);
 
 void dst_init(struct dst_entry *dst, struct dst_ops *ops,
 	      struct net_device *dev, int initial_ref, int initial_obsolete,
 	      unsigned short flags)
 {
-	dst->child = NULL;
 	dst->dev = dev;
 	if (dev)
 		dev_hold(dev);
 	dst->ops = ops;
 	dst_init_metrics(dst, dst_default_metrics.metrics, true);
 	dst->expires = 0UL;
-	dst->path = dst;
-	dst->from = NULL;
 #ifdef CONFIG_XFRM
 	dst->xfrm = NULL;
 #endif
@@ -88,7 +71,6 @@ void dst_init(struct dst_entry *dst, struct dst_ops *ops,
 	dst->__use = 0;
 	dst->lastuse = jiffies;
 	dst->flags = flags;
-	dst->next = NULL;
 	if (!(flags & DST_NOCOUNT))
 		dst_entries_add(ops, 1);
 }
@@ -100,8 +82,12 @@ void *dst_alloc(struct dst_ops *ops, struct net_device *dev,
 	struct dst_entry *dst;
 
 	if (ops->gc && dst_entries_get_fast(ops) > ops->gc_thresh) {
-		if (ops->gc(ops))
+		if (ops->gc(ops)) {
+			printk_ratelimited(KERN_NOTICE "Route cache is full: "
+					   "consider increasing sysctl "
+					   "net.ipv[4|6].route.max_size.\n");
 			return NULL;
+		}
 	}
 
 	dst = kmem_cache_alloc(ops->kmem_cachep, GFP_ATOMIC);
@@ -116,12 +102,17 @@ EXPORT_SYMBOL(dst_alloc);
 
 struct dst_entry *dst_destroy(struct dst_entry * dst)
 {
-	struct dst_entry *child;
+	struct dst_entry *child = NULL;
 
 	smp_rmb();
 
-	child = dst->child;
+#ifdef CONFIG_XFRM
+	if (dst->xfrm) {
+		struct xfrm_dst *xdst = (struct xfrm_dst *) dst;
 
+		child = xdst->child;
+	}
+#endif
 	if (!(dst->flags & DST_NOCOUNT))
 		dst_entries_add(dst->ops, -1);
 
@@ -169,7 +160,7 @@ void dst_dev_put(struct dst_entry *dst)
 		dst->ops->ifdown(dst, dev, true);
 	dst->input = dst_discard;
 	dst->output = dst_discard_out;
-	dst->dev = dev_net(dst->dev)->loopback_dev;
+	dst->dev = blackhole_netdev;
 	dev_hold(dst->dev);
 	dev_put(dev);
 }
@@ -213,7 +204,7 @@ u32 *dst_cow_metrics_generic(struct dst_entry *dst, unsigned long old)
 		struct dst_metrics *old_p = (struct dst_metrics *)__DST_METRICS_PTR(old);
 		unsigned long prev, new;
 
-		atomic_set(&p->refcnt, 1);
+		refcount_set(&p->refcnt, 1);
 		memcpy(p->metrics, old_p->metrics, sizeof(p->metrics));
 
 		new = (unsigned long) p;
@@ -225,7 +216,7 @@ u32 *dst_cow_metrics_generic(struct dst_entry *dst, unsigned long old)
 			if (prev & DST_METRICS_READ_ONLY)
 				p = NULL;
 		} else if (prev & DST_METRICS_REFCOUNTED) {
-			if (atomic_dec_and_test(&old_p->refcnt))
+			if (refcount_dec_and_test(&old_p->refcnt))
 				kfree(old_p);
 		}
 	}
@@ -299,10 +290,12 @@ EXPORT_SYMBOL_GPL(metadata_dst_alloc);
 void metadata_dst_free(struct metadata_dst *md_dst)
 {
 #ifdef CONFIG_DST_CACHE
-	dst_cache_destroy(&md_dst->u.tun_info.dst_cache);
+	if (md_dst->type == METADATA_IP_TUNNEL)
+		dst_cache_destroy(&md_dst->u.tun_info.dst_cache);
 #endif
 	kfree(md_dst);
 }
+EXPORT_SYMBOL_GPL(metadata_dst_free);
 
 struct metadata_dst __percpu *
 metadata_dst_alloc_percpu(u8 optslen, enum metadata_type type, gfp_t flags)
@@ -321,3 +314,19 @@ metadata_dst_alloc_percpu(u8 optslen, enum metadata_type type, gfp_t flags)
 	return md_dst;
 }
 EXPORT_SYMBOL_GPL(metadata_dst_alloc_percpu);
+
+void metadata_dst_free_percpu(struct metadata_dst __percpu *md_dst)
+{
+#ifdef CONFIG_DST_CACHE
+	int cpu;
+
+	for_each_possible_cpu(cpu) {
+		struct metadata_dst *one_md_dst = per_cpu_ptr(md_dst, cpu);
+
+		if (one_md_dst->type == METADATA_IP_TUNNEL)
+			dst_cache_destroy(&one_md_dst->u.tun_info.dst_cache);
+	}
+#endif
+	free_percpu(md_dst);
+}
+EXPORT_SYMBOL_GPL(metadata_dst_free_percpu);

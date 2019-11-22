@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 #include <linux/sched.h>
 #include <linux/ftrace.h>
 #include <asm/ptrace.h>
@@ -18,6 +19,11 @@ unsigned long unwind_get_return_address(struct unwind_state *state)
 				     addr, state->sp);
 }
 EXPORT_SYMBOL_GPL(unwind_get_return_address);
+
+unsigned long *unwind_get_return_address_ptr(struct unwind_state *state)
+{
+	return NULL;
+}
 
 bool unwind_next_frame(struct unwind_state *state)
 {

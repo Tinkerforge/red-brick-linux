@@ -1,21 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2016 Laurent Pinchart <laurent.pinchart@ideasonboard.com>
  * Copyright (C) 2017 Broadcom
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of
- * the License, or (at your option) any later version.
  */
 
-#include <drm/drmP.h>
-#include <drm/drm_panel.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_connector.h>
-#include <drm/drm_crtc_helper.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_modeset_helper_vtables.h>
 #include <drm/drm_panel.h>
+#include <drm/drm_print.h>
+#include <drm/drm_probe_helper.h>
 
 struct panel_bridge {
 	struct drm_bridge bridge;
@@ -50,7 +45,6 @@ panel_bridge_connector_helper_funcs = {
 };
 
 static const struct drm_connector_funcs panel_bridge_connector_funcs = {
-	.dpms = drm_atomic_helper_connector_dpms,
 	.reset = drm_atomic_helper_connector_reset,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.destroy = drm_connector_cleanup,
@@ -80,7 +74,7 @@ static int panel_bridge_attach(struct drm_bridge *bridge)
 		return ret;
 	}
 
-	drm_mode_connector_attach_encoder(&panel_bridge->connector,
+	drm_connector_attach_encoder(&panel_bridge->connector,
 					  bridge->encoder);
 
 	ret = drm_panel_attach(panel_bridge->panel, &panel_bridge->connector);
@@ -135,8 +129,8 @@ static const struct drm_bridge_funcs panel_bridge_bridge_funcs = {
 };
 
 /**
- * drm_panel_bridge_add - Creates a drm_bridge and drm_connector that
- * just calls the appropriate functions from drm_panel.
+ * drm_panel_bridge_add - Creates a &drm_bridge and &drm_connector that
+ * just calls the appropriate functions from &drm_panel.
  *
  * @panel: The drm_panel being wrapped.  Must be non-NULL.
  * @connector_type: The DRM_MODE_CONNECTOR_* for the connector to be
@@ -150,15 +144,17 @@ static const struct drm_bridge_funcs panel_bridge_bridge_funcs = {
  * passed to drm_bridge_attach().  The drm_panel_prepare() and related
  * functions can be dropped from the encoder driver (they're now
  * called by the KMS helpers before calling into the encoder), along
- * with connector creation.  When done with the bridge,
- * drm_bridge_detach() should be called as normal, then
+ * with connector creation.  When done with the bridge (after
+ * drm_mode_config_cleanup() if the bridge has already been attached), then
  * drm_panel_bridge_remove() to free it.
+ *
+ * See devm_drm_panel_bridge_add() for an automatically manged version of this
+ * function.
  */
 struct drm_bridge *drm_panel_bridge_add(struct drm_panel *panel,
 					u32 connector_type)
 {
 	struct panel_bridge *panel_bridge;
-	int ret;
 
 	if (!panel)
 		return ERR_PTR(-EINVAL);
@@ -176,9 +172,7 @@ struct drm_bridge *drm_panel_bridge_add(struct drm_panel *panel,
 	panel_bridge->bridge.of_node = panel->dev->of_node;
 #endif
 
-	ret = drm_bridge_add(&panel_bridge->bridge);
-	if (ret)
-		return ERR_PTR(ret);
+	drm_bridge_add(&panel_bridge->bridge);
 
 	return &panel_bridge->bridge;
 }
@@ -192,9 +186,58 @@ EXPORT_SYMBOL(drm_panel_bridge_add);
  */
 void drm_panel_bridge_remove(struct drm_bridge *bridge)
 {
-	struct panel_bridge *panel_bridge = drm_bridge_to_panel_bridge(bridge);
+	struct panel_bridge *panel_bridge;
+
+	if (!bridge)
+		return;
+
+	if (bridge->funcs != &panel_bridge_bridge_funcs)
+		return;
+
+	panel_bridge = drm_bridge_to_panel_bridge(bridge);
 
 	drm_bridge_remove(bridge);
 	devm_kfree(panel_bridge->panel->dev, bridge);
 }
 EXPORT_SYMBOL(drm_panel_bridge_remove);
+
+static void devm_drm_panel_bridge_release(struct device *dev, void *res)
+{
+	struct drm_bridge **bridge = res;
+
+	drm_panel_bridge_remove(*bridge);
+}
+
+/**
+ * devm_drm_panel_bridge_add - Creates a managed &drm_bridge and &drm_connector
+ * that just calls the appropriate functions from &drm_panel.
+ * @dev: device to tie the bridge lifetime to
+ * @panel: The drm_panel being wrapped.  Must be non-NULL.
+ * @connector_type: The DRM_MODE_CONNECTOR_* for the connector to be
+ * created.
+ *
+ * This is the managed version of drm_panel_bridge_add() which automatically
+ * calls drm_panel_bridge_remove() when @dev is unbound.
+ */
+struct drm_bridge *devm_drm_panel_bridge_add(struct device *dev,
+					     struct drm_panel *panel,
+					     u32 connector_type)
+{
+	struct drm_bridge **ptr, *bridge;
+
+	ptr = devres_alloc(devm_drm_panel_bridge_release, sizeof(*ptr),
+			   GFP_KERNEL);
+	if (!ptr)
+		return ERR_PTR(-ENOMEM);
+
+	bridge = drm_panel_bridge_add(panel, connector_type);
+	if (!IS_ERR(bridge)) {
+		*ptr = bridge;
+		devres_add(dev, ptr);
+	} else {
+		devres_free(ptr);
+	}
+
+	return bridge;
+}
+EXPORT_SYMBOL(devm_drm_panel_bridge_add);

@@ -1,13 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * RainShadow Tech HDMI CEC driver
  *
  * Copyright 2016 Hans Verkuil <hverkuil@xs4all.nl
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation; either version of 2 of the License, or (at your
- * option) any later version. See the file COPYING in the main directory of
- * this archive for more details.
  */
 
 /*
@@ -141,7 +136,8 @@ static void rain_irq_work_handler(struct work_struct *work)
 			    !memcmp(rain->cmd, "STA", 3)) {
 				rain_process_msg(rain);
 			} else {
-				strcpy(rain->cmd_reply, rain->cmd);
+				strscpy(rain->cmd_reply, rain->cmd,
+					sizeof(rain->cmd_reply));
 				complete(&rain->cmd_done);
 			}
 			rain->cmd_idx = 0;
@@ -309,8 +305,7 @@ static const struct cec_adap_ops rain_cec_adap_ops = {
 
 static int rain_connect(struct serio *serio, struct serio_driver *drv)
 {
-	u32 caps = CEC_CAP_TRANSMIT | CEC_CAP_LOG_ADDRS | CEC_CAP_PHYS_ADDR |
-		CEC_CAP_PASSTHROUGH | CEC_CAP_RC | CEC_CAP_MONITOR_ALL;
+	u32 caps = CEC_CAP_DEFAULTS | CEC_CAP_PHYS_ADDR | CEC_CAP_MONITOR_ALL;
 	struct rain *rain;
 	int err = -ENOMEM;
 	struct cec_log_addrs log_addrs = {};
@@ -323,7 +318,7 @@ static int rain_connect(struct serio *serio, struct serio_driver *drv)
 
 	rain->serio = serio;
 	rain->adap = cec_allocate_adapter(&rain_cec_adap_ops, rain,
-		"HDMI CEC", caps, 1);
+					  dev_name(&serio->dev), caps, 1);
 	err = PTR_ERR_OR_ZERO(rain->adap);
 	if (err < 0)
 		goto free_device;
@@ -359,7 +354,7 @@ free_device:
 	return err;
 }
 
-static struct serio_device_id rain_serio_ids[] = {
+static const struct serio_device_id rain_serio_ids[] = {
 	{
 		.type	= SERIO_RS232,
 		.proto	= SERIO_RAINSHADOW_CEC,

@@ -1,10 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2016 IBM Corp.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 #include <linux/bitops.h>
 #include <linux/init.h>
@@ -22,7 +18,33 @@
 
 #include "../core.h"
 #include "../pinctrl-utils.h"
+#include "pinmux-aspeed.h"
 #include "pinctrl-aspeed.h"
+
+/*
+ * The "Multi-function Pins Mapping and Control" table in the SoC datasheet
+ * references registers by the device/offset mnemonic. The register macros
+ * below are named the same way to ease transcription and verification (as
+ * opposed to naming them e.g. PINMUX_CTRL_[0-9]). Further, signal expressions
+ * reference registers beyond those dedicated to pinmux, such as the system
+ * reset control and MAC clock configuration registers.
+ */
+#define SCU2C           0x2C /* Misc. Control Register */
+#define SCU3C           0x3C /* System Reset Control/Status Register */
+#define SCU48           0x48 /* MAC Interface Clock Delay Setting */
+#define HW_STRAP1       0x70 /* AST2400 strapping is 33 bits, is split */
+#define HW_REVISION_ID  0x7C /* Silicon revision ID register */
+#define SCU80           0x80 /* Multi-function Pin Control #1 */
+#define SCU84           0x84 /* Multi-function Pin Control #2 */
+#define SCU88           0x88 /* Multi-function Pin Control #3 */
+#define SCU8C           0x8C /* Multi-function Pin Control #4 */
+#define SCU90           0x90 /* Multi-function Pin Control #5 */
+#define SCU94           0x94 /* Multi-function Pin Control #6 */
+#define SCUA0           0xA0 /* Multi-function Pin Control #7 */
+#define SCUA4           0xA4 /* Multi-function Pin Control #8 */
+#define SCUA8           0xA8 /* Multi-function Pin Control #9 */
+#define SCUAC           0xAC /* Multi-function Pin Control #10 */
+#define HW_STRAP2       0xD0 /* Strapping */
 
 /*
  * Uses undefined macros for symbol naming and references, eg GPIOA0, MAC1LINK,
@@ -1006,15 +1028,23 @@ SS_PIN_DECL(H3, GPIOQ5, SDA14);
 
 FUNC_GROUP_DECL(I2C14, H4, H3);
 
-#define DASH9028_DESC	SIG_DESC_SET(SCU90, 28)
+/*
+ * There are several opportunities to document USB port 4 in the datasheet, but
+ * it is only mentioned in one location. Particularly, the Multi-function Pins
+ * Mapping and Control table in the datasheet elides the signal names,
+ * suggesting that port 4 may not actually be functional. As such we define the
+ * signal names and control bit, but don't export the capability's function or
+ * group.
+ */
+#define USB11H3_DESC	SIG_DESC_SET(SCU90, 28)
 
 #define H2 134
-SIG_EXPR_LIST_DECL_SINGLE(DASHH2, DASHH2, DASH9028_DESC);
-SS_PIN_DECL(H2, GPIOQ6, DASHH2);
+SIG_EXPR_LIST_DECL_SINGLE(USB11HDP3, USB11H3, USB11H3_DESC);
+SS_PIN_DECL(H2, GPIOQ6, USB11HDP3);
 
 #define H1 135
-SIG_EXPR_LIST_DECL_SINGLE(DASHH1, DASHH1, DASH9028_DESC);
-SS_PIN_DECL(H1, GPIOQ7, DASHH1);
+SIG_EXPR_LIST_DECL_SINGLE(USB11HDN3, USB11H3, USB11H3_DESC);
+SS_PIN_DECL(H1, GPIOQ7, USB11HDN3);
 
 #define V20 136
 SSSF_PIN_DECL(V20, GPIOR0, ROMCS1, SIG_DESC_SET(SCU88, 24));
@@ -1706,10 +1736,42 @@ FUNC_GROUP_DECL(VPO12, U21, T19, V22, U20, R22, P18, P19, P20, P21, P22, M19,
 FUNC_GROUP_DECL(VPO24, U21, T19, V22, U20, L22, K18, V21, W22, R22, P18, P19,
 		P20, P21, P22, M19, M20, M21, M22, L18, L19);
 
+#define USB11H2_DESC	SIG_DESC_SET(SCU90, 3)
+#define USB11D1_DESC	SIG_DESC_BIT(SCU90, 3, 0)
+
+#define K4 220
+SIG_EXPR_LIST_DECL_SINGLE(USB11HDP2, USB11H2, USB11H2_DESC);
+SIG_EXPR_LIST_DECL_SINGLE(USB11DP1, USB11D1, USB11D1_DESC);
+MS_PIN_DECL_(K4, SIG_EXPR_LIST_PTR(USB11HDP2), SIG_EXPR_LIST_PTR(USB11DP1));
+
+#define K3 221
+SIG_EXPR_LIST_DECL_SINGLE(USB11HDN1, USB11H2, USB11H2_DESC);
+SIG_EXPR_LIST_DECL_SINGLE(USB11DDN1, USB11D1, USB11D1_DESC);
+MS_PIN_DECL_(K3, SIG_EXPR_LIST_PTR(USB11HDN1), SIG_EXPR_LIST_PTR(USB11DDN1));
+
+FUNC_GROUP_DECL(USB11H2, K4, K3);
+FUNC_GROUP_DECL(USB11D1, K4, K3);
+
+#define USB2H1_DESC	SIG_DESC_SET(SCU90, 29)
+#define USB2D1_DESC	SIG_DESC_BIT(SCU90, 29, 0)
+
+#define AB21 222
+SIG_EXPR_LIST_DECL_SINGLE(USB2HDP1, USB2H1, USB2H1_DESC);
+SIG_EXPR_LIST_DECL_SINGLE(USB2DDP1, USB2D1, USB2D1_DESC);
+MS_PIN_DECL_(AB21, SIG_EXPR_LIST_PTR(USB2HDP1), SIG_EXPR_LIST_PTR(USB2DDP1));
+
+#define AB20 223
+SIG_EXPR_LIST_DECL_SINGLE(USB2HDN1, USB2H1, USB2H1_DESC);
+SIG_EXPR_LIST_DECL_SINGLE(USB2DDN1, USB2D1, USB2D1_DESC);
+MS_PIN_DECL_(AB20, SIG_EXPR_LIST_PTR(USB2HDN1), SIG_EXPR_LIST_PTR(USB2DDN1));
+
+FUNC_GROUP_DECL(USB2H1, AB21, AB20);
+FUNC_GROUP_DECL(USB2D1, AB21, AB20);
+
 /* Note we account for GPIOY4-GPIOY7 even though they're not valid, thus 216
- * pins becomes 220.
+ * pins becomes 220. Four additional non-GPIO-capable pins are present for USB.
  */
-#define ASPEED_G4_NR_PINS 220
+#define ASPEED_G4_NR_PINS 224
 
 /* Pins, groups and functions are sort(1):ed alphabetically for sanity */
 
@@ -1749,6 +1811,8 @@ static struct pinctrl_pin_desc aspeed_g4_pins[ASPEED_G4_NR_PINS] = {
 	ASPEED_PINCTRL_PIN(AB5),
 	ASPEED_PINCTRL_PIN(AB6),
 	ASPEED_PINCTRL_PIN(AB7),
+	ASPEED_PINCTRL_PIN(AB20),
+	ASPEED_PINCTRL_PIN(AB21),
 	ASPEED_PINCTRL_PIN(B1),
 	ASPEED_PINCTRL_PIN(B10),
 	ASPEED_PINCTRL_PIN(B11),
@@ -1848,6 +1912,8 @@ static struct pinctrl_pin_desc aspeed_g4_pins[ASPEED_G4_NR_PINS] = {
 	ASPEED_PINCTRL_PIN(J5),
 	ASPEED_PINCTRL_PIN(K18),
 	ASPEED_PINCTRL_PIN(K20),
+	ASPEED_PINCTRL_PIN(K3),
+	ASPEED_PINCTRL_PIN(K4),
 	ASPEED_PINCTRL_PIN(K5),
 	ASPEED_PINCTRL_PIN(L1),
 	ASPEED_PINCTRL_PIN(L18),
@@ -2070,6 +2136,10 @@ static const struct aspeed_pin_group aspeed_g4_groups[] = {
 	ASPEED_PINCTRL_GROUP(TXD3),
 	ASPEED_PINCTRL_GROUP(TXD4),
 	ASPEED_PINCTRL_GROUP(UART6),
+	ASPEED_PINCTRL_GROUP(USB11D1),
+	ASPEED_PINCTRL_GROUP(USB11H2),
+	ASPEED_PINCTRL_GROUP(USB2D1),
+	ASPEED_PINCTRL_GROUP(USB2H1),
 	ASPEED_PINCTRL_GROUP(USBCKI),
 	ASPEED_PINCTRL_GROUP(VGABIOS_ROM),
 	ASPEED_PINCTRL_GROUP(VGAHS),
@@ -2221,6 +2291,10 @@ static const struct aspeed_pin_function aspeed_g4_functions[] = {
 	ASPEED_PINCTRL_FUNC(TXD3),
 	ASPEED_PINCTRL_FUNC(TXD4),
 	ASPEED_PINCTRL_FUNC(UART6),
+	ASPEED_PINCTRL_FUNC(USB11D1),
+	ASPEED_PINCTRL_FUNC(USB11H2),
+	ASPEED_PINCTRL_FUNC(USB2D1),
+	ASPEED_PINCTRL_FUNC(USB2H1),
 	ASPEED_PINCTRL_FUNC(USBCKI),
 	ASPEED_PINCTRL_FUNC(VGABIOS_ROM),
 	ASPEED_PINCTRL_FUNC(VGAHS),
@@ -2338,18 +2412,78 @@ static const struct aspeed_pin_config aspeed_g4_configs[] = {
 	{ PIN_CONFIG_INPUT_DEBOUNCE, { C14, B14 }, SCUA8, 27 },
 };
 
+static int aspeed_g4_sig_expr_set(struct aspeed_pinmux_data *ctx,
+				  const struct aspeed_sig_expr *expr,
+				  bool enable)
+{
+	int ret;
+	int i;
+
+	for (i = 0; i < expr->ndescs; i++) {
+		const struct aspeed_sig_desc *desc = &expr->descs[i];
+		u32 pattern = enable ? desc->enable : desc->disable;
+		u32 val = (pattern << __ffs(desc->mask));
+
+		if (!ctx->maps[desc->ip])
+			return -ENODEV;
+
+		/*
+		 * Strap registers are configured in hardware or by early-boot
+		 * firmware. Treat them as read-only despite that we can write
+		 * them. This may mean that certain functions cannot be
+		 * deconfigured and is the reason we re-evaluate after writing
+		 * all descriptor bits.
+		 *
+		 * Port D and port E GPIO loopback modes are the only exception
+		 * as those are commonly used with front-panel buttons to allow
+		 * normal operation of the host when the BMC is powered off or
+		 * fails to boot. Once the BMC has booted, the loopback mode
+		 * must be disabled for the BMC to control host power-on and
+		 * reset.
+		 */
+		if (desc->ip == ASPEED_IP_SCU && desc->reg == HW_STRAP1 &&
+		    !(desc->mask & (BIT(21) | BIT(22))))
+			continue;
+
+		if (desc->ip == ASPEED_IP_SCU && desc->reg == HW_STRAP2)
+			continue;
+
+		ret = regmap_update_bits(ctx->maps[desc->ip], desc->reg,
+					 desc->mask, val);
+
+		if (ret)
+			return ret;
+	}
+
+	ret = aspeed_sig_expr_eval(ctx, expr, enable);
+	if (ret < 0)
+		return ret;
+
+	if (!ret)
+		return -EPERM;
+
+	return 0;
+}
+
+static const struct aspeed_pinmux_ops aspeed_g4_ops = {
+	.set = aspeed_g4_sig_expr_set,
+};
+
 static struct aspeed_pinctrl_data aspeed_g4_pinctrl_data = {
 	.pins = aspeed_g4_pins,
 	.npins = ARRAY_SIZE(aspeed_g4_pins),
-	.groups = aspeed_g4_groups,
-	.ngroups = ARRAY_SIZE(aspeed_g4_groups),
-	.functions = aspeed_g4_functions,
-	.nfunctions = ARRAY_SIZE(aspeed_g4_functions),
+	.pinmux = {
+		.ops = &aspeed_g4_ops,
+		.groups = aspeed_g4_groups,
+		.ngroups = ARRAY_SIZE(aspeed_g4_groups),
+		.functions = aspeed_g4_functions,
+		.nfunctions = ARRAY_SIZE(aspeed_g4_functions),
+	},
 	.configs = aspeed_g4_configs,
 	.nconfigs = ARRAY_SIZE(aspeed_g4_configs),
 };
 
-static struct pinmux_ops aspeed_g4_pinmux_ops = {
+static const struct pinmux_ops aspeed_g4_pinmux_ops = {
 	.get_functions_count = aspeed_pinmux_get_fn_count,
 	.get_function_name = aspeed_pinmux_get_fn_name,
 	.get_function_groups = aspeed_pinmux_get_fn_groups,
@@ -2358,7 +2492,7 @@ static struct pinmux_ops aspeed_g4_pinmux_ops = {
 	.strict = true,
 };
 
-static struct pinctrl_ops aspeed_g4_pinctrl_ops = {
+static const struct pinctrl_ops aspeed_g4_pinctrl_ops = {
 	.get_groups_count = aspeed_pinctrl_get_groups_count,
 	.get_group_name = aspeed_pinctrl_get_group_name,
 	.get_group_pins = aspeed_pinctrl_get_group_pins,

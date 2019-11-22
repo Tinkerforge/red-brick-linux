@@ -1,22 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2015 Imagination Technologies
  * Author: Alex Smith <alex.smith@imgtec.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation;  either version 2 of the  License, or (at your
- * option) any later version.
  */
 
 #include "vdso.h"
 
 #include <linux/compiler.h>
-#include <linux/irqchip/mips-gic.h>
 #include <linux/time.h>
 
 #include <asm/clocksource.h>
 #include <asm/io.h>
-#include <asm/mips-cm.h>
 #include <asm/unistd.h>
 #include <asm/vdso.h>
 
@@ -126,9 +120,9 @@ static __always_inline u64 read_gic_count(const union mips_vdso_data *data)
 	u32 hi, hi2, lo;
 
 	do {
-		hi = __raw_readl(gic + GIC_UMV_SH_COUNTER_63_32_OFS);
-		lo = __raw_readl(gic + GIC_UMV_SH_COUNTER_31_00_OFS);
-		hi2 = __raw_readl(gic + GIC_UMV_SH_COUNTER_63_32_OFS);
+		hi = __raw_readl(gic + sizeof(lo));
+		lo = __raw_readl(gic);
+		hi2 = __raw_readl(gic + sizeof(lo));
 	} while (hi2 != hi);
 
 	return (((u64)hi) << 32) + lo;

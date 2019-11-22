@@ -1,11 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright 2012-2013 Freescale Semiconductor, Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
  */
 
 #include <linux/of_address.h>
@@ -102,7 +97,7 @@ static const char *ftm_ext_sels[]	= {"sirc_128k", "sxosc", "fxosc_half", "audio_
 static const char *ftm_fix_sels[]	= { "sxosc", "ipg_bus", };
 
 
-static struct clk_div_table pll4_audio_div_table[] = {
+static const struct clk_div_table pll4_audio_div_table[] = {
 	{ .val = 0, .div = 1 },
 	{ .val = 1, .div = 2 },
 	{ .val = 2, .div = 6 },
@@ -203,6 +198,7 @@ static void __init vf610_clocks_init(struct device_node *ccm_node)
 	np = of_find_compatible_node(NULL, NULL, "fsl,vf610-anatop");
 	anatop_base = of_iomap(np, 0);
 	BUG_ON(!anatop_base);
+	of_node_put(np);
 
 	np = ccm_node;
 	ccm_base = of_iomap(np, 0);

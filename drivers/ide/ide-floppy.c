@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * IDE ATAPI floppy driver.
  *
@@ -72,7 +73,7 @@ static int ide_floppy_callback(ide_drive_t *drive, int dsc)
 		drive->failed_pc = NULL;
 
 	if (pc->c[0] == GPCMD_READ_10 || pc->c[0] == GPCMD_WRITE_10 ||
-	    (req_op(rq) == REQ_OP_SCSI_IN || req_op(rq) == REQ_OP_SCSI_OUT))
+	    blk_rq_is_scsi(rq))
 		uptodate = 1; /* FIXME */
 	else if (pc->c[0] == GPCMD_REQUEST_SENSE) {
 
@@ -275,7 +276,7 @@ static ide_startstop_t ide_floppy_do_request(ide_drive_t *drive,
 		switch (ide_req(rq)->type) {
 		case ATA_PRIV_MISC:
 		case ATA_PRIV_SENSE:
-			pc = (struct ide_atapi_pc *)rq->special;
+			pc = (struct ide_atapi_pc *)ide_req(rq)->special;
 			break;
 		default:
 			BUG();
@@ -426,6 +427,7 @@ static int ide_floppy_get_capacity(ide_drive_t *drive)
 				 * (maintains previous driver behaviour)
 				 */
 				break;
+			/* fall through */
 		case CAPACITY_CURRENT:
 			/* Normal Zip/LS-120 disks */
 			if (memcmp(cap_desc, &floppy->cap_desc, 8))

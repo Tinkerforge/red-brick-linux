@@ -1,11 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * STMicroelectronics sensors i2c library driver
  *
  * Copyright 2012-2013 STMicroelectronics Inc.
  *
  * Denis Ciocca <denis.ciocca@st.com>
- *
- * Licensed under the GPL-2.
  */
 
 #include <linux/kernel.h>
@@ -78,35 +77,6 @@ void st_sensors_i2c_configure(struct iio_dev *indio_dev,
 	sdata->get_irq_data_ready = st_sensors_i2c_get_irq;
 }
 EXPORT_SYMBOL(st_sensors_i2c_configure);
-
-#ifdef CONFIG_OF
-/**
- * st_sensors_of_i2c_probe() - device tree probe for ST I2C sensors
- * @client: the I2C client device for the sensor
- * @match: the OF match table for the device, containing compatible strings
- *	but also a .data field with the corresponding internal kernel name
- *	used by this sensor.
- *
- * In effect this function matches a compatible string to an internal kernel
- * name for a certain sensor device, so that the rest of the autodetection can
- * rely on that name from this point on. I2C client devices will be renamed
- * to match the internal kernel convention.
- */
-void st_sensors_of_i2c_probe(struct i2c_client *client,
-			     const struct of_device_id *match)
-{
-	const struct of_device_id *of_id;
-
-	of_id = of_match_device(match, &client->dev);
-	if (!of_id)
-		return;
-
-	/* The name from the OF match takes precedence if present */
-	strncpy(client->name, of_id->data, sizeof(client->name));
-	client->name[sizeof(client->name) - 1] = '\0';
-}
-EXPORT_SYMBOL(st_sensors_of_i2c_probe);
-#endif
 
 #ifdef CONFIG_ACPI
 int st_sensors_match_acpi_device(struct device *dev)

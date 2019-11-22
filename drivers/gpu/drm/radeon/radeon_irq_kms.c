@@ -25,14 +25,21 @@
  *          Alex Deucher
  *          Jerome Glisse
  */
-#include <drm/drmP.h>
-#include <drm/drm_crtc_helper.h>
-#include <drm/radeon_drm.h>
-#include "radeon_reg.h"
-#include "radeon.h"
-#include "atom.h"
 
 #include <linux/pm_runtime.h>
+
+#include <drm/drm_crtc_helper.h>
+#include <drm/drm_device.h>
+#include <drm/drm_irq.h>
+#include <drm/drm_pci.h>
+#include <drm/drm_probe_helper.h>
+#include <drm/drm_vblank.h>
+#include <drm/radeon_drm.h>
+
+#include "atom.h"
+#include "radeon.h"
+#include "radeon_reg.h"
+
 
 #define RADEON_WAIT_IDLE_TIMEOUT 200
 
@@ -283,6 +290,10 @@ int radeon_irq_kms_init(struct radeon_device *rdev)
 	int r = 0;
 
 	spin_lock_init(&rdev->irq.lock);
+
+	/* Disable vblank irqs aggressively for power-saving */
+	rdev->ddev->vblank_disable_immediate = true;
+
 	r = drm_vblank_init(rdev->ddev, rdev->num_crtc);
 	if (r) {
 		return r;
@@ -324,7 +335,6 @@ int radeon_irq_kms_init(struct radeon_device *rdev)
  */
 void radeon_irq_kms_fini(struct radeon_device *rdev)
 {
-	drm_vblank_cleanup(rdev->ddev);
 	if (rdev->irq.installed) {
 		drm_irq_uninstall(rdev->ddev);
 		rdev->irq.installed = false;

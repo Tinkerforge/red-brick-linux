@@ -30,20 +30,9 @@
  *  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "stingray.dtsi"
+#include "stingray-board-base.dtsi"
 
 / {
-	chosen {
-		stdout-path = "serial0:115200n8";
-	};
-
-	aliases {
-		serial0 = &uart1;
-		serial1 = &uart0;
-		serial2 = &uart2;
-		serial3 = &uart3;
-	};
-
 	sdio0_vddo_ctrl_reg: sdio0_vddo_ctrl {
 		compatible = "regulator-gpio";
 		regulator-name = "sdio0_vddo_ctrl_reg";
@@ -67,12 +56,67 @@
 	};
 };
 
-&memory { /* Default DRAM banks */
-	reg = <0x00000000 0x80000000 0x0 0x80000000>, /* 2G @ 2G */
-	      <0x00000008 0x80000000 0x1 0x80000000>; /* 6G @ 34G */
+&sata0 {
+	status = "okay";
 };
 
-&uart1 {
+&sata_phy0{
+	status = "okay";
+};
+
+&sata1 {
+	status = "okay";
+};
+
+&sata_phy1{
+	status = "okay";
+};
+
+&sata2 {
+	status = "okay";
+};
+
+&sata_phy2{
+	status = "okay";
+};
+
+&sata3 {
+	status = "okay";
+};
+
+&sata_phy3{
+	status = "okay";
+};
+
+&sata4 {
+	status = "okay";
+};
+
+&sata_phy4{
+	status = "okay";
+};
+
+&sata5 {
+	status = "okay";
+};
+
+&sata_phy5{
+	status = "okay";
+};
+
+&sata6 {
+	status = "okay";
+};
+
+&sata_phy6{
+	status = "okay";
+};
+
+&sata7 {
+	status = "okay";
+};
+
+&sata_phy7{
 	status = "okay";
 };
 
@@ -94,12 +138,16 @@
 &i2c1 {
 	status = "okay";
 
-	pcf8574: pcf8574@20 {
+	pcf8574: pcf8574@27 {
 		compatible = "nxp,pcf8574a";
 		gpio-controller;
 		#gpio-cells = <2>;
 		reg = <0x27>;
 	};
+};
+
+&enet {
+	status = "okay";
 };
 
 &nand {
@@ -119,13 +167,10 @@
 
 &sdio0 {
 	vqmmc-supply = <&sdio0_vddo_ctrl_reg>;
-	non-removable;
-	full-pwr-cycle;
 	status = "okay";
 };
 
 &sdio1 {
 	vqmmc-supply = <&sdio1_vddo_ctrl_reg>;
-	full-pwr-cycle;
 	status = "okay";
 };

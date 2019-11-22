@@ -1,12 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /* Service connection management
  *
  * Copyright (C) 2016 Red Hat, Inc. All Rights Reserved.
  * Written by David Howells (dhowells@redhat.com)
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public Licence
- * as published by the Free Software Foundation; either version
- * 2 of the Licence, or (at your option) any later version.
  */
 
 #include <linux/slab.h>
@@ -50,12 +46,11 @@ struct rxrpc_connection *rxrpc_find_service_conn_rcu(struct rxrpc_peer *peer,
 			else if (conn->proto.index_key > k.index_key)
 				p = rcu_dereference_raw(p->rb_right);
 			else
-				goto done;
+				break;
 			conn = NULL;
 		}
 	} while (need_seqretry(&peer->service_conn_lock, seq));
 
-done:
 	done_seqretry(&peer->service_conn_lock, seq);
 	_leave(" = %d", conn ? conn->debug_id : -1);
 	return conn;
@@ -133,6 +128,7 @@ struct rxrpc_connection *rxrpc_prealloc_service_connection(struct rxrpc_net *rxn
 		conn->state = RXRPC_CONN_SERVICE_PREALLOC;
 		atomic_set(&conn->usage, 2);
 
+		atomic_inc(&rxnet->nr_conns);
 		write_lock(&rxnet->conn_lock);
 		list_add_tail(&conn->link, &rxnet->service_conns);
 		list_add_tail(&conn->proc_link, &rxnet->conn_proc_list);
