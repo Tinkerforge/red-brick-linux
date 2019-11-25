@@ -124,7 +124,7 @@ int red_brick_uid(uint32_t *uid /* Always little endian. */) {
 	fs = get_fs();
 
 	// Set segment descriptor associated to kernel space.
-	set_fs(get_ds());
+	set_fs(KERNEL_DS);
 
 	// Read the file.
 	rc = fp->f_op->read(fp, (char *)sid_u16, sizeof(sid_u16), &fp->f_pos);

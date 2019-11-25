@@ -831,7 +831,7 @@ static ssize_t f_brick_data_fop_read(struct file *fp, char __user *buf,
 		return 0;
 	}
 
-	if (!access_ok(VERIFY_WRITE, buf, buf_len)) {
+	if (!access_ok(buf, buf_len)) {
 		return -EFAULT;
 	}
 
@@ -936,7 +936,7 @@ static ssize_t f_brick_data_fop_write(struct file *fp, const char __user *buf,
 		return 0;
 	}
 
-	if (!access_ok(VERIFY_READ, buf, buf_len)) {
+	if (!access_ok(buf, buf_len)) {
 		return -EFAULT;
 	}
 
@@ -1121,7 +1121,7 @@ static ssize_t f_brick_state_fop_read(struct file *fp, char __user *buf,
 
 	copy_len = sizeof(state) - *pos;
 
-	if (!access_ok(VERIFY_WRITE, buf, buf_len)) {
+	if (!access_ok(buf, buf_len)) {
 		return -EFAULT;
 	}
 

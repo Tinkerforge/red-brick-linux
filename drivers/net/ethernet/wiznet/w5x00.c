@@ -300,7 +300,7 @@ wiznet_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 
 	case WZIOC_SETOID:
 		DPRINTK("ioctl: Set REG 0x%x: data %p, len %d\n", req.oid, req.data, req.len);
-		if (!access_ok(VERIFY_READ, req.data, req.len))
+		if (!access_ok(req.data, req.len))
 			return -EFAULT;
 		iinchip_copy_to(req.oid, req.data, req.len);
 		if (copy_to_user(ifr->ifr_data, &req, sizeof(struct s_wiznet_ioctl)))
@@ -309,7 +309,7 @@ wiznet_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 
 	case WZIOC_GETOID:
 		DPRINTK("ioctl: Get REG 0x%x, len %d\n", req.oid, req.len);
-		if (!access_ok(VERIFY_WRITE, req.data, req.len))
+		if (!access_ok(req.data, req.len))
 			return -EFAULT;
 		iinchip_copy_from(req.oid, req.data, req.len);
 		if (copy_to_user(ifr->ifr_data, &req, sizeof(struct s_wiznet_ioctl)))
