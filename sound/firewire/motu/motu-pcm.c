@@ -145,7 +145,7 @@ static int pcm_open(struct snd_pcm_substream *substream)
 
 	mutex_lock(&motu->mutex);
 
-	err = protocol->cache_packet_formats(motu);
+	err = snd_motu_stream_cache_packet_formats(motu);
 	if (err < 0)
 		goto err_locked;
 
@@ -352,7 +352,7 @@ static int playback_ack(struct snd_pcm_substream *substream)
 
 int snd_motu_create_pcm_devices(struct snd_motu *motu)
 {
-	static struct snd_pcm_ops capture_ops = {
+	static const struct snd_pcm_ops capture_ops = {
 		.open      = pcm_open,
 		.close     = pcm_close,
 		.ioctl     = snd_pcm_lib_ioctl,
@@ -363,9 +363,8 @@ int snd_motu_create_pcm_devices(struct snd_motu *motu)
 		.pointer   = capture_pointer,
 		.ack       = capture_ack,
 		.page      = snd_pcm_lib_get_vmalloc_page,
-		.mmap      = snd_pcm_lib_mmap_vmalloc,
 	};
-	static struct snd_pcm_ops playback_ops = {
+	static const struct snd_pcm_ops playback_ops = {
 		.open      = pcm_open,
 		.close     = pcm_close,
 		.ioctl     = snd_pcm_lib_ioctl,
@@ -376,7 +375,6 @@ int snd_motu_create_pcm_devices(struct snd_motu *motu)
 		.pointer   = playback_pointer,
 		.ack       = playback_ack,
 		.page      = snd_pcm_lib_get_vmalloc_page,
-		.mmap      = snd_pcm_lib_mmap_vmalloc,
 	};
 	struct snd_pcm *pcm;
 	int err;

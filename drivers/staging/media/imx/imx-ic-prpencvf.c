@@ -103,6 +103,7 @@ struct prp_priv {
 	int nfb4eof_irq;
 
 	int stream_count;
+	u32 frame_sequence; /* frame sequence counter */
 	bool last_eof;  /* waiting for last EOF at stream off */
 	bool nfb4eof;    /* NFB4EOF encountered during streaming */
 	struct completion last_eof_comp;
@@ -134,19 +135,19 @@ static inline struct prp_priv *sd_to_priv(struct v4l2_subdev *sd)
 
 static void prp_put_ipu_resources(struct prp_priv *priv)
 {
-	if (!IS_ERR_OR_NULL(priv->ic))
+	if (priv->ic)
 		ipu_ic_put(priv->ic);
 	priv->ic = NULL;
 
-	if (!IS_ERR_OR_NULL(priv->out_ch))
+	if (priv->out_ch)
 		ipu_idmac_put(priv->out_ch);
 	priv->out_ch = NULL;
 
-	if (!IS_ERR_OR_NULL(priv->rot_in_ch))
+	if (priv->rot_in_ch)
 		ipu_idmac_put(priv->rot_in_ch);
 	priv->rot_in_ch = NULL;
 
-	if (!IS_ERR_OR_NULL(priv->rot_out_ch))
+	if (priv->rot_out_ch)
 		ipu_idmac_put(priv->rot_out_ch);
 	priv->rot_out_ch = NULL;
 }
@@ -154,43 +155,46 @@ static void prp_put_ipu_resources(struct prp_priv *priv)
 static int prp_get_ipu_resources(struct prp_priv *priv)
 {
 	struct imx_ic_priv *ic_priv = priv->ic_priv;
+	struct ipu_ic *ic;
+	struct ipuv3_channel *out_ch, *rot_in_ch, *rot_out_ch;
 	int ret, task = ic_priv->task_id;
 
 	priv->ipu = priv->md->ipu[ic_priv->ipu_id];
 
-	priv->ic = ipu_ic_get(priv->ipu, task);
-	if (IS_ERR(priv->ic)) {
+	ic = ipu_ic_get(priv->ipu, task);
+	if (IS_ERR(ic)) {
 		v4l2_err(&ic_priv->sd, "failed to get IC\n");
-		ret = PTR_ERR(priv->ic);
+		ret = PTR_ERR(ic);
 		goto out;
 	}
+	priv->ic = ic;
 
-	priv->out_ch = ipu_idmac_get(priv->ipu,
-				     prp_channel[task].out_ch);
-	if (IS_ERR(priv->out_ch)) {
+	out_ch = ipu_idmac_get(priv->ipu, prp_channel[task].out_ch);
+	if (IS_ERR(out_ch)) {
 		v4l2_err(&ic_priv->sd, "could not get IDMAC channel %u\n",
 			 prp_channel[task].out_ch);
-		ret = PTR_ERR(priv->out_ch);
+		ret = PTR_ERR(out_ch);
 		goto out;
 	}
+	priv->out_ch = out_ch;
 
-	priv->rot_in_ch = ipu_idmac_get(priv->ipu,
-					prp_channel[task].rot_in_ch);
-	if (IS_ERR(priv->rot_in_ch)) {
+	rot_in_ch = ipu_idmac_get(priv->ipu, prp_channel[task].rot_in_ch);
+	if (IS_ERR(rot_in_ch)) {
 		v4l2_err(&ic_priv->sd, "could not get IDMAC channel %u\n",
 			 prp_channel[task].rot_in_ch);
-		ret = PTR_ERR(priv->rot_in_ch);
+		ret = PTR_ERR(rot_in_ch);
 		goto out;
 	}
+	priv->rot_in_ch = rot_in_ch;
 
-	priv->rot_out_ch = ipu_idmac_get(priv->ipu,
-					 prp_channel[task].rot_out_ch);
-	if (IS_ERR(priv->rot_out_ch)) {
+	rot_out_ch = ipu_idmac_get(priv->ipu, prp_channel[task].rot_out_ch);
+	if (IS_ERR(rot_out_ch)) {
 		v4l2_err(&ic_priv->sd, "could not get IDMAC channel %u\n",
 			 prp_channel[task].rot_out_ch);
-		ret = PTR_ERR(priv->rot_out_ch);
+		ret = PTR_ERR(rot_out_ch);
 		goto out;
 	}
+	priv->rot_out_ch = rot_out_ch;
 
 	return 0;
 out:
@@ -207,12 +211,15 @@ static void prp_vb2_buf_done(struct prp_priv *priv, struct ipuv3_channel *ch)
 
 	done = priv->active_vb2_buf[priv->ipu_buf_num];
 	if (done) {
+		done->vbuf.field = vdev->fmt.fmt.pix.field;
+		done->vbuf.sequence = priv->frame_sequence;
 		vb = &done->vbuf.vb2_buf;
 		vb->timestamp = ktime_get_ns();
 		vb2_buffer_done(vb, priv->nfb4eof ?
 				VB2_BUF_STATE_ERROR : VB2_BUF_STATE_DONE);
 	}
 
+	priv->frame_sequence++;
 	priv->nfb4eof = false;
 
 	/* get next queued buffer */
@@ -290,9 +297,9 @@ static irqreturn_t prp_nfb4eof_interrupt(int irq, void *dev_id)
  * EOF timeout timer function. This is an unrecoverable condition
  * without a stream restart.
  */
-static void prp_eof_timeout(unsigned long data)
+static void prp_eof_timeout(struct timer_list *t)
 {
-	struct prp_priv *priv = (struct prp_priv *)data;
+	struct prp_priv *priv = from_timer(priv, t, eof_timeout_timer);
 	struct imx_media_video_dev *vdev = priv->vdev;
 	struct imx_ic_priv *ic_priv = priv->ic_priv;
 
@@ -373,6 +380,17 @@ static int prp_setup_channel(struct prp_priv *priv,
 
 	image.phys0 = addr0;
 	image.phys1 = addr1;
+
+	if (channel == priv->out_ch || channel == priv->rot_out_ch) {
+		switch (image.pix.pixelformat) {
+		case V4L2_PIX_FMT_YUV420:
+		case V4L2_PIX_FMT_YVU420:
+		case V4L2_PIX_FMT_NV12:
+			/* Skip writing U and V components to odd rows */
+			ipu_cpmem_skip_odd_chroma_rows(channel);
+			break;
+		}
+	}
 
 	ret = ipu_cpmem_set_image(channel, &image);
 	if (ret)
@@ -623,6 +641,7 @@ static int prp_start(struct prp_priv *priv)
 
 	/* init EOF completion waitq */
 	init_completion(&priv->last_eof_comp);
+	priv->frame_sequence = 0;
 	priv->last_eof = false;
 	priv->nfb4eof = false;
 
@@ -909,7 +928,7 @@ static int prp_enum_frame_size(struct v4l2_subdev *sd,
 			       struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct prp_priv *priv = sd_to_priv(sd);
-	struct v4l2_subdev_format format = {0};
+	struct v4l2_subdev_format format = {};
 	const struct imx_media_pixfmt *cc;
 	int ret = 0;
 
@@ -1239,6 +1258,7 @@ static void prp_unregistered(struct v4l2_subdev *sd)
 }
 
 static const struct v4l2_subdev_pad_ops prp_pad_ops = {
+	.init_cfg = imx_media_init_cfg,
 	.enum_mbus_code = prp_enum_mbus_code,
 	.enum_frame_size = prp_enum_frame_size,
 	.get_fmt = prp_get_fmt,
@@ -1278,9 +1298,7 @@ static int prp_init(struct imx_ic_priv *ic_priv)
 	priv->ic_priv = ic_priv;
 
 	spin_lock_init(&priv->irqlock);
-	init_timer(&priv->eof_timeout_timer);
-	priv->eof_timeout_timer.data = (unsigned long)priv;
-	priv->eof_timeout_timer.function = prp_eof_timeout;
+	timer_setup(&priv->eof_timeout_timer, prp_eof_timeout, 0);
 
 	priv->vdev = imx_media_capture_device_init(&ic_priv->sd,
 						   PRPENCVF_SRC_PAD);

@@ -496,11 +496,12 @@ static void hal2_free_dmabuf(struct hal2_codec *codec)
 		       DMA_ATTR_NON_CONSISTENT);
 }
 
-static struct snd_pcm_hardware hal2_pcm_hw = {
+static const struct snd_pcm_hardware hal2_pcm_hw = {
 	.info = (SNDRV_PCM_INFO_MMAP |
 		 SNDRV_PCM_INFO_MMAP_VALID |
 		 SNDRV_PCM_INFO_INTERLEAVED |
-		 SNDRV_PCM_INFO_BLOCK_TRANSFER),
+		 SNDRV_PCM_INFO_BLOCK_TRANSFER |
+		 SNDRV_PCM_INFO_SYNC_APPLPTR),
 	.formats =          SNDRV_PCM_FMTBIT_S16_BE,
 	.rates =            SNDRV_PCM_RATE_8000_48000,
 	.rate_min =         8000,
@@ -563,6 +564,8 @@ static int hal2_playback_prepare(struct snd_pcm_substream *substream)
 	dac->sample_rate = hal2_compute_rate(dac, runtime->rate);
 	memset(&dac->pcm_indirect, 0, sizeof(dac->pcm_indirect));
 	dac->pcm_indirect.hw_buffer_size = H2_BUF_SIZE;
+	dac->pcm_indirect.hw_queue_size = H2_BUF_SIZE / 2;
+	dac->pcm_indirect.hw_io = dac->buffer_dma;
 	dac->pcm_indirect.sw_buffer_size = snd_pcm_lib_buffer_bytes(substream);
 	dac->substream = substream;
 	hal2_setup_dac(hal2);
@@ -575,9 +578,6 @@ static int hal2_playback_trigger(struct snd_pcm_substream *substream, int cmd)
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
-		hal2->dac.pcm_indirect.hw_io = hal2->dac.buffer_dma;
-		hal2->dac.pcm_indirect.hw_data = 0;
-		substream->ops->ack(substream);
 		hal2_start_dac(hal2);
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
@@ -615,7 +615,6 @@ static int hal2_playback_ack(struct snd_pcm_substream *substream)
 	struct snd_hal2 *hal2 = snd_pcm_substream_chip(substream);
 	struct hal2_codec *dac = &hal2->dac;
 
-	dac->pcm_indirect.hw_queue_size = H2_BUF_SIZE / 2;
 	return snd_pcm_indirect_playback_transfer(substream,
 						  &dac->pcm_indirect,
 						  hal2_playback_transfer);
@@ -655,6 +654,7 @@ static int hal2_capture_prepare(struct snd_pcm_substream *substream)
 	memset(&adc->pcm_indirect, 0, sizeof(adc->pcm_indirect));
 	adc->pcm_indirect.hw_buffer_size = H2_BUF_SIZE;
 	adc->pcm_indirect.hw_queue_size = H2_BUF_SIZE / 2;
+	adc->pcm_indirect.hw_io = adc->buffer_dma;
 	adc->pcm_indirect.sw_buffer_size = snd_pcm_lib_buffer_bytes(substream);
 	adc->substream = substream;
 	hal2_setup_adc(hal2);
@@ -667,9 +667,6 @@ static int hal2_capture_trigger(struct snd_pcm_substream *substream, int cmd)
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
-		hal2->adc.pcm_indirect.hw_io = hal2->adc.buffer_dma;
-		hal2->adc.pcm_indirect.hw_data = 0;
-		printk(KERN_DEBUG "buffer_dma %x\n", hal2->adc.buffer_dma);
 		hal2_start_adc(hal2);
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
@@ -711,7 +708,7 @@ static int hal2_capture_ack(struct snd_pcm_substream *substream)
 						 hal2_capture_transfer);
 }
 
-static struct snd_pcm_ops hal2_playback_ops = {
+static const struct snd_pcm_ops hal2_playback_ops = {
 	.open =        hal2_playback_open,
 	.close =       hal2_playback_close,
 	.ioctl =       snd_pcm_lib_ioctl,
@@ -723,7 +720,7 @@ static struct snd_pcm_ops hal2_playback_ops = {
 	.ack =         hal2_playback_ack,
 };
 
-static struct snd_pcm_ops hal2_capture_ops = {
+static const struct snd_pcm_ops hal2_capture_ops = {
 	.open =        hal2_capture_open,
 	.close =       hal2_capture_close,
 	.ioctl =       snd_pcm_lib_ioctl,
@@ -814,7 +811,7 @@ static int hal2_create(struct snd_card *card, struct snd_hal2 **rchip)
 	struct hpc3_regs *hpc3 = hpc3c0;
 	int err;
 
-	hal2 = kzalloc(sizeof(struct snd_hal2), GFP_KERNEL);
+	hal2 = kzalloc(sizeof(*hal2), GFP_KERNEL);
 	if (!hal2)
 		return -ENOMEM;
 

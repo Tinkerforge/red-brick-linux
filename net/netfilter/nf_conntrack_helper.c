@@ -24,7 +24,6 @@
 #include <linux/rtnetlink.h>
 
 #include <net/netfilter/nf_conntrack.h>
-#include <net/netfilter/nf_conntrack_l3proto.h>
 #include <net/netfilter/nf_conntrack_l4proto.h>
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_core.h>
@@ -193,8 +192,7 @@ void nf_conntrack_helper_put(struct nf_conntrack_helper *helper)
 EXPORT_SYMBOL_GPL(nf_conntrack_helper_put);
 
 struct nf_conn_help *
-nf_ct_helper_ext_add(struct nf_conn *ct,
-		     struct nf_conntrack_helper *helper, gfp_t gfp)
+nf_ct_helper_ext_add(struct nf_conn *ct, gfp_t gfp)
 {
 	struct nf_conn_help *help;
 
@@ -263,7 +261,7 @@ int __nf_ct_try_assign_helper(struct nf_conn *ct, struct nf_conn *tmpl,
 	}
 
 	if (help == NULL) {
-		help = nf_ct_helper_ext_add(ct, helper, flags);
+		help = nf_ct_helper_ext_add(ct, flags);
 		if (help == NULL)
 			return -ENOMEM;
 	} else {
@@ -437,12 +435,22 @@ out:
 }
 EXPORT_SYMBOL_GPL(nf_conntrack_helper_register);
 
+static bool expect_iter_me(struct nf_conntrack_expect *exp, void *data)
+{
+	struct nf_conn_help *help = nfct_help(exp->master);
+	const struct nf_conntrack_helper *me = data;
+	const struct nf_conntrack_helper *this;
+
+	if (exp->helper == me)
+		return true;
+
+	this = rcu_dereference_protected(help->helper,
+					 lockdep_is_held(&nf_conntrack_expect_lock));
+	return this == me;
+}
+
 void nf_conntrack_helper_unregister(struct nf_conntrack_helper *me)
 {
-	struct nf_conntrack_expect *exp;
-	const struct hlist_node *next;
-	unsigned int i;
-
 	mutex_lock(&nf_ct_helper_mutex);
 	hlist_del_rcu(&me->hnode);
 	nf_ct_helper_count--;
@@ -453,22 +461,13 @@ void nf_conntrack_helper_unregister(struct nf_conntrack_helper *me)
 	 */
 	synchronize_rcu();
 
-	/* Get rid of expectations */
-	spin_lock_bh(&nf_conntrack_expect_lock);
-	for (i = 0; i < nf_ct_expect_hsize; i++) {
-		hlist_for_each_entry_safe(exp, next,
-					  &nf_ct_expect_hash[i], hnode) {
-			struct nf_conn_help *help = nfct_help(exp->master);
-			if ((rcu_dereference_protected(
-					help->helper,
-					lockdep_is_held(&nf_conntrack_expect_lock)
-					) == me || exp->helper == me))
-				nf_ct_remove_expect(exp);
-		}
-	}
-	spin_unlock_bh(&nf_conntrack_expect_lock);
-
+	nf_ct_expect_iterate_destroy(expect_iter_me, NULL);
 	nf_ct_iterate_destroy(unhelp, me);
+
+	/* Maybe someone has gotten the helper already when unhelp above.
+	 * So need to wait it.
+	 */
+	synchronize_rcu();
 }
 EXPORT_SYMBOL_GPL(nf_conntrack_helper_unregister);
 
@@ -563,12 +562,12 @@ int nf_conntrack_helper_init(void)
 
 	return 0;
 out_extend:
-	nf_ct_free_hashtable(nf_ct_helper_hash, nf_ct_helper_hsize);
+	kvfree(nf_ct_helper_hash);
 	return ret;
 }
 
 void nf_conntrack_helper_fini(void)
 {
 	nf_ct_extend_unregister(&helper_extend);
-	nf_ct_free_hashtable(nf_ct_helper_hash, nf_ct_helper_hsize);
+	kvfree(nf_ct_helper_hash);
 }

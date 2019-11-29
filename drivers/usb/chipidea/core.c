@@ -1,13 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * core.c - ChipIdea USB IP core family device controller
  *
  * Copyright (C) 2008 Chipidea - MIPS Technologies, Inc. All rights reserved.
  *
  * Author: David Lopo
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 /*
@@ -56,6 +53,7 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/pm_runtime.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
 #include <linux/usb/otg.h>
@@ -726,6 +724,24 @@ static int ci_get_platdata(struct device *dev,
 		else
 			cable->connected = false;
 	}
+
+	platdata->pctl = devm_pinctrl_get(dev);
+	if (!IS_ERR(platdata->pctl)) {
+		struct pinctrl_state *p;
+
+		p = pinctrl_lookup_state(platdata->pctl, "default");
+		if (!IS_ERR(p))
+			platdata->pins_default = p;
+
+		p = pinctrl_lookup_state(platdata->pctl, "host");
+		if (!IS_ERR(p))
+			platdata->pins_host = p;
+
+		p = pinctrl_lookup_state(platdata->pctl, "device");
+		if (!IS_ERR(p))
+			platdata->pins_device = p;
+	}
+
 	return 0;
 }
 
@@ -736,7 +752,7 @@ static int ci_extcon_register(struct ci_hdrc *ci)
 
 	id = &ci->platdata->id_extcon;
 	id->ci = ci;
-	if (!IS_ERR(id->edev)) {
+	if (!IS_ERR_OR_NULL(id->edev)) {
 		ret = devm_extcon_register_notifier(ci->dev, id->edev,
 						EXTCON_USB_HOST, &id->nb);
 		if (ret < 0) {
@@ -747,7 +763,7 @@ static int ci_extcon_register(struct ci_hdrc *ci)
 
 	vbus = &ci->platdata->vbus_extcon;
 	vbus->ci = ci;
-	if (!IS_ERR(vbus->edev)) {
+	if (!IS_ERR_OR_NULL(vbus->edev)) {
 		ret = devm_extcon_register_notifier(ci->dev, vbus->edev,
 						EXTCON_USB, &vbus->nb);
 		if (ret < 0) {
@@ -838,7 +854,7 @@ static void ci_get_otg_capable(struct ci_hdrc *ci)
 	}
 }
 
-static ssize_t ci_role_show(struct device *dev, struct device_attribute *attr,
+static ssize_t role_show(struct device *dev, struct device_attribute *attr,
 			  char *buf)
 {
 	struct ci_hdrc *ci = dev_get_drvdata(dev);
@@ -849,7 +865,7 @@ static ssize_t ci_role_show(struct device *dev, struct device_attribute *attr,
 	return 0;
 }
 
-static ssize_t ci_role_store(struct device *dev,
+static ssize_t role_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t n)
 {
 	struct ci_hdrc *ci = dev_get_drvdata(dev);
@@ -880,14 +896,14 @@ static ssize_t ci_role_store(struct device *dev,
 
 	return (ret == 0) ? n : ret;
 }
-static DEVICE_ATTR(role, 0644, ci_role_show, ci_role_store);
+static DEVICE_ATTR_RW(role);
 
 static struct attribute *ci_attrs[] = {
 	&dev_attr_role.attr,
 	NULL,
 };
 
-static struct attribute_group ci_attr_group = {
+static const struct attribute_group ci_attr_group = {
 	.attrs = ci_attrs,
 };
 
@@ -1065,9 +1081,7 @@ static int ci_hdrc_probe(struct platform_device *pdev)
 		ci_hdrc_otg_fsm_start(ci);
 
 	device_set_wakeup_capable(&pdev->dev, true);
-	ret = dbg_create_files(ci);
-	if (ret)
-		goto stop;
+	dbg_create_files(ci);
 
 	ret = sysfs_create_group(&dev->kobj, &ci_attr_group);
 	if (ret)

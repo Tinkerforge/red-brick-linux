@@ -1,13 +1,13 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __ASM_S390_PCI_H
 #define __ASM_S390_PCI_H
 
-/* must be set before including asm-generic/pci.h */
-#define PCI_DMA_BUS_IS_PHYS (0)
 /* must be set before including pci_clp.h */
 #define PCI_BAR_COUNT	6
 
 #include <linux/pci.h>
 #include <linux/mutex.h>
+#include <linux/iommu.h>
 #include <asm-generic/pci.h>
 #include <asm/pci_clp.h>
 #include <asm/pci_debug.h>
@@ -51,6 +51,10 @@ struct zpci_fmb_fmt2 {
 	u64 max_work_units;
 };
 
+struct zpci_fmb_fmt3 {
+	u64 tx_bytes;
+};
+
 struct zpci_fmb {
 	u32 format	: 8;
 	u32 fmt_ind	: 24;
@@ -66,6 +70,7 @@ struct zpci_fmb {
 		struct zpci_fmb_fmt0 fmt0;
 		struct zpci_fmb_fmt1 fmt1;
 		struct zpci_fmb_fmt2 fmt2;
+		struct zpci_fmb_fmt3 fmt3;
 	};
 } __packed __aligned(128);
 
@@ -122,6 +127,8 @@ struct zpci_dev {
 	unsigned long	iommu_pages;
 	unsigned int	next_bit;
 
+	struct iommu_device iommu_dev;  /* IOMMU core handle */
+
 	char res_name[16];
 	struct zpci_bar_struct bars[PCI_BAR_COUNT];
 
@@ -173,6 +180,10 @@ int clp_add_pci_device(u32, u32, int);
 int clp_enable_fh(struct zpci_dev *, u8);
 int clp_disable_fh(struct zpci_dev *);
 int clp_get_state(u32 fid, enum zpci_state *state);
+
+/* IOMMU Interface */
+int zpci_init_iommu(struct zpci_dev *zdev);
+void zpci_destroy_iommu(struct zpci_dev *zdev);
 
 #ifdef CONFIG_PCI
 /* Error handling and recovery */

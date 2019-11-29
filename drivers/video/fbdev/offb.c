@@ -280,6 +280,7 @@ static void offb_destroy(struct fb_info *info)
 	if (info->screen_base)
 		iounmap(info->screen_base);
 	release_mem_region(info->apertures->ranges[0].base, info->apertures->ranges[0].size);
+	fb_dealloc_cmap(&info->cmap);
 	framebuffer_release(info);
 }
 
@@ -383,7 +384,7 @@ static void offb_init_palette_hacks(struct fb_info *info, struct device_node *dp
 		FB_VISUAL_PSEUDOCOLOR : FB_VISUAL_STATIC_PSEUDOCOLOR;
 }
 
-static void __init offb_init_fb(const char *name, const char *full_name,
+static void __init offb_init_fb(const char *name,
 				int width, int height, int depth,
 				int pitch, unsigned long address,
 				int foreign_endian, struct device_node *dp)
@@ -402,14 +403,13 @@ static void __init offb_init_fb(const char *name, const char *full_name,
 	       "Using unsupported %dx%d %s at %lx, depth=%d, pitch=%d\n",
 	       width, height, name, address, depth, pitch);
 	if (depth != 8 && depth != 15 && depth != 16 && depth != 32) {
-		printk(KERN_ERR "%s: can't use depth = %d\n", full_name,
-		       depth);
+		printk(KERN_ERR "%pOF: can't use depth = %d\n", dp, depth);
 		release_mem_region(res_start, res_size);
 		return;
 	}
 
 	info = framebuffer_alloc(sizeof(u32) * 16, NULL);
-	
+
 	if (info == 0) {
 		release_mem_region(res_start, res_size);
 		return;
@@ -419,9 +419,13 @@ static void __init offb_init_fb(const char *name, const char *full_name,
 	var = &info->var;
 	info->par = par;
 
-	strcpy(fix->id, "OFfb ");
-	strncat(fix->id, name, sizeof(fix->id) - sizeof("OFfb "));
-	fix->id[sizeof(fix->id) - 1] = '\0';
+	if (name) {
+		strcpy(fix->id, "OFfb ");
+		strncat(fix->id, name, sizeof(fix->id) - sizeof("OFfb "));
+		fix->id[sizeof(fix->id) - 1] = '\0';
+	} else
+		snprintf(fix->id, sizeof(fix->id), "OFfb %pOFn", dp);
+
 
 	var->xres = var->xres_virtual = width;
 	var->yres = var->yres_virtual = height;
@@ -515,10 +519,11 @@ static void __init offb_init_fb(const char *name, const char *full_name,
 	if (register_framebuffer(info) < 0)
 		goto out_err;
 
-	fb_info(info, "Open Firmware frame buffer device on %s\n", full_name);
+	fb_info(info, "Open Firmware frame buffer device on %pOF\n", dp);
 	return;
 
 out_err:
+	fb_dealloc_cmap(&info->cmap);
 	iounmap(info->screen_base);
 out_aper:
 	iounmap(par->cmap_adr);
@@ -643,8 +648,7 @@ static void __init offb_init_nodriver(struct device_node *dp, int no_real_node)
 		/* kludge for valkyrie */
 		if (strcmp(dp->name, "valkyrie") == 0)
 			address += 0x1000;
-		offb_init_fb(no_real_node ? "bootx" : dp->name,
-			     no_real_node ? "display" : dp->full_name,
+		offb_init_fb(no_real_node ? "bootx" : NULL,
 			     width, height, depth, pitch, address,
 			     foreign_endian, no_real_node ? NULL : dp);
 	}

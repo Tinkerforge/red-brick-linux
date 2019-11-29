@@ -1,9 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) STMicroelectronics SA 2014
  * Authors: Benjamin Gaignard <benjamin.gaignard@st.com>
  *          Fabien Dessenne <fabien.dessenne@st.com>
  *          for STMicroelectronics.
- * License terms:  GNU General Public License (GPL), version 2
  */
 #include <linux/seq_file.h>
 
@@ -211,7 +211,11 @@ static int gdp_dbg_show(struct seq_file *s, void *data)
 	struct drm_info_node *node = s->private;
 	struct sti_gdp *gdp = (struct sti_gdp *)node->info_ent->data;
 	struct drm_plane *drm_plane = &gdp->plane.drm_plane;
-	struct drm_crtc *crtc = drm_plane->crtc;
+	struct drm_crtc *crtc;
+
+	drm_modeset_lock(&drm_plane->mutex, NULL);
+	crtc = drm_plane->state->crtc;
+	drm_modeset_unlock(&drm_plane->mutex);
 
 	seq_printf(s, "%s: (vaddr = 0x%p)",
 		   sti_plane_to_str(&gdp->plane), gdp->regs);
@@ -879,7 +883,7 @@ static void sti_gdp_destroy(struct drm_plane *drm_plane)
 {
 	DRM_DEBUG_DRIVER("\n");
 
-	drm_plane_helper_disable(drm_plane);
+	drm_plane_helper_disable(drm_plane, NULL);
 	drm_plane_cleanup(drm_plane);
 }
 
@@ -895,7 +899,6 @@ static const struct drm_plane_funcs sti_gdp_plane_helpers_funcs = {
 	.update_plane = drm_atomic_helper_update_plane,
 	.disable_plane = drm_atomic_helper_disable_plane,
 	.destroy = sti_gdp_destroy,
-	.set_property = drm_atomic_helper_plane_set_property,
 	.reset = sti_plane_reset,
 	.atomic_duplicate_state = drm_atomic_helper_plane_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_plane_destroy_state,
@@ -931,7 +934,7 @@ struct drm_plane *sti_gdp_create(struct drm_device *drm_dev,
 				       &sti_gdp_plane_helpers_funcs,
 				       gdp_supported_formats,
 				       ARRAY_SIZE(gdp_supported_formats),
-				       type, NULL);
+				       NULL, type, NULL);
 	if (res) {
 		DRM_ERROR("Failed to initialize universal plane\n");
 		goto err;

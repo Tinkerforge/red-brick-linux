@@ -194,7 +194,7 @@ static const char *hp100_isa_tbl[] = {
 };
 #endif
 
-static struct eisa_device_id hp100_eisa_tbl[] = {
+static const struct eisa_device_id hp100_eisa_tbl[] = {
 	{ "HWPF180" }, /* HP J2577 rev A */
 	{ "HWP1920" }, /* HP 27248B */
 	{ "HWP1940" }, /* HP J2577 */
@@ -2634,7 +2634,7 @@ static int hp100_login_to_vg_hub(struct net_device *dev, u_short force_relogin)
 		/* Wait for link to drop */
 		time = jiffies + (HZ / 10);
 		do {
-			if (~(hp100_inb(VG_LAN_CFG_1) & HP100_LINK_UP_ST))
+			if (!(hp100_inb(VG_LAN_CFG_1) & HP100_LINK_UP_ST))
 				break;
 			if (!in_interrupt())
 				schedule_timeout_interruptible(1);

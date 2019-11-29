@@ -16,11 +16,11 @@
 #include "cirrus_drv.h"
 
 int cirrus_modeset = -1;
-int cirrus_bpp = 24;
+int cirrus_bpp = 16;
 
 MODULE_PARM_DESC(modeset, "Disable/Enable modesetting");
 module_param_named(modeset, cirrus_modeset, int, 0400);
-MODULE_PARM_DESC(bpp, "Max bits-per-pixel (default:24)");
+MODULE_PARM_DESC(bpp, "Max bits-per-pixel (default:16)");
 module_param_named(bpp, cirrus_bpp, int, 0400);
 
 /*
@@ -42,33 +42,12 @@ static const struct pci_device_id pciidlist[] = {
 };
 
 
-static int cirrus_kick_out_firmware_fb(struct pci_dev *pdev)
-{
-	struct apertures_struct *ap;
-	bool primary = false;
-
-	ap = alloc_apertures(1);
-	if (!ap)
-		return -ENOMEM;
-
-	ap->ranges[0].base = pci_resource_start(pdev, 0);
-	ap->ranges[0].size = pci_resource_len(pdev, 0);
-
-#ifdef CONFIG_X86
-	primary = pdev->resource[PCI_ROM_RESOURCE].flags & IORESOURCE_ROM_SHADOW;
-#endif
-	drm_fb_helper_remove_conflicting_framebuffers(ap, "cirrusdrmfb", primary);
-	kfree(ap);
-
-	return 0;
-}
-
 static int cirrus_pci_probe(struct pci_dev *pdev,
 			    const struct pci_device_id *ent)
 {
 	int ret;
 
-	ret = cirrus_kick_out_firmware_fb(pdev);
+	ret = drm_fb_helper_remove_conflicting_pci_framebuffers(pdev, 0, "cirrusdrmfb");
 	if (ret)
 		return ret;
 
@@ -132,7 +111,6 @@ static struct drm_driver driver = {
 	.driver_features = DRIVER_MODESET | DRIVER_GEM,
 	.load = cirrus_driver_load,
 	.unload = cirrus_driver_unload,
-	.set_busid = drm_pci_set_busid,
 	.fops = &cirrus_driver_fops,
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
@@ -143,7 +121,6 @@ static struct drm_driver driver = {
 	.gem_free_object_unlocked = cirrus_gem_free_object,
 	.dumb_create = cirrus_dumb_create,
 	.dumb_map_offset = cirrus_dumb_mmap_offset,
-	.dumb_destroy = drm_gem_dumb_destroy,
 };
 
 static const struct dev_pm_ops cirrus_pm_ops = {
@@ -166,12 +143,12 @@ static int __init cirrus_init(void)
 
 	if (cirrus_modeset == 0)
 		return -EINVAL;
-	return drm_pci_init(&driver, &cirrus_pci_driver);
+	return pci_register_driver(&cirrus_pci_driver);
 }
 
 static void __exit cirrus_exit(void)
 {
-	drm_pci_exit(&driver, &cirrus_pci_driver);
+	pci_unregister_driver(&cirrus_pci_driver);
 }
 
 module_init(cirrus_init);

@@ -222,7 +222,7 @@ static int ptn3460_get_modes(struct drm_connector *connector)
 	}
 
 	ptn_bridge->edid = (struct edid *)edid;
-	drm_mode_connector_update_edid_property(connector, ptn_bridge->edid);
+	drm_connector_update_edid_property(connector, ptn_bridge->edid);
 
 	num_modes = drm_add_edid_modes(connector, ptn_bridge->edid);
 
@@ -238,7 +238,6 @@ static const struct drm_connector_helper_funcs ptn3460_connector_helper_funcs = 
 };
 
 static const struct drm_connector_funcs ptn3460_connector_funcs = {
-	.dpms = drm_atomic_helper_connector_dpms,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.destroy = drm_connector_cleanup,
 	.reset = drm_atomic_helper_connector_reset,
@@ -266,7 +265,7 @@ static int ptn3460_bridge_attach(struct drm_bridge *bridge)
 	drm_connector_helper_add(&ptn_bridge->connector,
 					&ptn3460_connector_helper_funcs);
 	drm_connector_register(&ptn_bridge->connector);
-	drm_mode_connector_attach_encoder(&ptn_bridge->connector,
+	drm_connector_attach_encoder(&ptn_bridge->connector,
 							bridge->encoder);
 
 	if (ptn_bridge->panel)
@@ -332,11 +331,7 @@ static int ptn3460_probe(struct i2c_client *client,
 
 	ptn_bridge->bridge.funcs = &ptn3460_bridge_funcs;
 	ptn_bridge->bridge.of_node = dev->of_node;
-	ret = drm_bridge_add(&ptn_bridge->bridge);
-	if (ret) {
-		DRM_ERROR("Failed to add bridge\n");
-		return ret;
-	}
+	drm_bridge_add(&ptn_bridge->bridge);
 
 	i2c_set_clientdata(client, ptn_bridge);
 

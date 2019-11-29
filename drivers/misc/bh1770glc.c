@@ -180,9 +180,6 @@ static const char reg_vleds[] = "Vleds";
 static const s16 prox_rates_hz[] = {100, 50, 33, 25, 14, 10, 5, 2};
 static const s16 prox_rates_ms[] = {10, 20, 30, 40, 70, 100, 200, 500};
 
-/* Supported IR-led currents in mA */
-static const u8 prox_curr_ma[] = {5, 10, 20, 50, 100, 150, 200};
-
 /*
  * Supported stand alone rates in ms from chip data sheet
  * {100, 200, 500, 1000, 2000};
@@ -1175,7 +1172,7 @@ static struct attribute *sysfs_attrs[] = {
 	NULL
 };
 
-static struct attribute_group bh1770_attribute_group = {
+static const struct attribute_group bh1770_attribute_group = {
 	.attrs = sysfs_attrs
 };
 

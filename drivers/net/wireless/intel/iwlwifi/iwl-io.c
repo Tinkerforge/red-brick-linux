@@ -14,10 +14,6 @@
  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
  * more details.
  *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110, USA
- *
  * The full GNU General Public License is included in this distribution in the
  * file called LICENSE.
  *
@@ -241,20 +237,12 @@ IWL_EXPORT_SYMBOL(iwl_clear_bits_prph);
 
 void iwl_force_nmi(struct iwl_trans *trans)
 {
-	if (trans->cfg->device_family < IWL_DEVICE_FAMILY_8000) {
+	if (trans->cfg->device_family < IWL_DEVICE_FAMILY_9000)
 		iwl_write_prph(trans, DEVICE_SET_NMI_REG,
 			       DEVICE_SET_NMI_VAL_DRV);
-		iwl_write_prph(trans, DEVICE_SET_NMI_REG,
-			       DEVICE_SET_NMI_VAL_HW);
-	} else if (trans->cfg->device_family == IWL_DEVICE_FAMILY_A000) {
+	else
 		iwl_write_prph(trans, UREG_NIC_SET_NMI_DRIVER,
-			       DEVICE_SET_NMI_8000_VAL);
-	} else {
-		iwl_write_prph(trans, DEVICE_SET_NMI_8000_REG,
-			       DEVICE_SET_NMI_8000_VAL);
-		iwl_write_prph(trans, DEVICE_SET_NMI_REG,
-			       DEVICE_SET_NMI_VAL_DRV);
-	}
+			       UREG_NIC_SET_NMI_DRIVER_NMI_FROM_DRIVER_MSK);
 }
 IWL_EXPORT_SYMBOL(iwl_force_nmi);
 

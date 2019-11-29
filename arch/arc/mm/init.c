@@ -8,7 +8,6 @@
 
 #include <linux/kernel.h>
 #include <linux/mm.h>
-#include <linux/bootmem.h>
 #include <linux/memblock.h>
 #ifdef CONFIG_BLK_DEV_INITRD
 #include <linux/initrd.h>
@@ -26,7 +25,7 @@ pgd_t swapper_pg_dir[PTRS_PER_PGD] __aligned(PAGE_SIZE);
 char empty_zero_page[PAGE_SIZE] __aligned(PAGE_SIZE);
 EXPORT_SYMBOL(empty_zero_page);
 
-static const unsigned long low_mem_start = CONFIG_LINUX_LINK_BASE;
+static const unsigned long low_mem_start = CONFIG_LINUX_RAM_BASE;
 static unsigned long low_mem_sz;
 
 #ifdef CONFIG_HIGHMEM
@@ -63,7 +62,7 @@ void __init early_init_dt_add_memory_arch(u64 base, u64 size)
 
 	if (!low_mem_sz) {
 		if (base != low_mem_start)
-			panic("CONFIG_LINUX_LINK_BASE != DT memory { }");
+			panic("CONFIG_LINUX_RAM_BASE != DT memory { }");
 
 		low_mem_sz = size;
 		in_use = 1;
@@ -161,7 +160,7 @@ void __init setup_arch_memory(void)
 	 * We can't use the helper free_area_init(zones[]) because it uses
 	 * PAGE_OFFSET to compute the @min_low_pfn which would be wrong
 	 * when our kernel doesn't start at PAGE_OFFSET, i.e.
-	 * PAGE_OFFSET != CONFIG_LINUX_LINK_BASE
+	 * PAGE_OFFSET != CONFIG_LINUX_RAM_BASE
 	 */
 	free_area_init_node(0,			/* node-id */
 			    zones_size,		/* num pages per zone */
@@ -218,7 +217,7 @@ void __init mem_init(void)
 		free_highmem_page(pfn_to_page(tmp));
 #endif
 
-	free_all_bootmem();
+	memblock_free_all();
 	mem_init_print_info(NULL);
 }
 

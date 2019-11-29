@@ -1,32 +1,29 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * intel_soc_pmic_core.c - Intel SoC PMIC MFD Driver
+ * Intel SoC PMIC MFD Driver
  *
  * Copyright (C) 2013, 2014 Intel Corporation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License version
- * 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  *
  * Author: Yang, Bin <bin.yang@intel.com>
  * Author: Zhu, Lejun <lejun.zhu@linux.intel.com>
  */
 
-#include <linux/module.h>
-#include <linux/mfd/core.h>
+#include <linux/acpi.h>
+#include <linux/gpio/consumer.h>
+#include <linux/gpio/machine.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
-#include <linux/gpio/consumer.h>
-#include <linux/acpi.h>
-#include <linux/regmap.h>
+#include <linux/module.h>
+#include <linux/mfd/core.h>
 #include <linux/mfd/intel_soc_pmic.h>
-#include <linux/gpio/machine.h>
 #include <linux/pwm.h>
+#include <linux/regmap.h>
+
 #include "intel_soc_pmic_core.h"
+
+/* Crystal Cove PMIC shares same ACPI ID between different platforms */
+#define BYT_CRC_HRV		2
+#define CHT_CRC_HRV		3
 
 /* Lookup table for the Panel Enable/Disable line as GPIO signals */
 static struct gpiod_lookup_table panel_gpio_table = {
@@ -48,16 +45,33 @@ static int intel_soc_pmic_i2c_probe(struct i2c_client *i2c,
 				    const struct i2c_device_id *i2c_id)
 {
 	struct device *dev = &i2c->dev;
-	const struct acpi_device_id *id;
 	struct intel_soc_pmic_config *config;
 	struct intel_soc_pmic *pmic;
+	unsigned long long hrv;
+	acpi_status status;
 	int ret;
 
-	id = acpi_match_device(dev->driver->acpi_match_table, dev);
-	if (!id || !id->driver_data)
+	/*
+	 * There are 2 different Crystal Cove PMICs a Bay Trail and Cherry
+	 * Trail version, use _HRV to differentiate between the 2.
+	 */
+	status = acpi_evaluate_integer(ACPI_HANDLE(dev), "_HRV", NULL, &hrv);
+	if (ACPI_FAILURE(status)) {
+		dev_err(dev, "Failed to get PMIC hardware revision\n");
 		return -ENODEV;
+	}
 
-	config = (struct intel_soc_pmic_config *)id->driver_data;
+	switch (hrv) {
+	case BYT_CRC_HRV:
+		config = &intel_soc_pmic_config_byt_crc;
+		break;
+	case CHT_CRC_HRV:
+		config = &intel_soc_pmic_config_cht_crc;
+		break;
+	default:
+		dev_warn(dev, "Unknown hardware rev %llu, assuming BYT\n", hrv);
+		config = &intel_soc_pmic_config_byt_crc;
+	}
 
 	pmic = devm_kzalloc(dev, sizeof(*pmic), GFP_KERNEL);
 	if (!pmic)
@@ -157,7 +171,7 @@ MODULE_DEVICE_TABLE(i2c, intel_soc_pmic_i2c_id);
 
 #if defined(CONFIG_ACPI)
 static const struct acpi_device_id intel_soc_pmic_acpi_match[] = {
-	{"INT33FD", (kernel_ulong_t)&intel_soc_pmic_config_crc},
+	{ "INT33FD" },
 	{ },
 };
 MODULE_DEVICE_TABLE(acpi, intel_soc_pmic_acpi_match);

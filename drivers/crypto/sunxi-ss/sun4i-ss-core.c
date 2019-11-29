@@ -45,11 +45,9 @@ static struct sun4i_ss_alg_template ss_algs[] = {
 				.cra_driver_name = "md5-sun4i-ss",
 				.cra_priority = 300,
 				.cra_alignmask = 3,
-				.cra_flags = CRYPTO_ALG_TYPE_AHASH,
 				.cra_blocksize = MD5_HMAC_BLOCK_SIZE,
 				.cra_ctxsize = sizeof(struct sun4i_req_ctx),
 				.cra_module = THIS_MODULE,
-				.cra_type = &crypto_ahash_type,
 				.cra_init = sun4i_hash_crainit
 			}
 		}
@@ -73,11 +71,9 @@ static struct sun4i_ss_alg_template ss_algs[] = {
 				.cra_driver_name = "sha1-sun4i-ss",
 				.cra_priority = 300,
 				.cra_alignmask = 3,
-				.cra_flags = CRYPTO_ALG_TYPE_AHASH,
 				.cra_blocksize = SHA1_BLOCK_SIZE,
 				.cra_ctxsize = sizeof(struct sun4i_req_ctx),
 				.cra_module = THIS_MODULE,
-				.cra_type = &crypto_ahash_type,
 				.cra_init = sun4i_hash_crainit
 			}
 		}
@@ -96,8 +92,7 @@ static struct sun4i_ss_alg_template ss_algs[] = {
 			.cra_driver_name = "cbc-aes-sun4i-ss",
 			.cra_priority = 300,
 			.cra_blocksize = AES_BLOCK_SIZE,
-			.cra_flags = CRYPTO_ALG_TYPE_SKCIPHER |
-				     CRYPTO_ALG_KERN_DRIVER_ONLY,
+			.cra_flags = CRYPTO_ALG_KERN_DRIVER_ONLY,
 			.cra_ctxsize = sizeof(struct sun4i_tfm_ctx),
 			.cra_module = THIS_MODULE,
 			.cra_alignmask = 3,
@@ -118,8 +113,7 @@ static struct sun4i_ss_alg_template ss_algs[] = {
 			.cra_driver_name = "ecb-aes-sun4i-ss",
 			.cra_priority = 300,
 			.cra_blocksize = AES_BLOCK_SIZE,
-			.cra_flags = CRYPTO_ALG_TYPE_SKCIPHER |
-				     CRYPTO_ALG_KERN_DRIVER_ONLY,
+			.cra_flags = CRYPTO_ALG_KERN_DRIVER_ONLY,
 			.cra_ctxsize = sizeof(struct sun4i_tfm_ctx),
 			.cra_module = THIS_MODULE,
 			.cra_alignmask = 3,
@@ -140,8 +134,7 @@ static struct sun4i_ss_alg_template ss_algs[] = {
 			.cra_driver_name = "cbc-des-sun4i-ss",
 			.cra_priority = 300,
 			.cra_blocksize = DES_BLOCK_SIZE,
-			.cra_flags = CRYPTO_ALG_TYPE_SKCIPHER |
-				     CRYPTO_ALG_KERN_DRIVER_ONLY,
+			.cra_flags = CRYPTO_ALG_KERN_DRIVER_ONLY,
 			.cra_ctxsize = sizeof(struct sun4i_req_ctx),
 			.cra_module = THIS_MODULE,
 			.cra_alignmask = 3,
@@ -161,8 +154,7 @@ static struct sun4i_ss_alg_template ss_algs[] = {
 			.cra_driver_name = "ecb-des-sun4i-ss",
 			.cra_priority = 300,
 			.cra_blocksize = DES_BLOCK_SIZE,
-			.cra_flags = CRYPTO_ALG_TYPE_SKCIPHER |
-				     CRYPTO_ALG_KERN_DRIVER_ONLY,
+			.cra_flags = CRYPTO_ALG_KERN_DRIVER_ONLY,
 			.cra_ctxsize = sizeof(struct sun4i_req_ctx),
 			.cra_module = THIS_MODULE,
 			.cra_alignmask = 3,
@@ -183,8 +175,7 @@ static struct sun4i_ss_alg_template ss_algs[] = {
 			.cra_driver_name = "cbc-des3-sun4i-ss",
 			.cra_priority = 300,
 			.cra_blocksize = DES3_EDE_BLOCK_SIZE,
-			.cra_flags = CRYPTO_ALG_TYPE_SKCIPHER |
-				     CRYPTO_ALG_KERN_DRIVER_ONLY,
+			.cra_flags = CRYPTO_ALG_KERN_DRIVER_ONLY,
 			.cra_ctxsize = sizeof(struct sun4i_req_ctx),
 			.cra_module = THIS_MODULE,
 			.cra_alignmask = 3,
@@ -205,7 +196,6 @@ static struct sun4i_ss_alg_template ss_algs[] = {
 			.cra_driver_name = "ecb-des3-sun4i-ss",
 			.cra_priority = 300,
 			.cra_blocksize = DES3_EDE_BLOCK_SIZE,
-			.cra_flags = CRYPTO_ALG_TYPE_SKCIPHER,
 			.cra_ctxsize = sizeof(struct sun4i_req_ctx),
 			.cra_module = THIS_MODULE,
 			.cra_alignmask = 3,
@@ -213,6 +203,23 @@ static struct sun4i_ss_alg_template ss_algs[] = {
 		}
 	}
 },
+#ifdef CONFIG_CRYPTO_DEV_SUN4I_SS_PRNG
+{
+	.type = CRYPTO_ALG_TYPE_RNG,
+	.alg.rng = {
+		.base = {
+			.cra_name		= "stdrng",
+			.cra_driver_name	= "sun4i_ss_rng",
+			.cra_priority		= 300,
+			.cra_ctxsize		= 0,
+			.cra_module		= THIS_MODULE,
+		},
+		.generate               = sun4i_ss_prng_generate,
+		.seed                   = sun4i_ss_prng_seed,
+		.seedsize               = SS_SEED_LEN / BITS_PER_BYTE,
+	}
+},
+#endif
 };
 
 static int sun4i_ss_probe(struct platform_device *pdev)
@@ -355,6 +362,13 @@ static int sun4i_ss_probe(struct platform_device *pdev)
 				goto error_alg;
 			}
 			break;
+		case CRYPTO_ALG_TYPE_RNG:
+			err = crypto_register_rng(&ss_algs[i].alg.rng);
+			if (err) {
+				dev_err(ss->dev, "Fail to register %s\n",
+					ss_algs[i].alg.rng.base.cra_name);
+			}
+			break;
 		}
 	}
 	platform_set_drvdata(pdev, ss);
@@ -368,6 +382,9 @@ error_alg:
 			break;
 		case CRYPTO_ALG_TYPE_AHASH:
 			crypto_unregister_ahash(&ss_algs[i].alg.hash);
+			break;
+		case CRYPTO_ALG_TYPE_RNG:
+			crypto_unregister_rng(&ss_algs[i].alg.rng);
 			break;
 		}
 	}
@@ -392,6 +409,9 @@ static int sun4i_ss_remove(struct platform_device *pdev)
 			break;
 		case CRYPTO_ALG_TYPE_AHASH:
 			crypto_unregister_ahash(&ss_algs[i].alg.hash);
+			break;
+		case CRYPTO_ALG_TYPE_RNG:
+			crypto_unregister_rng(&ss_algs[i].alg.rng);
 			break;
 		}
 	}
@@ -421,6 +441,7 @@ static struct platform_driver sun4i_ss_driver = {
 
 module_platform_driver(sun4i_ss_driver);
 
+MODULE_ALIAS("platform:sun4i-ss");
 MODULE_DESCRIPTION("Allwinner Security System cryptographic accelerator");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Corentin LABBE <clabbe.montjoie@gmail.com>");

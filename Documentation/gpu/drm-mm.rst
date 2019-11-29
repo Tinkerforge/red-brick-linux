@@ -191,7 +191,7 @@ acquired and release by :c:func:`calling drm_gem_object_get()` and
 holding the lock.
 
 When the last reference to a GEM object is released the GEM core calls
-the :c:type:`struct drm_driver <drm_driver>` gem_free_object
+the :c:type:`struct drm_driver <drm_driver>` gem_free_object_unlocked
 operation. That operation is mandatory for GEM-enabled drivers and must
 free the GEM object and all associated resources.
 
@@ -297,7 +297,7 @@ made up of several fields, the more interesting ones being:
 	struct vm_operations_struct {
 		void (*open)(struct vm_area_struct * area);
 		void (*close)(struct vm_area_struct * area);
-		int (*fault)(struct vm_fault *vmf);
+		vm_fault_t (*fault)(struct vm_fault *vmf);
 	};
 
 
@@ -394,6 +394,8 @@ VMA Offset Manager
 
 .. kernel-doc:: drivers/gpu/drm/drm_vma_manager.c
    :export:
+
+.. _prime_buffer_sharing:
 
 PRIME Buffer Sharing
 ====================
@@ -492,7 +494,25 @@ DRM Sync Objects
    :doc: Overview
 
 .. kernel-doc:: include/drm/drm_syncobj.h
-   :export:
+   :internal:
 
 .. kernel-doc:: drivers/gpu/drm/drm_syncobj.c
+   :export:
+
+GPU Scheduler
+=============
+
+Overview
+--------
+
+.. kernel-doc:: drivers/gpu/drm/scheduler/sched_main.c
+   :doc: Overview
+
+Scheduler Function References
+-----------------------------
+
+.. kernel-doc:: include/drm/gpu_scheduler.h
+   :internal:
+
+.. kernel-doc:: drivers/gpu/drm/scheduler/sched_main.c
    :export:

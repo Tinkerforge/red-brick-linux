@@ -18,7 +18,7 @@ static void mga_user_framebuffer_destroy(struct drm_framebuffer *fb)
 {
 	struct mga_framebuffer *mga_fb = to_mga_framebuffer(fb);
 
-	drm_gem_object_unreference_unlocked(mga_fb->obj);
+	drm_gem_object_put_unlocked(mga_fb->obj);
 	drm_framebuffer_cleanup(fb);
 	kfree(fb);
 }
@@ -59,13 +59,13 @@ mgag200_user_framebuffer_create(struct drm_device *dev,
 
 	mga_fb = kzalloc(sizeof(*mga_fb), GFP_KERNEL);
 	if (!mga_fb) {
-		drm_gem_object_unreference_unlocked(obj);
+		drm_gem_object_put_unlocked(obj);
 		return ERR_PTR(-ENOMEM);
 	}
 
 	ret = mgag200_framebuffer_init(dev, mga_fb, mode_cmd, obj);
 	if (ret) {
-		drm_gem_object_unreference_unlocked(obj);
+		drm_gem_object_put_unlocked(obj);
 		kfree(mga_fb);
 		return ERR_PTR(ret);
 	}
@@ -124,19 +124,10 @@ static int mga_probe_vram(struct mga_device *mdev, void __iomem *mem)
 static int mga_vram_init(struct mga_device *mdev)
 {
 	void __iomem *mem;
-	struct apertures_struct *aper = alloc_apertures(1);
-	if (!aper)
-		return -ENOMEM;
 
 	/* BAR 0 is VRAM */
 	mdev->mc.vram_base = pci_resource_start(mdev->dev->pdev, 0);
 	mdev->mc.vram_window = pci_resource_len(mdev->dev->pdev, 0);
-
-	aper->ranges[0].base = mdev->mc.vram_base;
-	aper->ranges[0].size = mdev->mc.vram_window;
-
-	drm_fb_helper_remove_conflicting_framebuffers(aper, "mgafb", true);
-	kfree(aper);
 
 	if (!devm_request_mem_region(mdev->dev->dev, mdev->mc.vram_base, mdev->mc.vram_window,
 				"mgadrmfb_vram")) {
@@ -317,7 +308,7 @@ int mgag200_dumb_create(struct drm_file *file,
 		return ret;
 
 	ret = drm_gem_handle_create(file, gobj, &handle);
-	drm_gem_object_unreference_unlocked(gobj);
+	drm_gem_object_put_unlocked(gobj);
 	if (ret)
 		return ret;
 
@@ -366,6 +357,6 @@ mgag200_dumb_mmap_offset(struct drm_file *file,
 	bo = gem_to_mga_bo(obj);
 	*offset = mgag200_bo_mmap_offset(bo);
 
-	drm_gem_object_unreference_unlocked(obj);
+	drm_gem_object_put_unlocked(obj);
 	return 0;
 }

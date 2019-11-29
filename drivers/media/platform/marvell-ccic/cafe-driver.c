@@ -326,7 +326,7 @@ static u32 cafe_smbus_func(struct i2c_adapter *adapter)
 	       I2C_FUNC_SMBUS_WRITE_BYTE_DATA;
 }
 
-static struct i2c_algorithm cafe_smbus_algo = {
+static const struct i2c_algorithm cafe_smbus_algo = {
 	.smbus_xfer = cafe_smbus_xfer,
 	.functionality = cafe_smbus_func
 };
@@ -341,7 +341,7 @@ static int cafe_smbus_setup(struct cafe_camera *cam)
 		return -ENOMEM;
 	adap->owner = THIS_MODULE;
 	adap->algo = &cafe_smbus_algo;
-	strcpy(adap->name, "cafe_ccic");
+	strscpy(adap->name, "cafe_ccic", sizeof(adap->name));
 	adap->dev.parent = &cam->pdev->dev;
 	i2c_set_adapdata(adap, cam);
 	ret = i2c_add_adapter(adap);
@@ -612,7 +612,7 @@ static int cafe_pci_resume(struct pci_dev *pdev)
 
 #endif  /* CONFIG_PM */
 
-static struct pci_device_id cafe_ids[] = {
+static const struct pci_device_id cafe_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_MARVELL,
 		     PCI_DEVICE_ID_MARVELL_88ALP01_CCIC) },
 	{ 0, }

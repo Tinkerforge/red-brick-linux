@@ -67,10 +67,10 @@ static const struct v4l2_file_operations radio_si4713_fops = {
 static int radio_si4713_querycap(struct file *file, void *priv,
 					struct v4l2_capability *capability)
 {
-	strlcpy(capability->driver, "radio-si4713", sizeof(capability->driver));
-	strlcpy(capability->card, "Silicon Labs Si4713 Modulator",
+	strscpy(capability->driver, "radio-si4713", sizeof(capability->driver));
+	strscpy(capability->card, "Silicon Labs Si4713 Modulator",
 		sizeof(capability->card));
-	strlcpy(capability->bus_info, "platform:radio-si4713",
+	strscpy(capability->bus_info, "platform:radio-si4713",
 		sizeof(capability->bus_info));
 	capability->device_caps = V4L2_CAP_MODULATOR | V4L2_CAP_RDS_OUTPUT;
 	capability->capabilities = capability->device_caps | V4L2_CAP_DEVICE_CAPS;
@@ -135,7 +135,7 @@ static struct v4l2_ioctl_ops radio_si4713_ioctl_ops = {
 };
 
 /* radio_si4713_vdev_template - video device interface */
-static struct video_device radio_si4713_vdev_template = {
+static const struct video_device radio_si4713_vdev_template = {
 	.fops			= &radio_si4713_fops,
 	.name			= "radio-si4713",
 	.release		= video_device_release_empty,

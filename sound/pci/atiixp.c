@@ -207,10 +207,10 @@ struct atiixp;
  */
 
 struct atiixp_dma_desc {
-	u32 addr;	/* DMA buffer address */
+	__le32 addr;	/* DMA buffer address */
 	u16 status;	/* status bits */
 	u16 size;	/* size of the packet in dwords */
-	u32 next;	/* address of the next packet descriptor */
+	__le32 next;	/* address of the next packet descriptor */
 };
 
 /*
@@ -903,15 +903,15 @@ static int snd_atiixp_playback_prepare(struct snd_pcm_substream *substream)
 	case 8:
 		data |= ATI_REG_OUT_DMA_SLOT_BIT(10) |
 			ATI_REG_OUT_DMA_SLOT_BIT(11);
-		/* fallthru */
+		/* fall through */
 	case 6:
 		data |= ATI_REG_OUT_DMA_SLOT_BIT(7) |
 			ATI_REG_OUT_DMA_SLOT_BIT(8);
-		/* fallthru */
+		/* fall through */
 	case 4:
 		data |= ATI_REG_OUT_DMA_SLOT_BIT(6) |
 			ATI_REG_OUT_DMA_SLOT_BIT(9);
-		/* fallthru */
+		/* fall through */
 	default:
 		data |= ATI_REG_OUT_DMA_SLOT_BIT(3) |
 			ATI_REG_OUT_DMA_SLOT_BIT(4);
@@ -1009,7 +1009,7 @@ static int snd_atiixp_pcm_hw_free(struct snd_pcm_substream *substream)
 /*
  * pcm hardware definition, identical for all DMA types
  */
-static struct snd_pcm_hardware snd_atiixp_pcm_hw =
+static const struct snd_pcm_hardware snd_atiixp_pcm_hw =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -1183,7 +1183,7 @@ static const struct snd_pcm_ops snd_atiixp_spdif_ops = {
 	.pointer =	snd_atiixp_pcm_pointer,
 };
 
-static struct ac97_pcm atiixp_pcm_defs[] = {
+static const struct ac97_pcm atiixp_pcm_defs[] = {
 	/* front PCM */
 	{
 		.exclusive = 1,

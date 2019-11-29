@@ -273,9 +273,6 @@ static int iphc_decompress(struct sk_buff *skb, struct net_device *netdev,
 			   struct lowpan_peer *peer)
 {
 	const u8 *saddr;
-	struct lowpan_btle_dev *dev;
-
-	dev = lowpan_btle_dev(netdev);
 
 	saddr = peer->lladdr;
 
@@ -470,7 +467,7 @@ static int send_pkt(struct l2cap_chan *chan, struct sk_buff *skb,
 	iv.iov_len = skb->len;
 
 	memset(&msg, 0, sizeof(msg));
-	iov_iter_kvec(&msg.msg_iter, WRITE | ITER_KVEC, &iv, 1, skb->len);
+	iov_iter_kvec(&msg.msg_iter, WRITE, &iv, 1, skb->len);
 
 	err = l2cap_chan_send(chan, &msg, skb->len);
 	if (err > 0) {
@@ -618,12 +615,8 @@ static void ifup(struct net_device *netdev)
 
 static void ifdown(struct net_device *netdev)
 {
-	int err;
-
 	rtnl_lock();
-	err = dev_close(netdev);
-	if (err < 0)
-		BT_INFO("iface %s cannot be closed (%d)", netdev->name, err);
+	dev_close(netdev);
 	rtnl_unlock();
 }
 

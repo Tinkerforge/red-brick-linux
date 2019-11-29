@@ -29,9 +29,6 @@
 #define RES_RING_CSR	1
 #define RES_RING_CMD	2
 
-static const struct of_device_id xgene_enet_of_match[];
-static const struct acpi_device_id xgene_enet_acpi_match[];
-
 static void xgene_enet_init_bufpool(struct xgene_enet_desc_ring *buf_pool)
 {
 	struct xgene_enet_raw_desc16 *raw_desc;
@@ -1591,7 +1588,7 @@ static int xgene_get_tx_delay(struct xgene_enet_pdata *pdata)
 	struct device *dev = &pdata->pdev->dev;
 	int delay, ret;
 
-	ret = of_property_read_u32(dev->of_node, "tx-delay", &delay);
+	ret = device_property_read_u32(dev, "tx-delay", &delay);
 	if (ret) {
 		pdata->tx_delay = 4;
 		return 0;
@@ -1612,7 +1609,7 @@ static int xgene_get_rx_delay(struct xgene_enet_pdata *pdata)
 	struct device *dev = &pdata->pdev->dev;
 	int delay, ret;
 
-	ret = of_property_read_u32(dev->of_node, "rx-delay", &delay);
+	ret = device_property_read_u32(dev, "rx-delay", &delay);
 	if (ret) {
 		pdata->rx_delay = 2;
 		return 0;
@@ -1674,8 +1671,6 @@ static void xgene_enet_check_phy_handle(struct xgene_enet_pdata *pdata)
 	ret = xgene_enet_phy_connect(pdata->ndev);
 	if (!ret)
 		pdata->mdio_driver = true;
-
-	return;
 }
 
 static void xgene_enet_gpiod_get(struct xgene_enet_pdata *pdata)

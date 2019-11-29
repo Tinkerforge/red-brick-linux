@@ -41,10 +41,10 @@ MODULE_PARM_DESC(pcm_debug, "enable debug messages for pcm");
 #define dprintk(fmt, arg...) do {					\
 	    if (pcm_debug)						\
 		printk(KERN_INFO "cx18-alsa-pcm %s: " fmt,		\
-				  __func__, ##arg); 			\
+				  __func__, ##arg);			\
 	} while (0)
 
-static struct snd_pcm_hardware snd_cx18_hw_capture = {
+static const struct snd_pcm_hardware snd_cx18_hw_capture = {
 	.info = SNDRV_PCM_INFO_BLOCK_TRANSFER |
 		SNDRV_PCM_INFO_MMAP           |
 		SNDRV_PCM_INFO_INTERLEAVED    |
@@ -345,7 +345,7 @@ int snd_cx18_pcm_create(struct snd_cx18_card *cxsc)
 			&snd_cx18_pcm_capture_ops);
 	sp->info_flags = 0;
 	sp->private_data = cxsc;
-	strlcpy(sp->name, cx->card_name, sizeof(sp->name));
+	strscpy(sp->name, cx->card_name, sizeof(sp->name));
 
 	return 0;
 

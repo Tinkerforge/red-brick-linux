@@ -735,7 +735,7 @@ static int ccdc_config(struct isp_ccdc_device *ccdc,
 				return -ENOMEM;
 
 			if (copy_from_user(fpc_new.addr,
-					   (__force void __user *)fpc.fpcaddr,
+					   (__force void __user *)(long)fpc.fpcaddr,
 					   size)) {
 				dma_free_coherent(isp->dev, size, fpc_new.addr,
 						  fpc_new.dma);
@@ -1139,15 +1139,11 @@ static void ccdc_configure(struct isp_ccdc_device *ccdc)
 	pad = media_entity_remote_pad(&ccdc->pads[CCDC_PAD_SINK]);
 	sensor = media_entity_to_v4l2_subdev(pad->entity);
 	if (ccdc->input == CCDC_INPUT_PARALLEL) {
-		struct v4l2_mbus_config cfg;
-		int ret;
+		struct v4l2_subdev *sd =
+			to_isp_pipeline(&ccdc->subdev.entity)->external;
 
-		ret = v4l2_subdev_call(sensor, video, g_mbus_config, &cfg);
-		if (!ret)
-			ccdc->bt656 = cfg.type == V4L2_MBUS_BT656;
-
-		parcfg = &((struct isp_bus_cfg *)sensor->host_priv)
-			->bus.parallel;
+		parcfg = &v4l2_subdev_to_bus_cfg(sd)->bus.parallel;
+		ccdc->bt656 = parcfg->bt656;
 	}
 
 	/* CCDC_PAD_SINK */
@@ -2418,11 +2414,11 @@ static int ccdc_link_validate(struct v4l2_subdev *sd,
 
 	/* We've got a parallel sensor here. */
 	if (ccdc->input == CCDC_INPUT_PARALLEL) {
-		struct isp_parallel_cfg *parcfg =
-			&((struct isp_bus_cfg *)
-			  media_entity_to_v4l2_subdev(link->source->entity)
-			  ->host_priv)->bus.parallel;
-		parallel_shift = parcfg->data_lane_shift;
+		struct v4l2_subdev *sd =
+			media_entity_to_v4l2_subdev(link->source->entity);
+		struct isp_bus_cfg *bus_cfg = v4l2_subdev_to_bus_cfg(sd);
+
+		parallel_shift = bus_cfg->bus.parallel.data_lane_shift;
 	} else {
 		parallel_shift = 0;
 	}
@@ -2645,7 +2641,7 @@ static int ccdc_init_entities(struct isp_ccdc_device *ccdc)
 
 	v4l2_subdev_init(sd, &ccdc_v4l2_ops);
 	sd->internal_ops = &ccdc_v4l2_internal_ops;
-	strlcpy(sd->name, "OMAP3 ISP CCDC", sizeof(sd->name));
+	strscpy(sd->name, "OMAP3 ISP CCDC", sizeof(sd->name));
 	sd->grp_id = 1 << 16;	/* group ID for isp subdevs */
 	v4l2_set_subdevdata(sd, ccdc);
 	sd->flags |= V4L2_SUBDEV_FL_HAS_EVENTS | V4L2_SUBDEV_FL_HAS_DEVNODE;

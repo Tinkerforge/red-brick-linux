@@ -13,6 +13,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include "mtk-platform.h"
@@ -500,7 +501,7 @@ static int mtk_crypto_probe(struct platform_device *pdev)
 		cryp->irq[i] = platform_get_irq(pdev, i);
 		if (cryp->irq[i] < 0) {
 			dev_err(cryp->dev, "no IRQ:%d resource info\n", i);
-			return -ENXIO;
+			return cryp->irq[i];
 		}
 	}
 

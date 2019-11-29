@@ -1,10 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * self test for change_page_attr.
  *
  * Clears the a test pte bit on random pages in the direct mapping,
  * then reverts and compares page tables forwards and afterwards.
  */
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/kthread.h>
 #include <linux/random.h>
 #include <linux/kernel.h>

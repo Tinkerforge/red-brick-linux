@@ -8,7 +8,9 @@
 Part IV - Media Controller API
 ##############################
 
-.. class:: toc-title
+.. only:: html
+
+   .. class:: toc-title
 
         Table of Contents
 
@@ -19,6 +21,7 @@ Part IV - Media Controller API
     media-controller-intro
     media-controller-model
     media-types
+    request-api
     media-funcs
     media-header
 

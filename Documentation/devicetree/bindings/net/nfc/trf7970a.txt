@@ -3,7 +3,6 @@
 Required properties:
 - compatible: Should be "ti,trf7970a".
 - spi-max-frequency: Maximum SPI frequency (<= 2000000).
-- interrupt-parent: phandle of parent interrupt handler.
 - interrupts: A single interrupt specifier.
 - ti,enable-gpios: One or two GPIO entries used for 'EN' and 'EN2' pins on the
   TRF7970A. EN2 is optional.
@@ -23,7 +22,6 @@ Optional SoC Specific Properties:
 Example (for ARM-based BeagleBone with TRF7970A on SPI1):
 
 &spi1 {
-	status = "okay";
 
 	nfc@0 {
 		compatible = "ti,trf7970a";
@@ -41,6 +39,5 @@ Example (for ARM-based BeagleBone with TRF7970A on SPI1):
 		irq-status-read-quirk;
 		en2-rf-quirk;
 		clock-frequency = <27120000>;
-		status = "okay";
 	};
 };

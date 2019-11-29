@@ -483,6 +483,8 @@ struct pqi_raid_error_info {
 #define CISS_CMD_STATUS_TMF			0xd
 #define CISS_CMD_STATUS_AIO_DISABLED		0xe
 
+#define PQI_CMD_STATUS_ABORTED	CISS_CMD_STATUS_ABORTED
+
 #define PQI_NUM_EVENT_QUEUE_ELEMENTS	32
 #define PQI_EVENT_OQ_ELEMENT_LENGTH	sizeof(struct pqi_event_response)
 
@@ -581,8 +583,8 @@ struct pqi_admin_queues_aligned {
 struct pqi_admin_queues {
 	void		*iq_element_array;
 	void		*oq_element_array;
-	volatile pqi_index_t *iq_ci;
-	volatile pqi_index_t *oq_pi;
+	pqi_index_t	*iq_ci;
+	pqi_index_t __iomem *oq_pi;
 	dma_addr_t	iq_element_array_bus_addr;
 	dma_addr_t	oq_element_array_bus_addr;
 	dma_addr_t	iq_ci_bus_addr;
@@ -606,8 +608,8 @@ struct pqi_queue_group {
 	dma_addr_t	oq_element_array_bus_addr;
 	__le32 __iomem	*iq_pi[2];
 	pqi_index_t	iq_pi_copy[2];
-	volatile pqi_index_t *iq_ci[2];
-	volatile pqi_index_t *oq_pi;
+	pqi_index_t __iomem	*iq_ci[2];
+	pqi_index_t __iomem	*oq_pi;
 	dma_addr_t	iq_ci_bus_addr[2];
 	dma_addr_t	oq_pi_bus_addr;
 	__le32 __iomem	*oq_ci;
@@ -620,7 +622,7 @@ struct pqi_event_queue {
 	u16		oq_id;
 	u16		int_msg_num;
 	void		*oq_element_array;
-	volatile pqi_index_t *oq_pi;
+	pqi_index_t __iomem	*oq_pi;
 	dma_addr_t	oq_element_array_bus_addr;
 	dma_addr_t	oq_pi_bus_addr;
 	__le32 __iomem	*oq_ci;
@@ -687,6 +689,28 @@ struct pqi_config_table_heartbeat {
 	struct pqi_config_table_section_header header;
 	__le32	heartbeat_counter;
 };
+
+union pqi_reset_register {
+	struct {
+		u32	reset_type : 3;
+		u32	reserved : 2;
+		u32	reset_action : 3;
+		u32	hold_in_pd1 : 1;
+		u32	reserved2 : 23;
+	} bits;
+	u32	all_bits;
+};
+
+#define PQI_RESET_ACTION_RESET		0x1
+
+#define PQI_RESET_TYPE_NO_RESET		0x0
+#define PQI_RESET_TYPE_SOFT_RESET	0x1
+#define PQI_RESET_TYPE_FIRM_RESET	0x2
+#define PQI_RESET_TYPE_HARD_RESET	0x3
+
+#define PQI_RESET_ACTION_COMPLETED	0x2
+
+#define PQI_RESET_POLL_INTERVAL_MSECS	100
 
 #define PQI_MAX_OUTSTANDING_REQUESTS		((u32)~0)
 #define PQI_MAX_OUTSTANDING_REQUESTS_KDUMP	32
@@ -995,6 +1019,7 @@ struct pqi_ctrl_info {
 	u8		inbound_spanning_supported : 1;
 	u8		outbound_spanning_supported : 1;
 	u8		pqi_mode_enabled : 1;
+	u8		pqi_reset_quiesce_supported : 1;
 
 	struct list_head scsi_device_list;
 	spinlock_t	scsi_device_list_lock;
@@ -1056,9 +1081,9 @@ enum pqi_ctrl_mode {
 #define BMIC_SENSE_CONTROLLER_PARAMETERS	0x64
 #define BMIC_SENSE_SUBSYSTEM_INFORMATION	0x66
 #define BMIC_WRITE_HOST_WELLNESS		0xa5
-#define BMIC_CACHE_FLUSH			0xc2
+#define BMIC_FLUSH_CACHE			0xc2
 
-#define SA_CACHE_FLUSH				0x1
+#define SA_FLUSH_CACHE				0x1
 
 #define MASKED_DEVICE(lunid)			((lunid)[3] & 0xc0)
 #define CISS_GET_LEVEL_2_BUS(lunid)		((lunid)[7] & 0x3f)
@@ -1162,6 +1187,23 @@ struct bmic_identify_physical_device {
 	u8	negotiated_physical_link_rate[256];
 	u8	box_connector_name[8];
 	u8	padding_to_multiple_of_512[9];
+};
+
+struct bmic_flush_cache {
+	u8	disable_flag;
+	u8	system_power_action;
+	u8	ndu_flush;
+	u8	shutdown_event;
+	u8	reserved[28];
+};
+
+/* for shutdown_event member of struct bmic_flush_cache */
+enum bmic_flush_cache_shutdown_event {
+	NONE_CACHE_FLUSH_ONLY = 0,
+	SHUTDOWN = 1,
+	HIBERNATE = 2,
+	SUSPEND = 3,
+	RESTART = 4
 };
 
 #pragma pack()

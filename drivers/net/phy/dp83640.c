@@ -553,16 +553,17 @@ static void enable_status_frames(struct phy_device *phydev, bool on)
 	mutex_unlock(&clock->extreg_lock);
 
 	if (!phydev->attached_dev) {
-		pr_warn("expected to find an attached netdevice\n");
+		phydev_warn(phydev,
+			    "expected to find an attached netdevice\n");
 		return;
 	}
 
 	if (on) {
 		if (dev_mc_add(phydev->attached_dev, status_frame_dst))
-			pr_warn("failed to add mc address\n");
+			phydev_warn(phydev, "failed to add mc address\n");
 	} else {
 		if (dev_mc_del(phydev->attached_dev, status_frame_dst))
-			pr_warn("failed to delete mc address\n");
+			phydev_warn(phydev, "failed to delete mc address\n");
 	}
 }
 
@@ -686,9 +687,9 @@ static void recalibrate(struct dp83640_clock *clock)
 	 * read out and correct offsets
 	 */
 	val = ext_read(master, PAGE4, PTP_STS);
-	pr_info("master PTP_STS  0x%04hx\n", val);
+	phydev_info(master, "master PTP_STS  0x%04hx\n", val);
 	val = ext_read(master, PAGE4, PTP_ESTS);
-	pr_info("master PTP_ESTS 0x%04hx\n", val);
+	phydev_info(master, "master PTP_ESTS 0x%04hx\n", val);
 	event_ts.ns_lo  = ext_read(master, PAGE4, PTP_EDATA);
 	event_ts.ns_hi  = ext_read(master, PAGE4, PTP_EDATA);
 	event_ts.sec_lo = ext_read(master, PAGE4, PTP_EDATA);
@@ -698,15 +699,16 @@ static void recalibrate(struct dp83640_clock *clock)
 	list_for_each(this, &clock->phylist) {
 		tmp = list_entry(this, struct dp83640_private, list);
 		val = ext_read(tmp->phydev, PAGE4, PTP_STS);
-		pr_info("slave  PTP_STS  0x%04hx\n", val);
+		phydev_info(tmp->phydev, "slave  PTP_STS  0x%04hx\n", val);
 		val = ext_read(tmp->phydev, PAGE4, PTP_ESTS);
-		pr_info("slave  PTP_ESTS 0x%04hx\n", val);
+		phydev_info(tmp->phydev, "slave  PTP_ESTS 0x%04hx\n", val);
 		event_ts.ns_lo  = ext_read(tmp->phydev, PAGE4, PTP_EDATA);
 		event_ts.ns_hi  = ext_read(tmp->phydev, PAGE4, PTP_EDATA);
 		event_ts.sec_lo = ext_read(tmp->phydev, PAGE4, PTP_EDATA);
 		event_ts.sec_hi = ext_read(tmp->phydev, PAGE4, PTP_EDATA);
 		diff = now - (s64) phy2txts(&event_ts);
-		pr_info("slave offset %lld nanoseconds\n", diff);
+		phydev_info(tmp->phydev, "slave offset %lld nanoseconds\n",
+			    diff);
 		diff += ADJTIME_FIX;
 		ts = ns_to_timespec64(diff);
 		tdr_write(0, tmp->phydev, &ts, PTP_STEP_CLK);
@@ -757,13 +759,16 @@ static int decode_evnt(struct dp83640_private *dp83640,
 
 	phy_txts = data;
 
-	switch (words) { /* fall through in every case */
+	switch (words) {
 	case 3:
 		dp83640->edata.sec_hi = phy_txts->sec_hi;
+		/* fall through */
 	case 2:
 		dp83640->edata.sec_lo = phy_txts->sec_lo;
+		/* fall through */
 	case 1:
 		dp83640->edata.ns_hi = phy_txts->ns_hi;
+		/* fall through */
 	case 0:
 		dp83640->edata.ns_lo = phy_txts->ns_lo;
 	}
@@ -874,7 +879,6 @@ static void decode_rxts(struct dp83640_private *dp83640,
 			shhwtstamps = skb_hwtstamps(skb);
 			memset(shhwtstamps, 0, sizeof(*shhwtstamps));
 			shhwtstamps->hwtstamp = ns_to_ktime(rxts->ns);
-			netif_rx_ni(skb);
 			list_add(&rxts->list, &dp83640->rxpool);
 			break;
 		}
@@ -885,6 +889,9 @@ static void decode_rxts(struct dp83640_private *dp83640,
 		list_add_tail(&rxts->list, &dp83640->rxts);
 out:
 	spin_unlock_irqrestore(&dp83640->rx_lock, flags);
+
+	if (shhwtstamps)
+		netif_rx_ni(skb);
 }
 
 static void decode_txts(struct dp83640_private *dp83640,
@@ -1095,8 +1102,9 @@ static struct dp83640_clock *dp83640_clock_get_bus(struct mii_bus *bus)
 	if (!clock)
 		goto out;
 
-	clock->caps.pin_config = kzalloc(sizeof(struct ptp_pin_desc) *
-					 DP83640_N_PINS, GFP_KERNEL);
+	clock->caps.pin_config = kcalloc(DP83640_N_PINS,
+					 sizeof(struct ptp_pin_desc),
+					 GFP_KERNEL);
 	if (!clock->caps.pin_config) {
 		kfree(clock);
 		clock = NULL;
@@ -1203,6 +1211,23 @@ static void dp83640_remove(struct phy_device *phydev)
 
 	dp83640_clock_put(clock);
 	kfree(dp83640);
+}
+
+static int dp83640_soft_reset(struct phy_device *phydev)
+{
+	int ret;
+
+	ret = genphy_soft_reset(phydev);
+	if (ret < 0)
+		return ret;
+
+	/* From DP83640 datasheet: "Software driver code must wait 3 us
+	 * following a software reset before allowing further serial MII
+	 * operations with the DP83640."
+	 */
+	udelay(10);		/* Taking udelay inaccuracy into account */
+
+	return 0;
 }
 
 static int dp83640_config_init(struct phy_device *phydev)
@@ -1425,7 +1450,6 @@ static bool dp83640_rxtstamp(struct phy_device *phydev,
 			shhwtstamps = skb_hwtstamps(skb);
 			memset(shhwtstamps, 0, sizeof(*shhwtstamps));
 			shhwtstamps->hwtstamp = ns_to_ktime(rxts->ns);
-			netif_rx_ni(skb);
 			list_del_init(&rxts->list);
 			list_add(&rxts->list, &dp83640->rxpool);
 			break;
@@ -1438,6 +1462,8 @@ static bool dp83640_rxtstamp(struct phy_device *phydev,
 		skb_info->tmo = jiffies + SKB_TIMESTAMP_TIMEOUT;
 		skb_queue_tail(&dp83640->rx_queue, skb);
 		schedule_delayed_work(&dp83640->ts_work, SKB_TIMESTAMP_TIMEOUT);
+	} else {
+		netif_rx_ni(skb);
 	}
 
 	return true;
@@ -1498,9 +1524,8 @@ static struct phy_driver dp83640_driver = {
 	.flags		= PHY_HAS_INTERRUPT,
 	.probe		= dp83640_probe,
 	.remove		= dp83640_remove,
+	.soft_reset	= dp83640_soft_reset,
 	.config_init	= dp83640_config_init,
-	.config_aneg	= genphy_config_aneg,
-	.read_status	= genphy_read_status,
 	.ack_interrupt  = dp83640_ack_interrupt,
 	.config_intr    = dp83640_config_intr,
 	.ts_info	= dp83640_ts_info,

@@ -1,38 +1,34 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * intel_pmc_ipc.c: Driver for the Intel PMC IPC mechanism
+ * Driver for the Intel PMC IPC mechanism
  *
  * (C) Copyright 2014-2015 Intel Corporation
  *
- * This driver is based on Intel SCU IPC driver(intel_scu_opc.c) by
+ * This driver is based on Intel SCU IPC driver(intel_scu_ipc.c) by
  *     Sreedhara DS <sreedhara.ds@intel.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; version 2
- * of the License.
  *
  * PMC running in ARC processor communicates with other entity running in IA
  * core through IPC mechanism which in turn messaging between IA core ad PMC.
  */
 
-#include <linux/module.h>
+#include <linux/acpi.h>
+#include <linux/atomic.h>
+#include <linux/bitops.h>
 #include <linux/delay.h>
-#include <linux/errno.h>
-#include <linux/init.h>
 #include <linux/device.h>
-#include <linux/pm.h>
+#include <linux/errno.h>
+#include <linux/interrupt.h>
+#include <linux/io-64-nonatomic-lo-hi.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/notifier.h>
 #include <linux/pci.h>
 #include <linux/platform_device.h>
-#include <linux/interrupt.h>
+#include <linux/pm.h>
 #include <linux/pm_qos.h>
-#include <linux/kernel.h>
-#include <linux/bitops.h>
 #include <linux/sched.h>
-#include <linux/atomic.h>
-#include <linux/notifier.h>
+#include <linux/spinlock.h>
 #include <linux/suspend.h>
-#include <linux/acpi.h>
-#include <linux/io-64-nonatomic-lo-hi.h>
 
 #include <asm/intel_pmc_ipc.h>
 
@@ -131,6 +127,7 @@ static struct intel_pmc_ipc_dev {
 	/* gcr */
 	void __iomem *gcr_mem_base;
 	bool has_gcr_regs;
+	spinlock_t gcr_lock;
 
 	/* punit */
 	struct platform_device *punit_dev;
@@ -213,11 +210,11 @@ static inline int is_gcr_valid(u32 offset)
 }
 
 /**
- * intel_pmc_gcr_read() - Read PMC GCR register
+ * intel_pmc_gcr_read() - Read a 32-bit PMC GCR register
  * @offset:	offset of GCR register from GCR address base
  * @data:	data pointer for storing the register output
  *
- * Reads the PMC GCR register of given offset.
+ * Reads the 32-bit PMC GCR register at given offset.
  *
  * Return:	negative value on error or 0 on success.
  */
@@ -225,21 +222,50 @@ int intel_pmc_gcr_read(u32 offset, u32 *data)
 {
 	int ret;
 
-	mutex_lock(&ipclock);
+	spin_lock(&ipcdev.gcr_lock);
 
 	ret = is_gcr_valid(offset);
 	if (ret < 0) {
-		mutex_unlock(&ipclock);
+		spin_unlock(&ipcdev.gcr_lock);
 		return ret;
 	}
 
 	*data = readl(ipcdev.gcr_mem_base + offset);
 
-	mutex_unlock(&ipclock);
+	spin_unlock(&ipcdev.gcr_lock);
 
 	return 0;
 }
 EXPORT_SYMBOL_GPL(intel_pmc_gcr_read);
+
+/**
+ * intel_pmc_gcr_read64() - Read a 64-bit PMC GCR register
+ * @offset:	offset of GCR register from GCR address base
+ * @data:	data pointer for storing the register output
+ *
+ * Reads the 64-bit PMC GCR register at given offset.
+ *
+ * Return:	negative value on error or 0 on success.
+ */
+int intel_pmc_gcr_read64(u32 offset, u64 *data)
+{
+	int ret;
+
+	spin_lock(&ipcdev.gcr_lock);
+
+	ret = is_gcr_valid(offset);
+	if (ret < 0) {
+		spin_unlock(&ipcdev.gcr_lock);
+		return ret;
+	}
+
+	*data = readq(ipcdev.gcr_mem_base + offset);
+
+	spin_unlock(&ipcdev.gcr_lock);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(intel_pmc_gcr_read64);
 
 /**
  * intel_pmc_gcr_write() - Write PMC GCR register
@@ -255,17 +281,17 @@ int intel_pmc_gcr_write(u32 offset, u32 data)
 {
 	int ret;
 
-	mutex_lock(&ipclock);
+	spin_lock(&ipcdev.gcr_lock);
 
 	ret = is_gcr_valid(offset);
 	if (ret < 0) {
-		mutex_unlock(&ipclock);
+		spin_unlock(&ipcdev.gcr_lock);
 		return ret;
 	}
 
 	writel(data, ipcdev.gcr_mem_base + offset);
 
-	mutex_unlock(&ipclock);
+	spin_unlock(&ipcdev.gcr_lock);
 
 	return 0;
 }
@@ -287,7 +313,7 @@ int intel_pmc_gcr_update(u32 offset, u32 mask, u32 val)
 	u32 new_val;
 	int ret = 0;
 
-	mutex_lock(&ipclock);
+	spin_lock(&ipcdev.gcr_lock);
 
 	ret = is_gcr_valid(offset);
 	if (ret < 0)
@@ -309,7 +335,7 @@ int intel_pmc_gcr_update(u32 offset, u32 mask, u32 val)
 	}
 
 gcr_ipc_unlock:
-	mutex_unlock(&ipclock);
+	spin_unlock(&ipcdev.gcr_lock);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(intel_pmc_gcr_update);
@@ -480,52 +506,41 @@ static irqreturn_t ioc(int irq, void *dev_id)
 
 static int ipc_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
-	resource_size_t pci_resource;
+	struct intel_pmc_ipc_dev *pmc = &ipcdev;
 	int ret;
-	int len;
 
-	ipcdev.dev = &pci_dev_get(pdev)->dev;
-	ipcdev.irq_mode = IPC_TRIGGER_MODE_IRQ;
-
-	ret = pci_enable_device(pdev);
-	if (ret)
-		return ret;
-
-	ret = pci_request_regions(pdev, "intel_pmc_ipc");
-	if (ret)
-		return ret;
-
-	pci_resource = pci_resource_start(pdev, 0);
-	len = pci_resource_len(pdev, 0);
-	if (!pci_resource || !len) {
-		dev_err(&pdev->dev, "Failed to get resource\n");
-		return -ENOMEM;
-	}
-
-	init_completion(&ipcdev.cmd_complete);
-
-	if (request_irq(pdev->irq, ioc, 0, "intel_pmc_ipc", &ipcdev)) {
-		dev_err(&pdev->dev, "Failed to request irq\n");
+	/* Only one PMC is supported */
+	if (pmc->dev)
 		return -EBUSY;
+
+	pmc->irq_mode = IPC_TRIGGER_MODE_IRQ;
+
+	spin_lock_init(&ipcdev.gcr_lock);
+
+	ret = pcim_enable_device(pdev);
+	if (ret)
+		return ret;
+
+	ret = pcim_iomap_regions(pdev, 1 << 0, pci_name(pdev));
+	if (ret)
+		return ret;
+
+	init_completion(&pmc->cmd_complete);
+
+	pmc->ipc_base = pcim_iomap_table(pdev)[0];
+
+	ret = devm_request_irq(&pdev->dev, pdev->irq, ioc, 0, "intel_pmc_ipc",
+				pmc);
+	if (ret) {
+		dev_err(&pdev->dev, "Failed to request irq\n");
+		return ret;
 	}
 
-	ipcdev.ipc_base = ioremap_nocache(pci_resource, len);
-	if (!ipcdev.ipc_base) {
-		dev_err(&pdev->dev, "Failed to ioremap ipc base\n");
-		free_irq(pdev->irq, &ipcdev);
-		ret = -ENOMEM;
-	}
+	pmc->dev = &pdev->dev;
 
-	return ret;
-}
+	pci_set_drvdata(pdev, pmc);
 
-static void ipc_pci_remove(struct pci_dev *pdev)
-{
-	free_irq(pdev->irq, &ipcdev);
-	pci_release_regions(pdev);
-	pci_dev_put(pdev);
-	iounmap(ipcdev.ipc_base);
-	ipcdev.dev = NULL;
+	return 0;
 }
 
 static const struct pci_device_id ipc_pci_ids[] = {
@@ -540,7 +555,6 @@ static struct pci_driver ipc_pci_driver = {
 	.name = "intel_pmc_ipc",
 	.id_table = ipc_pci_ids,
 	.probe = ipc_pci_probe,
-	.remove = ipc_pci_remove,
 };
 
 static ssize_t intel_pmc_ipc_simple_cmd_store(struct device *dev,
@@ -850,17 +864,12 @@ static int ipc_plat_get_res(struct platform_device *pdev)
 		return -ENXIO;
 	}
 	size = PLAT_RESOURCE_IPC_SIZE + PLAT_RESOURCE_GCR_SIZE;
+	res->end = res->start + size - 1;
 
-	if (!request_mem_region(res->start, size, pdev->name)) {
-		dev_err(&pdev->dev, "Failed to request ipc resource\n");
-		return -EBUSY;
-	}
-	addr = ioremap_nocache(res->start, size);
-	if (!addr) {
-		dev_err(&pdev->dev, "I/O memory remapping failed\n");
-		release_mem_region(res->start, size);
-		return -ENOMEM;
-	}
+	addr = devm_ioremap_resource(&pdev->dev, res);
+	if (IS_ERR(addr))
+		return PTR_ERR(addr);
+
 	ipcdev.ipc_base = addr;
 
 	ipcdev.gcr_mem_base = addr + PLAT_RESOURCE_GCR_OFFSET;
@@ -917,12 +926,12 @@ MODULE_DEVICE_TABLE(acpi, ipc_acpi_ids);
 
 static int ipc_plat_probe(struct platform_device *pdev)
 {
-	struct resource *res;
 	int ret;
 
 	ipcdev.dev = &pdev->dev;
 	ipcdev.irq_mode = IPC_TRIGGER_MODE_IRQ;
 	init_completion(&ipcdev.cmd_complete);
+	spin_lock_init(&ipcdev.gcr_lock);
 
 	ipcdev.irq = platform_get_irq(pdev, 0);
 	if (ipcdev.irq < 0) {
@@ -939,11 +948,11 @@ static int ipc_plat_probe(struct platform_device *pdev)
 	ret = ipc_create_pmc_devices();
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to create pmc devices\n");
-		goto err_device;
+		return ret;
 	}
 
-	if (request_irq(ipcdev.irq, ioc, IRQF_NO_SUSPEND,
-			"intel_pmc_ipc", &ipcdev)) {
+	if (devm_request_irq(&pdev->dev, ipcdev.irq, ioc, IRQF_NO_SUSPEND,
+			     "intel_pmc_ipc", &ipcdev)) {
 		dev_err(&pdev->dev, "Failed to request irq\n");
 		ret = -EBUSY;
 		goto err_irq;
@@ -960,40 +969,22 @@ static int ipc_plat_probe(struct platform_device *pdev)
 
 	return 0;
 err_sys:
-	free_irq(ipcdev.irq, &ipcdev);
+	devm_free_irq(&pdev->dev, ipcdev.irq, &ipcdev);
 err_irq:
 	platform_device_unregister(ipcdev.tco_dev);
 	platform_device_unregister(ipcdev.punit_dev);
 	platform_device_unregister(ipcdev.telemetry_dev);
-err_device:
-	iounmap(ipcdev.ipc_base);
-	res = platform_get_resource(pdev, IORESOURCE_MEM,
-				    PLAT_RESOURCE_IPC_INDEX);
-	if (res) {
-		release_mem_region(res->start,
-				   PLAT_RESOURCE_IPC_SIZE +
-				   PLAT_RESOURCE_GCR_SIZE);
-	}
+
 	return ret;
 }
 
 static int ipc_plat_remove(struct platform_device *pdev)
 {
-	struct resource *res;
-
 	sysfs_remove_group(&pdev->dev.kobj, &intel_ipc_group);
-	free_irq(ipcdev.irq, &ipcdev);
+	devm_free_irq(&pdev->dev, ipcdev.irq, &ipcdev);
 	platform_device_unregister(ipcdev.tco_dev);
 	platform_device_unregister(ipcdev.punit_dev);
 	platform_device_unregister(ipcdev.telemetry_dev);
-	iounmap(ipcdev.ipc_base);
-	res = platform_get_resource(pdev, IORESOURCE_MEM,
-				    PLAT_RESOURCE_IPC_INDEX);
-	if (res) {
-		release_mem_region(res->start,
-				   PLAT_RESOURCE_IPC_SIZE +
-				   PLAT_RESOURCE_GCR_SIZE);
-	}
 	ipcdev.dev = NULL;
 	return 0;
 }
@@ -1033,7 +1024,7 @@ static void __exit intel_pmc_ipc_exit(void)
 
 MODULE_AUTHOR("Zha Qipeng <qipeng.zha@intel.com>");
 MODULE_DESCRIPTION("Intel PMC IPC driver");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
 
 /* Some modules are dependent on this, so init earlier */
 fs_initcall(intel_pmc_ipc_init);

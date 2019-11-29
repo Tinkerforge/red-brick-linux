@@ -210,11 +210,8 @@ csio_pci_init(struct pci_dev *pdev, int *bars)
 	pci_set_master(pdev);
 	pci_try_set_mwi(pdev);
 
-	if (!pci_set_dma_mask(pdev, DMA_BIT_MASK(64))) {
-		pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(64));
-	} else if (!pci_set_dma_mask(pdev, DMA_BIT_MASK(32))) {
-		pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32));
-	} else {
+	if (dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64)) ||
+	    dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32))) {
 		dev_err(&pdev->dev, "No suitable DMA available.\n");
 		goto err_release_regions;
 	}
@@ -485,9 +482,10 @@ csio_resource_alloc(struct csio_hw *hw)
 	if (!hw->rnode_mempool)
 		goto err_free_mb_mempool;
 
-	hw->scsi_pci_pool = pci_pool_create("csio_scsi_pci_pool", hw->pdev,
-					    CSIO_SCSI_RSP_LEN, 8, 0);
-	if (!hw->scsi_pci_pool)
+	hw->scsi_dma_pool = dma_pool_create("csio_scsi_dma_pool",
+					    &hw->pdev->dev, CSIO_SCSI_RSP_LEN,
+					    8, 0);
+	if (!hw->scsi_dma_pool)
 		goto err_free_rn_pool;
 
 	return 0;
@@ -505,8 +503,8 @@ err:
 static void
 csio_resource_free(struct csio_hw *hw)
 {
-	pci_pool_destroy(hw->scsi_pci_pool);
-	hw->scsi_pci_pool = NULL;
+	dma_pool_destroy(hw->scsi_dma_pool);
+	hw->scsi_dma_pool = NULL;
 	mempool_destroy(hw->rnode_mempool);
 	hw->rnode_mempool = NULL;
 	mempool_destroy(hw->mb_mempool);
@@ -967,6 +965,9 @@ static int csio_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto err_pci_exit;
 	}
 
+	if (!pcie_relaxed_ordering_enabled(pdev))
+		hw->flags |= CSIO_HWF_ROOT_NO_RELAXED_ORDERING;
+
 	pci_set_drvdata(pdev, hw);
 
 	rv = csio_hw_start(hw);
@@ -1098,7 +1099,6 @@ csio_pci_slot_reset(struct pci_dev *pdev)
 	pci_set_master(pdev);
 	pci_restore_state(pdev);
 	pci_save_state(pdev);
-	pci_cleanup_aer_uncorrect_error_status(pdev);
 
 	/* Bring HW s/m to ready state.
 	 * but don't resume IOs.
@@ -1254,7 +1254,7 @@ module_init(csio_init);
 module_exit(csio_exit);
 MODULE_AUTHOR(CSIO_DRV_AUTHOR);
 MODULE_DESCRIPTION(CSIO_DRV_DESC);
-MODULE_LICENSE(CSIO_DRV_LICENSE);
+MODULE_LICENSE("Dual BSD/GPL");
 MODULE_DEVICE_TABLE(pci, csio_pci_tbl);
 MODULE_VERSION(CSIO_DRV_VERSION);
 MODULE_FIRMWARE(FW_FNAME_T5);

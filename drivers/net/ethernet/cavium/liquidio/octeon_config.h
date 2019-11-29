@@ -37,6 +37,8 @@
 #define   MAX_OCTEON_LINKS	       MAX_OCTEON_NICIF
 #define   MAX_OCTEON_MULTICAST_ADDR    32
 
+#define   MAX_OCTEON_FILL_COUNT        8
+
 /* CN6xxx IQ configuration macros */
 #define   CN6XXX_MAX_INPUT_QUEUES      32
 #define   CN6XXX_MAX_IQ_DESCRIPTORS    2048
@@ -71,13 +73,17 @@
 #define   CN23XX_MAX_RINGS_PER_VF          8
 
 #define   CN23XX_MAX_INPUT_QUEUES	CN23XX_MAX_RINGS_PER_PF
-#define   CN23XX_MAX_IQ_DESCRIPTORS	512
+#define   CN23XX_MAX_IQ_DESCRIPTORS	2048
+#define   CN23XX_DEFAULT_IQ_DESCRIPTORS	512
+#define   CN23XX_MIN_IQ_DESCRIPTORS	128
 #define   CN23XX_DB_MIN                 1
 #define   CN23XX_DB_MAX                 8
 #define   CN23XX_DB_TIMEOUT             1
 
 #define   CN23XX_MAX_OUTPUT_QUEUES	CN23XX_MAX_RINGS_PER_PF
-#define   CN23XX_MAX_OQ_DESCRIPTORS	512
+#define   CN23XX_MAX_OQ_DESCRIPTORS	2048
+#define   CN23XX_DEFAULT_OQ_DESCRIPTORS	512
+#define   CN23XX_MIN_OQ_DESCRIPTORS	128
 #define   CN23XX_OQ_BUF_SIZE		1664
 #define   CN23XX_OQ_PKTSPER_INTR	128
 /*#define CAVIUM_ONLY_CN23XX_RX_PERF*/
@@ -162,6 +168,11 @@
 #define CFG_GET_OCT_LINK_QUERY_INTERVAL(cfg) \
 				((cfg)->misc.oct_link_query_interval)
 #define CFG_GET_IS_SLI_BP_ON(cfg)                ((cfg)->misc.enable_sli_oq_bp)
+
+#define CFG_SET_NUM_RX_DESCS_NIC_IF(cfg, idx, value) \
+				((cfg)->nic_if_cfg[idx].num_rx_descs = value)
+#define CFG_SET_NUM_TX_DESCS_NIC_IF(cfg, idx, value) \
+				((cfg)->nic_if_cfg[idx].num_tx_descs = value)
 
 /* Max IOQs per OCTEON Link */
 #define MAX_IOQS_PER_NICIF              64
@@ -427,9 +438,10 @@ struct octeon_config {
 #define  MAX_BAR1_IOREMAP_SIZE  (16 * OCTEON_BAR1_ENTRY_SIZE)
 
 /* Response lists - 1 ordered, 1 unordered-blocking, 1 unordered-nonblocking
+ *                  1 process done list, 1 zombie lists(timeouted sc list)
  * NoResponse Lists are now maintained with each IQ. (Dec' 2007).
  */
-#define MAX_RESPONSE_LISTS           4
+#define MAX_RESPONSE_LISTS           6
 
 /* Opcode hash bits. The opcode is hashed on the lower 6-bits to lookup the
  * dispatch table.

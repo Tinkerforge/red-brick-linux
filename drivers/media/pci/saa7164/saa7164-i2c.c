@@ -78,13 +78,13 @@ static const struct i2c_algorithm saa7164_i2c_algo_template = {
 
 /* ----------------------------------------------------------------------- */
 
-static struct i2c_adapter saa7164_i2c_adap_template = {
+static const struct i2c_adapter saa7164_i2c_adap_template = {
 	.name              = "saa7164",
 	.owner             = THIS_MODULE,
 	.algo              = &saa7164_i2c_algo_template,
 };
 
-static struct i2c_client saa7164_i2c_client_template = {
+static const struct i2c_client saa7164_i2c_client_template = {
 	.name	= "saa7164 internal",
 };
 
@@ -99,7 +99,7 @@ int saa7164_i2c_register(struct saa7164_i2c *bus)
 
 	bus->i2c_adap.dev.parent = &dev->pci->dev;
 
-	strlcpy(bus->i2c_adap.name, bus->dev->name,
+	strscpy(bus->i2c_adap.name, bus->dev->name,
 		sizeof(bus->i2c_adap.name));
 
 	bus->i2c_adap.algo_data = bus;

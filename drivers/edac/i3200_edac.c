@@ -17,8 +17,6 @@
 
 #include <linux/io-64-nonatomic-lo-hi.h>
 
-#define I3200_REVISION        "1.1"
-
 #define EDAC_MOD_STR        "i3200_edac"
 
 #define PCI_DEVICE_ID_INTEL_3200_HB    0x29f0
@@ -375,7 +373,6 @@ static int i3200_probe1(struct pci_dev *pdev, int dev_idx)
 	mci->edac_cap = EDAC_FLAG_SECDED;
 
 	mci->mod_name = EDAC_MOD_STR;
-	mci->mod_ver = I3200_REVISION;
 	mci->ctl_name = i3200_devs[dev_idx].ctl_name;
 	mci->dev_name = pci_name(pdev);
 	mci->edac_check = i3200_check;
@@ -402,7 +399,7 @@ static int i3200_probe1(struct pci_dev *pdev, int dev_idx)
 			if (nr_pages == 0)
 				continue;
 
-			edac_dbg(0, "csrow %d, channel %d%s, size = %ld Mb\n", i, j,
+			edac_dbg(0, "csrow %d, channel %d%s, size = %ld MiB\n", i, j,
 				 stacked ? " (stacked)" : "", PAGES_TO_MiB(nr_pages));
 
 			dimm->nr_pages = nr_pages;

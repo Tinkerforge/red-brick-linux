@@ -841,7 +841,7 @@ static int atkbd_select_set(struct atkbd *atkbd, int target_set, int allow_extra
 	if (param[0] != 3) {
 		param[0] = 2;
 		if (ps2_command(ps2dev, param, ATKBD_CMD_SSCANSET))
-		return 2;
+			return 2;
 	}
 
 	ps2_command(ps2dev, param, ATKBD_CMD_SETALL_MBR);
@@ -1270,7 +1270,7 @@ static int atkbd_reconnect(struct serio *serio)
 	return retval;
 }
 
-static struct serio_device_id atkbd_serio_ids[] = {
+static const struct serio_device_id atkbd_serio_ids[] = {
 	{
 		.type	= SERIO_8042,
 		.proto	= SERIO_ANY,

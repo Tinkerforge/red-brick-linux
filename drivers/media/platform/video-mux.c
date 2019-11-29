@@ -17,22 +17,30 @@
 #include <linux/err.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
-#include <linux/regmap.h>
-#include <linux/mfd/syscon.h>
+#include <linux/mux/consumer.h>
 #include <linux/of.h>
 #include <linux/of_graph.h>
 #include <linux/platform_device.h>
+#include <linux/slab.h>
 #include <media/v4l2-async.h>
 #include <media/v4l2-device.h>
+#include <media/v4l2-fwnode.h>
 #include <media/v4l2-subdev.h>
 
 struct video_mux {
 	struct v4l2_subdev subdev;
 	struct media_pad *pads;
 	struct v4l2_mbus_framefmt *format_mbus;
-	struct regmap_field *field;
+	struct mux_control *mux;
 	struct mutex lock;
 	int active;
+};
+
+static const struct v4l2_mbus_framefmt video_mux_format_mbus_default = {
+	.width = 1,
+	.height = 1,
+	.code = MEDIA_BUS_FMT_Y8_1X8,
+	.field = V4L2_FIELD_NONE,
 };
 
 static inline struct video_mux *v4l2_subdev_to_video_mux(struct v4l2_subdev *sd)
@@ -46,6 +54,7 @@ static int video_mux_link_setup(struct media_entity *entity,
 {
 	struct v4l2_subdev *sd = media_entity_to_v4l2_subdev(entity);
 	struct video_mux *vmux = v4l2_subdev_to_video_mux(sd);
+	u16 source_pad = entity->num_pads - 1;
 	int ret = 0;
 
 	/*
@@ -71,15 +80,19 @@ static int video_mux_link_setup(struct media_entity *entity,
 		}
 
 		dev_dbg(sd->dev, "setting %d active\n", local->index);
-		ret = regmap_field_write(vmux->field, local->index);
+		ret = mux_control_try_select(vmux->mux, local->index);
 		if (ret < 0)
 			goto out;
 		vmux->active = local->index;
+
+		/* Propagate the active format to the source */
+		vmux->format_mbus[source_pad] = vmux->format_mbus[vmux->active];
 	} else {
 		if (vmux->active != local->index)
 			goto out;
 
 		dev_dbg(sd->dev, "going inactive\n");
+		mux_control_deselect(vmux->mux);
 		vmux->active = -1;
 	}
 
@@ -162,13 +175,101 @@ static int video_mux_set_format(struct v4l2_subdev *sd,
 			    struct v4l2_subdev_format *sdformat)
 {
 	struct video_mux *vmux = v4l2_subdev_to_video_mux(sd);
-	struct v4l2_mbus_framefmt *mbusformat;
+	struct v4l2_mbus_framefmt *mbusformat, *source_mbusformat;
 	struct media_pad *pad = &vmux->pads[sdformat->pad];
+	u16 source_pad = sd->entity.num_pads - 1;
 
 	mbusformat = __video_mux_get_pad_format(sd, cfg, sdformat->pad,
 					    sdformat->which);
 	if (!mbusformat)
 		return -EINVAL;
+
+	source_mbusformat = __video_mux_get_pad_format(sd, cfg, source_pad,
+						       sdformat->which);
+	if (!source_mbusformat)
+		return -EINVAL;
+
+	/* No size limitations except V4L2 compliance requirements */
+	v4l_bound_align_image(&sdformat->format.width, 1, 65536, 0,
+			      &sdformat->format.height, 1, 65536, 0, 0);
+
+	/* All formats except LVDS and vendor specific formats are acceptable */
+	switch (sdformat->format.code) {
+	case MEDIA_BUS_FMT_RGB444_1X12:
+	case MEDIA_BUS_FMT_RGB444_2X8_PADHI_BE:
+	case MEDIA_BUS_FMT_RGB444_2X8_PADHI_LE:
+	case MEDIA_BUS_FMT_RGB555_2X8_PADHI_BE:
+	case MEDIA_BUS_FMT_RGB555_2X8_PADHI_LE:
+	case MEDIA_BUS_FMT_RGB565_1X16:
+	case MEDIA_BUS_FMT_BGR565_2X8_BE:
+	case MEDIA_BUS_FMT_BGR565_2X8_LE:
+	case MEDIA_BUS_FMT_RGB565_2X8_BE:
+	case MEDIA_BUS_FMT_RGB565_2X8_LE:
+	case MEDIA_BUS_FMT_RGB666_1X18:
+	case MEDIA_BUS_FMT_RBG888_1X24:
+	case MEDIA_BUS_FMT_RGB666_1X24_CPADHI:
+	case MEDIA_BUS_FMT_BGR888_1X24:
+	case MEDIA_BUS_FMT_GBR888_1X24:
+	case MEDIA_BUS_FMT_RGB888_1X24:
+	case MEDIA_BUS_FMT_RGB888_2X12_BE:
+	case MEDIA_BUS_FMT_RGB888_2X12_LE:
+	case MEDIA_BUS_FMT_ARGB8888_1X32:
+	case MEDIA_BUS_FMT_RGB888_1X32_PADHI:
+	case MEDIA_BUS_FMT_RGB101010_1X30:
+	case MEDIA_BUS_FMT_RGB121212_1X36:
+	case MEDIA_BUS_FMT_RGB161616_1X48:
+	case MEDIA_BUS_FMT_Y8_1X8:
+	case MEDIA_BUS_FMT_UV8_1X8:
+	case MEDIA_BUS_FMT_UYVY8_1_5X8:
+	case MEDIA_BUS_FMT_VYUY8_1_5X8:
+	case MEDIA_BUS_FMT_YUYV8_1_5X8:
+	case MEDIA_BUS_FMT_YVYU8_1_5X8:
+	case MEDIA_BUS_FMT_UYVY8_2X8:
+	case MEDIA_BUS_FMT_VYUY8_2X8:
+	case MEDIA_BUS_FMT_YUYV8_2X8:
+	case MEDIA_BUS_FMT_YVYU8_2X8:
+	case MEDIA_BUS_FMT_Y10_1X10:
+	case MEDIA_BUS_FMT_UYVY10_2X10:
+	case MEDIA_BUS_FMT_VYUY10_2X10:
+	case MEDIA_BUS_FMT_YUYV10_2X10:
+	case MEDIA_BUS_FMT_YVYU10_2X10:
+	case MEDIA_BUS_FMT_Y12_1X12:
+	case MEDIA_BUS_FMT_UYVY12_2X12:
+	case MEDIA_BUS_FMT_VYUY12_2X12:
+	case MEDIA_BUS_FMT_YUYV12_2X12:
+	case MEDIA_BUS_FMT_YVYU12_2X12:
+	case MEDIA_BUS_FMT_UYVY8_1X16:
+	case MEDIA_BUS_FMT_VYUY8_1X16:
+	case MEDIA_BUS_FMT_YUYV8_1X16:
+	case MEDIA_BUS_FMT_YVYU8_1X16:
+	case MEDIA_BUS_FMT_YDYUYDYV8_1X16:
+	case MEDIA_BUS_FMT_UYVY10_1X20:
+	case MEDIA_BUS_FMT_VYUY10_1X20:
+	case MEDIA_BUS_FMT_YUYV10_1X20:
+	case MEDIA_BUS_FMT_YVYU10_1X20:
+	case MEDIA_BUS_FMT_VUY8_1X24:
+	case MEDIA_BUS_FMT_YUV8_1X24:
+	case MEDIA_BUS_FMT_UYYVYY8_0_5X24:
+	case MEDIA_BUS_FMT_UYVY12_1X24:
+	case MEDIA_BUS_FMT_VYUY12_1X24:
+	case MEDIA_BUS_FMT_YUYV12_1X24:
+	case MEDIA_BUS_FMT_YVYU12_1X24:
+	case MEDIA_BUS_FMT_YUV10_1X30:
+	case MEDIA_BUS_FMT_UYYVYY10_0_5X30:
+	case MEDIA_BUS_FMT_AYUV8_1X32:
+	case MEDIA_BUS_FMT_UYYVYY12_0_5X36:
+	case MEDIA_BUS_FMT_YUV12_1X36:
+	case MEDIA_BUS_FMT_YUV16_1X48:
+	case MEDIA_BUS_FMT_UYYVYY16_0_5X48:
+	case MEDIA_BUS_FMT_JPEG_1X8:
+	case MEDIA_BUS_FMT_AHSV8888_1X32:
+		break;
+	default:
+		sdformat->format.code = MEDIA_BUS_FMT_Y8_1X8;
+		break;
+	}
+	if (sdformat->format.field == V4L2_FIELD_ANY)
+		sdformat->format.field = V4L2_FIELD_NONE;
 
 	mutex_lock(&vmux->lock);
 
@@ -178,12 +279,36 @@ static int video_mux_set_format(struct v4l2_subdev *sd,
 
 	*mbusformat = sdformat->format;
 
+	/* Propagate the format from an active sink to source */
+	if ((pad->flags & MEDIA_PAD_FL_SINK) && (pad->index == vmux->active))
+		*source_mbusformat = sdformat->format;
+
+	mutex_unlock(&vmux->lock);
+
+	return 0;
+}
+
+static int video_mux_init_cfg(struct v4l2_subdev *sd,
+			      struct v4l2_subdev_pad_config *cfg)
+{
+	struct video_mux *vmux = v4l2_subdev_to_video_mux(sd);
+	struct v4l2_mbus_framefmt *mbusformat;
+	unsigned int i;
+
+	mutex_lock(&vmux->lock);
+
+	for (i = 0; i < sd->entity.num_pads; i++) {
+		mbusformat = v4l2_subdev_get_try_format(sd, cfg, i);
+		*mbusformat = video_mux_format_mbus_default;
+	}
+
 	mutex_unlock(&vmux->lock);
 
 	return 0;
 }
 
 static const struct v4l2_subdev_pad_ops video_mux_pad_ops = {
+	.init_cfg = video_mux_init_cfg,
 	.get_fmt = video_mux_get_format,
 	.set_fmt = video_mux_set_format,
 };
@@ -193,44 +318,36 @@ static const struct v4l2_subdev_ops video_mux_subdev_ops = {
 	.video = &video_mux_subdev_video_ops,
 };
 
-static int video_mux_probe_mmio_mux(struct video_mux *vmux)
+static int video_mux_parse_endpoint(struct device *dev,
+				    struct v4l2_fwnode_endpoint *vep,
+				    struct v4l2_async_subdev *asd)
 {
-	struct device *dev = vmux->subdev.dev;
-	struct of_phandle_args args;
-	struct reg_field field;
-	struct regmap *regmap;
-	u32 reg, mask;
+	/*
+	 * it's not an error if remote is missing on a video-mux
+	 * input port, return -ENOTCONN to skip this endpoint with
+	 * no error.
+	 */
+	return fwnode_device_is_available(asd->match.fwnode) ? 0 : -ENOTCONN;
+}
+
+static int video_mux_async_register(struct video_mux *vmux,
+				    unsigned int num_input_pads)
+{
+	unsigned int i, *ports;
 	int ret;
 
-	ret = of_parse_phandle_with_args(dev->of_node, "mux-controls",
-					 "#mux-control-cells", 0, &args);
-	if (ret)
-		return ret;
+	ports = kcalloc(num_input_pads, sizeof(*ports), GFP_KERNEL);
+	if (!ports)
+		return -ENOMEM;
+	for (i = 0; i < num_input_pads; i++)
+		ports[i] = i;
 
-	if (!of_device_is_compatible(args.np, "mmio-mux"))
-		return -EINVAL;
+	ret = v4l2_async_register_fwnode_subdev(
+		&vmux->subdev, sizeof(struct v4l2_async_subdev),
+		ports, num_input_pads, video_mux_parse_endpoint);
 
-	regmap = syscon_node_to_regmap(args.np->parent);
-	if (IS_ERR(regmap))
-		return PTR_ERR(regmap);
-
-	ret = of_property_read_u32_index(args.np, "mux-reg-masks",
-					 2 * args.args[0], &reg);
-	if (!ret)
-		ret = of_property_read_u32_index(args.np, "mux-reg-masks",
-						 2 * args.args[0] + 1, &mask);
-	if (ret < 0)
-		return ret;
-
-	field.reg = reg;
-	field.msb = fls(mask) - 1;
-	field.lsb = ffs(mask) - 1;
-
-	vmux->field = devm_regmap_field_alloc(dev, regmap, field);
-	if (IS_ERR(vmux->field))
-		return PTR_ERR(vmux->field);
-
-	return 0;
+	kfree(ports);
+	return ret;
 }
 
 static int video_mux_probe(struct platform_device *pdev)
@@ -240,8 +357,8 @@ static int video_mux_probe(struct platform_device *pdev)
 	struct device_node *ep;
 	struct video_mux *vmux;
 	unsigned int num_pads = 0;
+	unsigned int i;
 	int ret;
-	int i;
 
 	vmux = devm_kzalloc(dev, sizeof(*vmux), GFP_KERNEL);
 	if (!vmux)
@@ -250,7 +367,7 @@ static int video_mux_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, vmux);
 
 	v4l2_subdev_init(&vmux->subdev, &video_mux_subdev_ops);
-	snprintf(vmux->subdev.name, sizeof(vmux->subdev.name), "%s", np->name);
+	snprintf(vmux->subdev.name, sizeof(vmux->subdev.name), "%pOFn", np);
 	vmux->subdev.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	vmux->subdev.dev = dev;
 
@@ -270,8 +387,9 @@ static int video_mux_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	ret = video_mux_probe_mmio_mux(vmux);
-	if (ret) {
+	vmux->mux = devm_mux_control_get(dev, NULL);
+	if (IS_ERR(vmux->mux)) {
+		ret = PTR_ERR(vmux->mux);
 		if (ret != -EPROBE_DEFER)
 			dev_err(dev, "Failed to get mux: %d\n", ret);
 		return ret;
@@ -285,9 +403,11 @@ static int video_mux_probe(struct platform_device *pdev)
 					 sizeof(*vmux->format_mbus),
 					 GFP_KERNEL);
 
-	for (i = 0; i < num_pads - 1; i++)
-		vmux->pads[i].flags = MEDIA_PAD_FL_SINK;
-	vmux->pads[num_pads - 1].flags = MEDIA_PAD_FL_SOURCE;
+	for (i = 0; i < num_pads; i++) {
+		vmux->pads[i].flags = (i < num_pads - 1) ? MEDIA_PAD_FL_SINK
+							 : MEDIA_PAD_FL_SOURCE;
+		vmux->format_mbus[i] = video_mux_format_mbus_default;
+	}
 
 	vmux->subdev.entity.function = MEDIA_ENT_F_VID_MUX;
 	ret = media_entity_pads_init(&vmux->subdev.entity, num_pads,
@@ -297,7 +417,7 @@ static int video_mux_probe(struct platform_device *pdev)
 
 	vmux->subdev.entity.ops = &video_mux_ops;
 
-	return v4l2_async_register_subdev(&vmux->subdev);
+	return video_mux_async_register(vmux, num_pads - 1);
 }
 
 static int video_mux_remove(struct platform_device *pdev)

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * caam - Freescale FSL CAAM support for hw_random
  *
@@ -285,11 +286,7 @@ static int caam_init_rng(struct caam_rng_ctx *ctx, struct device *jrdev)
 	if (err)
 		return err;
 
-	err = caam_init_buf(ctx, 1);
-	if (err)
-		return err;
-
-	return 0;
+	return caam_init_buf(ctx, 1);
 }
 
 static struct hwrng caam_rng = {

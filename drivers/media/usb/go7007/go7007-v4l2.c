@@ -284,9 +284,9 @@ static int vidioc_querycap(struct file *file, void  *priv,
 {
 	struct go7007 *go = video_drvdata(file);
 
-	strlcpy(cap->driver, "go7007", sizeof(cap->driver));
-	strlcpy(cap->card, go->name, sizeof(cap->card));
-	strlcpy(cap->bus_info, go->bus_info, sizeof(cap->bus_info));
+	strscpy(cap->driver, "go7007", sizeof(cap->driver));
+	strscpy(cap->card, go->name, sizeof(cap->card));
+	strscpy(cap->bus_info, go->bus_info, sizeof(cap->bus_info));
 
 	cap->device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_READWRITE |
 				V4L2_CAP_STREAMING;
@@ -634,8 +634,8 @@ static int vidioc_enum_input(struct file *file, void *priv,
 	if (inp->index >= go->board_info->num_inputs)
 		return -EINVAL;
 
-	strncpy(inp->name, go->board_info->inputs[inp->index].name,
-			sizeof(inp->name));
+	strscpy(inp->name, go->board_info->inputs[inp->index].name,
+		sizeof(inp->name));
 
 	/* If this board has a tuner, it will be the first input */
 	if ((go->board_info->flags & GO7007_BOARD_HAS_TUNER) &&
@@ -673,7 +673,7 @@ static int vidioc_enumaudio(struct file *file, void *fh, struct v4l2_audio *a)
 
 	if (a->index >= go->board_info->num_aud_inputs)
 		return -EINVAL;
-	strlcpy(a->name, go->board_info->aud_inputs[a->index].name,
+	strscpy(a->name, go->board_info->aud_inputs[a->index].name,
 		sizeof(a->name));
 	a->capability = V4L2_AUDCAP_STEREO;
 	return 0;
@@ -684,7 +684,7 @@ static int vidioc_g_audio(struct file *file, void *fh, struct v4l2_audio *a)
 	struct go7007 *go = video_drvdata(file);
 
 	a->index = go->aud_input;
-	strlcpy(a->name, go->board_info->aud_inputs[go->aud_input].name,
+	strscpy(a->name, go->board_info->aud_inputs[go->aud_input].name,
 		sizeof(a->name));
 	a->capability = V4L2_AUDCAP_STEREO;
 	return 0;
@@ -742,7 +742,7 @@ static int vidioc_g_tuner(struct file *file, void *priv,
 	if (t->index != 0)
 		return -EINVAL;
 
-	strlcpy(t->name, "Tuner", sizeof(t->name));
+	strscpy(t->name, "Tuner", sizeof(t->name));
 	return call_all(&go->v4l2_dev, tuner, g_tuner, t);
 }
 
@@ -857,7 +857,7 @@ static int go7007_s_ctrl(struct v4l2_ctrl *ctrl)
 	return 0;
 }
 
-static struct v4l2_file_operations go7007_fops = {
+static const struct v4l2_file_operations go7007_fops = {
 	.owner		= THIS_MODULE,
 	.open		= v4l2_fh_open,
 	.release	= vb2_fop_release,
@@ -901,7 +901,7 @@ static const struct v4l2_ioctl_ops video_ioctl_ops = {
 	.vidioc_unsubscribe_event = v4l2_event_unsubscribe,
 };
 
-static struct video_device go7007_template = {
+static const struct video_device go7007_template = {
 	.name		= "go7007",
 	.fops		= &go7007_fops,
 	.release	= video_device_release_empty,

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015 Qualcomm Atheros, Inc.
+ * Copyright (c) 2014-2017 Qualcomm Atheros, Inc.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,6 +16,7 @@
 
 #include <linux/types.h>
 #include <linux/bitops.h>
+#include <linux/bitfield.h>
 #include "core.h"
 #include "hw.h"
 #include "hif.h"
@@ -192,6 +193,161 @@ const struct ath10k_hw_values qca4019_values = {
 	.ce_desc_meta_data_lsb          = 4,
 };
 
+const struct ath10k_hw_regs wcn3990_regs = {
+	.rtc_soc_base_address			= 0x00000000,
+	.rtc_wmac_base_address			= 0x00000000,
+	.soc_core_base_address			= 0x00000000,
+	.ce_wrapper_base_address		= 0x0024C000,
+	.ce0_base_address			= 0x00240000,
+	.ce1_base_address			= 0x00241000,
+	.ce2_base_address			= 0x00242000,
+	.ce3_base_address			= 0x00243000,
+	.ce4_base_address			= 0x00244000,
+	.ce5_base_address			= 0x00245000,
+	.ce6_base_address			= 0x00246000,
+	.ce7_base_address			= 0x00247000,
+	.ce8_base_address			= 0x00248000,
+	.ce9_base_address			= 0x00249000,
+	.ce10_base_address			= 0x0024A000,
+	.ce11_base_address			= 0x0024B000,
+	.soc_chip_id_address			= 0x000000f0,
+	.soc_reset_control_si0_rst_mask		= 0x00000001,
+	.soc_reset_control_ce_rst_mask		= 0x00000100,
+	.ce_wrap_intr_sum_host_msi_lsb		= 0x0000000c,
+	.ce_wrap_intr_sum_host_msi_mask		= 0x00fff000,
+	.pcie_intr_fw_mask			= 0x00100000,
+};
+
+static struct ath10k_hw_ce_regs_addr_map wcn3990_src_ring = {
+	.msb	= 0x00000010,
+	.lsb	= 0x00000010,
+	.mask	= GENMASK(17, 17),
+};
+
+static struct ath10k_hw_ce_regs_addr_map wcn3990_dst_ring = {
+	.msb	= 0x00000012,
+	.lsb	= 0x00000012,
+	.mask	= GENMASK(18, 18),
+};
+
+static struct ath10k_hw_ce_regs_addr_map wcn3990_dmax = {
+	.msb	= 0x00000000,
+	.lsb	= 0x00000000,
+	.mask	= GENMASK(15, 0),
+};
+
+static struct ath10k_hw_ce_ctrl1 wcn3990_ctrl1 = {
+	.addr		= 0x00000018,
+	.src_ring	= &wcn3990_src_ring,
+	.dst_ring	= &wcn3990_dst_ring,
+	.dmax		= &wcn3990_dmax,
+};
+
+static struct ath10k_hw_ce_regs_addr_map wcn3990_host_ie_cc = {
+	.mask	= GENMASK(0, 0),
+};
+
+static struct ath10k_hw_ce_host_ie wcn3990_host_ie = {
+	.copy_complete	= &wcn3990_host_ie_cc,
+};
+
+static struct ath10k_hw_ce_host_wm_regs wcn3990_wm_reg = {
+	.dstr_lmask	= 0x00000010,
+	.dstr_hmask	= 0x00000008,
+	.srcr_lmask	= 0x00000004,
+	.srcr_hmask	= 0x00000002,
+	.cc_mask	= 0x00000001,
+	.wm_mask	= 0x0000001E,
+	.addr		= 0x00000030,
+};
+
+static struct ath10k_hw_ce_misc_regs wcn3990_misc_reg = {
+	.axi_err	= 0x00000100,
+	.dstr_add_err	= 0x00000200,
+	.srcr_len_err	= 0x00000100,
+	.dstr_mlen_vio	= 0x00000080,
+	.dstr_overflow	= 0x00000040,
+	.srcr_overflow	= 0x00000020,
+	.err_mask	= 0x000003E0,
+	.addr		= 0x00000038,
+};
+
+static struct ath10k_hw_ce_regs_addr_map wcn3990_src_wm_low = {
+	.msb	= 0x00000000,
+	.lsb	= 0x00000010,
+	.mask	= GENMASK(31, 16),
+};
+
+static struct ath10k_hw_ce_regs_addr_map wcn3990_src_wm_high = {
+	.msb	= 0x0000000f,
+	.lsb	= 0x00000000,
+	.mask	= GENMASK(15, 0),
+};
+
+static struct ath10k_hw_ce_dst_src_wm_regs wcn3990_wm_src_ring = {
+	.addr		= 0x0000004c,
+	.low_rst	= 0x00000000,
+	.high_rst	= 0x00000000,
+	.wm_low		= &wcn3990_src_wm_low,
+	.wm_high	= &wcn3990_src_wm_high,
+};
+
+static struct ath10k_hw_ce_regs_addr_map wcn3990_dst_wm_low = {
+	.lsb	= 0x00000010,
+	.mask	= GENMASK(31, 16),
+};
+
+static struct ath10k_hw_ce_regs_addr_map wcn3990_dst_wm_high = {
+	.msb	= 0x0000000f,
+	.lsb	= 0x00000000,
+	.mask	= GENMASK(15, 0),
+};
+
+static struct ath10k_hw_ce_dst_src_wm_regs wcn3990_wm_dst_ring = {
+	.addr		= 0x00000050,
+	.low_rst	= 0x00000000,
+	.high_rst	= 0x00000000,
+	.wm_low		= &wcn3990_dst_wm_low,
+	.wm_high	= &wcn3990_dst_wm_high,
+};
+
+static struct ath10k_hw_ce_ctrl1_upd wcn3990_ctrl1_upd = {
+	.shift = 19,
+	.mask = 0x00080000,
+	.enable = 0x00000000,
+};
+
+const struct ath10k_hw_ce_regs wcn3990_ce_regs = {
+	.sr_base_addr		= 0x00000000,
+	.sr_size_addr		= 0x00000008,
+	.dr_base_addr		= 0x0000000c,
+	.dr_size_addr		= 0x00000014,
+	.misc_ie_addr		= 0x00000034,
+	.sr_wr_index_addr	= 0x0000003c,
+	.dst_wr_index_addr	= 0x00000040,
+	.current_srri_addr	= 0x00000044,
+	.current_drri_addr	= 0x00000048,
+	.ce_rri_low		= 0x0024C004,
+	.ce_rri_high		= 0x0024C008,
+	.host_ie_addr		= 0x0000002c,
+	.ctrl1_regs		= &wcn3990_ctrl1,
+	.host_ie		= &wcn3990_host_ie,
+	.wm_regs		= &wcn3990_wm_reg,
+	.misc_regs		= &wcn3990_misc_reg,
+	.wm_srcr		= &wcn3990_wm_src_ring,
+	.wm_dstr		= &wcn3990_wm_dst_ring,
+	.upd			= &wcn3990_ctrl1_upd,
+};
+
+const struct ath10k_hw_values wcn3990_values = {
+	.rtc_state_val_on		= 5,
+	.ce_count			= 12,
+	.msi_assign_ce_max		= 12,
+	.num_target_ce_config_wlan	= 12,
+	.ce_desc_meta_data_mask		= 0xFFF0,
+	.ce_desc_meta_data_lsb		= 4,
+};
+
 static struct ath10k_hw_ce_regs_addr_map qcax_src_ring = {
 	.msb	= 0x00000010,
 	.lsb	= 0x00000010,
@@ -307,7 +463,7 @@ static struct ath10k_hw_ce_dst_src_wm_regs qcax_wm_dst_ring = {
 	.wm_high	= &qcax_dst_wm_high,
 };
 
-struct ath10k_hw_ce_regs qcax_ce_regs = {
+const struct ath10k_hw_ce_regs qcax_ce_regs = {
 	.sr_base_addr		= 0x00000000,
 	.sr_size_addr		= 0x00000004,
 	.dr_base_addr		= 0x00000008,
@@ -454,8 +610,13 @@ static void ath10k_hw_qca988x_set_coverage_class(struct ath10k *ar,
 
 	/* Only modify registers if the core is started. */
 	if ((ar->state != ATH10K_STATE_ON) &&
-	    (ar->state != ATH10K_STATE_RESTARTED))
+	    (ar->state != ATH10K_STATE_RESTARTED)) {
+		spin_lock_bh(&ar->data_lock);
+		/* Store config value for when radio boots up */
+		ar->fw_coverage.coverage_class = value;
+		spin_unlock_bh(&ar->data_lock);
 		goto unlock;
+	}
 
 	/* Retrieve the current values of the two registers that need to be
 	 * adjusted.
@@ -487,7 +648,7 @@ static void ath10k_hw_qca988x_set_coverage_class(struct ath10k *ar,
 		ar->fw_coverage.reg_ack_cts_timeout_orig = timeout_reg;
 	ar->fw_coverage.reg_phyclk = phyclk_reg;
 
-	/* Calculat new value based on the (original) firmware calculation. */
+	/* Calculate new value based on the (original) firmware calculation. */
 	slottime_reg = ar->fw_coverage.reg_slottime_orig;
 	timeout_reg = ar->fw_coverage.reg_ack_cts_timeout_orig;
 
@@ -758,6 +919,196 @@ static int ath10k_hw_qca6174_enable_pll_clock(struct ath10k *ar)
 	return 0;
 }
 
+/* Program CPU_ADDR_MSB to allow different memory
+ * region access.
+ */
+static void ath10k_hw_map_target_mem(struct ath10k *ar, u32 msb)
+{
+	u32 address = SOC_CORE_BASE_ADDRESS + FW_RAM_CONFIG_ADDRESS;
+
+	ath10k_hif_write32(ar, address, msb);
+}
+
+/* 1. Write to memory region of target, such as IRAM adn DRAM.
+ * 2. Target address( 0 ~ 00100000 & 0x00400000~0x00500000)
+ *    can be written directly. See ath10k_pci_targ_cpu_to_ce_addr() too.
+ * 3. In order to access the region other than the above,
+ *    we need to set the value of register CPU_ADDR_MSB.
+ * 4. Target memory access space is limited to 1M size. If the size is larger
+ *    than 1M, need to split it and program CPU_ADDR_MSB accordingly.
+ */
+static int ath10k_hw_diag_segment_msb_download(struct ath10k *ar,
+					       const void *buffer,
+					       u32 address,
+					       u32 length)
+{
+	u32 addr = address & REGION_ACCESS_SIZE_MASK;
+	int ret, remain_size, size;
+	const u8 *buf;
+
+	ath10k_hw_map_target_mem(ar, CPU_ADDR_MSB_REGION_VAL(address));
+
+	if (addr + length > REGION_ACCESS_SIZE_LIMIT) {
+		size = REGION_ACCESS_SIZE_LIMIT - addr;
+		remain_size = length - size;
+
+		ret = ath10k_hif_diag_write(ar, address, buffer, size);
+		if (ret) {
+			ath10k_warn(ar,
+				    "failed to download the first %d bytes segment to address:0x%x: %d\n",
+				    size, address, ret);
+			goto done;
+		}
+
+		/* Change msb to the next memory region*/
+		ath10k_hw_map_target_mem(ar,
+					 CPU_ADDR_MSB_REGION_VAL(address) + 1);
+		buf = buffer +  size;
+		ret = ath10k_hif_diag_write(ar,
+					    address & ~REGION_ACCESS_SIZE_MASK,
+					    buf, remain_size);
+		if (ret) {
+			ath10k_warn(ar,
+				    "failed to download the second %d bytes segment to address:0x%x: %d\n",
+				    remain_size,
+				    address & ~REGION_ACCESS_SIZE_MASK,
+				    ret);
+			goto done;
+		}
+	} else {
+		ret = ath10k_hif_diag_write(ar, address, buffer, length);
+		if (ret) {
+			ath10k_warn(ar,
+				    "failed to download the only %d bytes segment to address:0x%x: %d\n",
+				    length, address, ret);
+			goto done;
+		}
+	}
+
+done:
+	/* Change msb to DRAM */
+	ath10k_hw_map_target_mem(ar,
+				 CPU_ADDR_MSB_REGION_VAL(DRAM_BASE_ADDRESS));
+	return ret;
+}
+
+static int ath10k_hw_diag_segment_download(struct ath10k *ar,
+					   const void *buffer,
+					   u32 address,
+					   u32 length)
+{
+	if (address >= DRAM_BASE_ADDRESS + REGION_ACCESS_SIZE_LIMIT)
+		/* Needs to change MSB for memory write */
+		return ath10k_hw_diag_segment_msb_download(ar, buffer,
+							   address, length);
+	else
+		return ath10k_hif_diag_write(ar, address, buffer, length);
+}
+
+int ath10k_hw_diag_fast_download(struct ath10k *ar,
+				 u32 address,
+				 const void *buffer,
+				 u32 length)
+{
+	const u8 *buf = buffer;
+	bool sgmt_end = false;
+	u32 base_addr = 0;
+	u32 base_len = 0;
+	u32 left = 0;
+	struct bmi_segmented_file_header *hdr;
+	struct bmi_segmented_metadata *metadata;
+	int ret = 0;
+
+	if (length < sizeof(*hdr))
+		return -EINVAL;
+
+	/* check firmware header. If it has no correct magic number
+	 * or it's compressed, returns error.
+	 */
+	hdr = (struct bmi_segmented_file_header *)buf;
+	if (__le32_to_cpu(hdr->magic_num) != BMI_SGMTFILE_MAGIC_NUM) {
+		ath10k_dbg(ar, ATH10K_DBG_BOOT,
+			   "Not a supported firmware, magic_num:0x%x\n",
+			   hdr->magic_num);
+		return -EINVAL;
+	}
+
+	if (hdr->file_flags != 0) {
+		ath10k_dbg(ar, ATH10K_DBG_BOOT,
+			   "Not a supported firmware, file_flags:0x%x\n",
+			   hdr->file_flags);
+		return -EINVAL;
+	}
+
+	metadata = (struct bmi_segmented_metadata *)hdr->data;
+	left = length - sizeof(*hdr);
+
+	while (left > 0) {
+		if (left < sizeof(*metadata)) {
+			ath10k_warn(ar, "firmware segment is truncated: %d\n",
+				    left);
+			ret = -EINVAL;
+			break;
+		}
+		base_addr = __le32_to_cpu(metadata->addr);
+		base_len = __le32_to_cpu(metadata->length);
+		buf = metadata->data;
+		left -= sizeof(*metadata);
+
+		switch (base_len) {
+		case BMI_SGMTFILE_BEGINADDR:
+			/* base_addr is the start address to run */
+			ret = ath10k_bmi_set_start(ar, base_addr);
+			base_len = 0;
+			break;
+		case BMI_SGMTFILE_DONE:
+			/* no more segment */
+			base_len = 0;
+			sgmt_end = true;
+			ret = 0;
+			break;
+		case BMI_SGMTFILE_BDDATA:
+		case BMI_SGMTFILE_EXEC:
+			ath10k_warn(ar,
+				    "firmware has unsupported segment:%d\n",
+				    base_len);
+			ret = -EINVAL;
+			break;
+		default:
+			if (base_len > left) {
+				/* sanity check */
+				ath10k_warn(ar,
+					    "firmware has invalid segment length, %d > %d\n",
+					    base_len, left);
+				ret = -EINVAL;
+				break;
+			}
+
+			ret = ath10k_hw_diag_segment_download(ar,
+							      buf,
+							      base_addr,
+							      base_len);
+
+			if (ret)
+				ath10k_warn(ar,
+					    "failed to download firmware via diag interface:%d\n",
+					    ret);
+			break;
+		}
+
+		if (ret || sgmt_end)
+			break;
+
+		metadata = (struct bmi_segmented_metadata *)(buf + base_len);
+		left -= base_len;
+	}
+
+	if (ret == 0)
+		ath10k_dbg(ar, ATH10K_DBG_BOOT,
+			   "boot firmware fast diag download successfully.\n");
+	return ret;
+}
+
 const struct ath10k_hw_ops qca988x_ops = {
 	.set_coverage_class = ath10k_hw_qca988x_set_coverage_class,
 };
@@ -776,3 +1127,5 @@ const struct ath10k_hw_ops qca6174_ops = {
 	.set_coverage_class = ath10k_hw_qca988x_set_coverage_class,
 	.enable_pll_clk = ath10k_hw_qca6174_enable_pll_clock,
 };
+
+const struct ath10k_hw_ops wcn3990_ops = {};

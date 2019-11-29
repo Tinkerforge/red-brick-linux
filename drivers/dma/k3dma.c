@@ -87,10 +87,10 @@ struct k3_dma_chan {
 	struct virt_dma_chan	vc;
 	struct k3_dma_phy	*phy;
 	struct list_head	node;
-	enum dma_transfer_direction dir;
 	dma_addr_t		dev_addr;
 	enum dma_status		status;
 	bool			cyclic;
+	struct dma_slave_config	slave_config;
 };
 
 struct k3_dma_phy {
@@ -117,6 +117,10 @@ struct k3_dma_dev {
 };
 
 #define to_k3_dma(dmadev) container_of(dmadev, struct k3_dma_dev, slave)
+
+static int k3_dma_config_write(struct dma_chan *chan,
+			       enum dma_transfer_direction dir,
+			       struct dma_slave_config *cfg);
 
 static struct k3_dma_chan *to_k3_chan(struct dma_chan *chan)
 {
@@ -223,7 +227,6 @@ static irqreturn_t k3_dma_int_handler(int irq, void *dev_id)
 			if (c && (tc1 & BIT(i))) {
 				spin_lock_irqsave(&c->vc.lock, flags);
 				vchan_cookie_complete(&p->ds_run->vd);
-				WARN_ON_ONCE(p->ds_done);
 				p->ds_done = p->ds_run;
 				p->ds_run = NULL;
 				spin_unlock_irqrestore(&c->vc.lock, flags);
@@ -274,13 +277,14 @@ static int k3_dma_start_txd(struct k3_dma_chan *c)
 		 */
 		list_del(&ds->vd.node);
 
-		WARN_ON_ONCE(c->phy->ds_run);
-		WARN_ON_ONCE(c->phy->ds_done);
 		c->phy->ds_run = ds;
+		c->phy->ds_done = NULL;
 		/* start dma */
 		k3_dma_set_desc(c->phy, &ds->desc_hw[0]);
 		return 0;
 	}
+	c->phy->ds_run = NULL;
+	c->phy->ds_done = NULL;
 	return -EAGAIN;
 }
 
@@ -501,14 +505,8 @@ static struct dma_async_tx_descriptor *k3_dma_prep_memcpy(
 		copy = min_t(size_t, len, DMA_MAX_SIZE);
 		k3_dma_fill_desc(ds, dst, src, copy, num++, c->ccfg);
 
-		if (c->dir == DMA_MEM_TO_DEV) {
-			src += copy;
-		} else if (c->dir == DMA_DEV_TO_MEM) {
-			dst += copy;
-		} else {
-			src += copy;
-			dst += copy;
-		}
+		src += copy;
+		dst += copy;
 		len -= copy;
 	} while (len);
 
@@ -542,6 +540,7 @@ static struct dma_async_tx_descriptor *k3_dma_prep_slave_sg(
 	if (!ds)
 		return NULL;
 	num = 0;
+	k3_dma_config_write(chan, dir, &c->slave_config);
 
 	for_each_sg(sgl, sg, sglen, i) {
 		addr = sg_dma_address(sg);
@@ -602,6 +601,7 @@ k3_dma_prep_dma_cyclic(struct dma_chan *chan, dma_addr_t buf_addr,
 	avail = buf_len;
 	total = avail;
 	num = 0;
+	k3_dma_config_write(chan, dir, &c->slave_config);
 
 	if (period_len < modulo)
 		modulo = period_len;
@@ -642,18 +642,26 @@ static int k3_dma_config(struct dma_chan *chan,
 			 struct dma_slave_config *cfg)
 {
 	struct k3_dma_chan *c = to_k3_chan(chan);
+
+	memcpy(&c->slave_config, cfg, sizeof(*cfg));
+
+	return 0;
+}
+
+static int k3_dma_config_write(struct dma_chan *chan,
+			       enum dma_transfer_direction dir,
+			       struct dma_slave_config *cfg)
+{
+	struct k3_dma_chan *c = to_k3_chan(chan);
 	u32 maxburst = 0, val = 0;
 	enum dma_slave_buswidth width = DMA_SLAVE_BUSWIDTH_UNDEFINED;
 
-	if (cfg == NULL)
-		return -EINVAL;
-	c->dir = cfg->direction;
-	if (c->dir == DMA_DEV_TO_MEM) {
+	if (dir == DMA_DEV_TO_MEM) {
 		c->ccfg = CX_CFG_DSTINCR;
 		c->dev_addr = cfg->src_addr;
 		maxburst = cfg->src_maxburst;
 		width = cfg->src_addr_width;
-	} else if (c->dir == DMA_MEM_TO_DEV) {
+	} else if (dir == DMA_MEM_TO_DEV) {
 		c->ccfg = CX_CFG_SRCINCR;
 		c->dev_addr = cfg->dst_addr;
 		maxburst = cfg->dst_maxburst;
@@ -719,19 +727,22 @@ static int k3_dma_terminate_all(struct dma_chan *chan)
 		c->phy = NULL;
 		p->vchan = NULL;
 		if (p->ds_run) {
-			k3_dma_free_desc(&p->ds_run->vd);
+			vchan_terminate_vdesc(&p->ds_run->vd);
 			p->ds_run = NULL;
 		}
-		if (p->ds_done) {
-			k3_dma_free_desc(&p->ds_done->vd);
-			p->ds_done = NULL;
-		}
-
+		p->ds_done = NULL;
 	}
 	spin_unlock_irqrestore(&c->vc.lock, flags);
 	vchan_dma_desc_free_list(&c->vc, &head);
 
 	return 0;
+}
+
+static void k3_dma_synchronize(struct dma_chan *chan)
+{
+	struct k3_dma_chan *c = to_k3_chan(chan);
+
+	vchan_synchronize(&c->vc);
 }
 
 static int k3_dma_transfer_pause(struct dma_chan *chan)
@@ -791,7 +802,7 @@ static struct dma_chan *k3_of_dma_simple_xlate(struct of_phandle_args *dma_spec,
 	struct k3_dma_dev *d = ofdma->of_dma_data;
 	unsigned int request = dma_spec->args[0];
 
-	if (request > d->dma_requests)
+	if (request >= d->dma_requests)
 		return NULL;
 
 	return dma_get_slave_channel(&(d->chans[request].vc.chan));
@@ -845,8 +856,8 @@ static int k3_dma_probe(struct platform_device *op)
 		return -ENOMEM;
 
 	/* init phy channel */
-	d->phy = devm_kzalloc(&op->dev,
-		d->dma_channels * sizeof(struct k3_dma_phy), GFP_KERNEL);
+	d->phy = devm_kcalloc(&op->dev,
+		d->dma_channels, sizeof(struct k3_dma_phy), GFP_KERNEL);
 	if (d->phy == NULL)
 		return -ENOMEM;
 
@@ -872,11 +883,12 @@ static int k3_dma_probe(struct platform_device *op)
 	d->slave.device_pause = k3_dma_transfer_pause;
 	d->slave.device_resume = k3_dma_transfer_resume;
 	d->slave.device_terminate_all = k3_dma_terminate_all;
+	d->slave.device_synchronize = k3_dma_synchronize;
 	d->slave.copy_align = DMAENGINE_ALIGN_8_BYTES;
 
 	/* init virtual channel */
-	d->chans = devm_kzalloc(&op->dev,
-		d->dma_requests * sizeof(struct k3_dma_chan), GFP_KERNEL);
+	d->chans = devm_kcalloc(&op->dev,
+		d->dma_requests, sizeof(struct k3_dma_chan), GFP_KERNEL);
 	if (d->chans == NULL)
 		return -ENOMEM;
 

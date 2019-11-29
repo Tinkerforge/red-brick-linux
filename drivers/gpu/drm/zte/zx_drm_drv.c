@@ -22,48 +22,27 @@
 #include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_fb_helper.h>
 #include <drm/drm_gem_cma_helper.h>
+#include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_of.h>
 #include <drm/drmP.h>
 
 #include "zx_drm_drv.h"
 #include "zx_vou.h"
 
-struct zx_drm_private {
-	struct drm_fbdev_cma *fbdev;
-};
-
-static void zx_drm_fb_output_poll_changed(struct drm_device *drm)
-{
-	struct zx_drm_private *priv = drm->dev_private;
-
-	drm_fbdev_cma_hotplug_event(priv->fbdev);
-}
-
 static const struct drm_mode_config_funcs zx_drm_mode_config_funcs = {
-	.fb_create = drm_fb_cma_create,
-	.output_poll_changed = zx_drm_fb_output_poll_changed,
+	.fb_create = drm_gem_fb_create,
 	.atomic_check = drm_atomic_helper_check,
 	.atomic_commit = drm_atomic_helper_commit,
 };
-
-static void zx_drm_lastclose(struct drm_device *drm)
-{
-	struct zx_drm_private *priv = drm->dev_private;
-
-	drm_fbdev_cma_restore_mode(priv->fbdev);
-}
 
 DEFINE_DRM_GEM_CMA_FOPS(zx_drm_fops);
 
 static struct drm_driver zx_drm_driver = {
 	.driver_features = DRIVER_GEM | DRIVER_MODESET | DRIVER_PRIME |
 			   DRIVER_ATOMIC,
-	.lastclose = zx_drm_lastclose,
-	.gem_free_object = drm_gem_cma_free_object,
+	.gem_free_object_unlocked = drm_gem_cma_free_object,
 	.gem_vm_ops = &drm_gem_cma_vm_ops,
 	.dumb_create = drm_gem_cma_dumb_create,
-	.dumb_map_offset = drm_gem_cma_dumb_map_offset,
-	.dumb_destroy = drm_gem_dumb_destroy,
 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
 	.gem_prime_export = drm_gem_prime_export,
@@ -84,18 +63,12 @@ static struct drm_driver zx_drm_driver = {
 static int zx_drm_bind(struct device *dev)
 {
 	struct drm_device *drm;
-	struct zx_drm_private *priv;
 	int ret;
-
-	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
-	if (!priv)
-		return -ENOMEM;
 
 	drm = drm_dev_alloc(&zx_drm_driver, dev);
 	if (IS_ERR(drm))
 		return PTR_ERR(drm);
 
-	drm->dev_private = priv;
 	dev_set_drvdata(dev, drm);
 
 	drm_mode_config_init(drm);
@@ -126,35 +99,21 @@ static int zx_drm_bind(struct device *dev)
 	drm_mode_config_reset(drm);
 	drm_kms_helper_poll_init(drm);
 
-	priv->fbdev = drm_fbdev_cma_init(drm, 32,
-					 drm->mode_config.num_connector);
-	if (IS_ERR(priv->fbdev)) {
-		ret = PTR_ERR(priv->fbdev);
-		DRM_DEV_ERROR(dev, "failed to init cma fbdev: %d\n", ret);
-		priv->fbdev = NULL;
-		goto out_poll_fini;
-	}
-
 	ret = drm_dev_register(drm, 0);
 	if (ret)
-		goto out_fbdev_fini;
+		goto out_poll_fini;
+
+	drm_fbdev_generic_setup(drm, 32);
 
 	return 0;
 
-out_fbdev_fini:
-	if (priv->fbdev) {
-		drm_fbdev_cma_fini(priv->fbdev);
-		priv->fbdev = NULL;
-	}
 out_poll_fini:
 	drm_kms_helper_poll_fini(drm);
 	drm_mode_config_cleanup(drm);
-	drm_vblank_cleanup(drm);
 out_unbind:
 	component_unbind_all(dev, drm);
 out_unregister:
 	dev_set_drvdata(dev, NULL);
-	drm->dev_private = NULL;
 	drm_dev_unref(drm);
 	return ret;
 }
@@ -162,19 +121,12 @@ out_unregister:
 static void zx_drm_unbind(struct device *dev)
 {
 	struct drm_device *drm = dev_get_drvdata(dev);
-	struct zx_drm_private *priv = drm->dev_private;
 
 	drm_dev_unregister(drm);
-	if (priv->fbdev) {
-		drm_fbdev_cma_fini(priv->fbdev);
-		priv->fbdev = NULL;
-	}
 	drm_kms_helper_poll_fini(drm);
 	drm_mode_config_cleanup(drm);
-	drm_vblank_cleanup(drm);
 	component_unbind_all(dev, drm);
 	dev_set_drvdata(dev, NULL);
-	drm->dev_private = NULL;
 	drm_dev_unref(drm);
 }
 
@@ -200,10 +152,8 @@ static int zx_drm_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	for_each_available_child_of_node(parent, child) {
+	for_each_available_child_of_node(parent, child)
 		component_match_add(dev, &match, compare_of, child);
-		of_node_put(child);
-	}
 
 	return component_master_add_with_match(dev, &zx_drm_master_ops, match);
 }

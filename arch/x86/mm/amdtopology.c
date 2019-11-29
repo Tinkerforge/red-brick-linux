@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * AMD NUMA support.
  * Discover the memory map and associated nodes.
@@ -11,7 +12,6 @@
 #include <linux/string.h>
 #include <linux/nodemask.h>
 #include <linux/memblock.h>
-#include <linux/bootmem.h>
 
 #include <asm/io.h>
 #include <linux/pci_ids.h>

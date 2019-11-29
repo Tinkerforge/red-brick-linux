@@ -7,6 +7,8 @@
  *
  * Copyright(c) 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2014 - 2015 Intel Mobile Communications GmbH
+ * Copyright(c) 2016 - 2017 Intel Deutschland GmbH
+ * Copyright (C) 2018 Intel Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -16,11 +18,6 @@
  * WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110,
- * USA
  *
  * The full GNU General Public License is included in this distribution
  * in the file called COPYING.
@@ -33,6 +30,8 @@
  *
  * Copyright(c) 2014 Intel Corporation. All rights reserved.
  * Copyright(c) 2014 - 2015 Intel Mobile Communications GmbH
+ * Copyright(c) 2016 - 2017 Intel Deutschland GmbH
+ * Copyright (C) 2018 Intel Corporation
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -92,6 +91,9 @@
  * @IWL_FW_ERROR_DUMP_EXTERNAL: used only by external code utilities, and
  *	for that reason is not in use in any other place in the Linux Wi-Fi
  *	stack.
+ * @IWL_FW_ERROR_DUMP_MEM_CFG: the addresses and sizes of fifos in the smem,
+ *	which we get from the fw after ALIVE. The content is structured as
+ *	&struct iwl_fw_error_dump_smem_cfg.
  */
 enum iwl_fw_error_dump_type {
 	/* 0 is deprecated */
@@ -110,6 +112,8 @@ enum iwl_fw_error_dump_type {
 	IWL_FW_ERROR_DUMP_RADIO_REG = 13,
 	IWL_FW_ERROR_DUMP_INTERNAL_TXF = 14,
 	IWL_FW_ERROR_DUMP_EXTERNAL = 15, /* Do not move */
+	IWL_FW_ERROR_DUMP_MEM_CFG = 16,
+	IWL_FW_ERROR_DUMP_D3_DEBUG_DATA = 17,
 
 	IWL_FW_ERROR_DUMP_MAX,
 };
@@ -208,6 +212,30 @@ struct iwl_fw_error_dump_fw_mon {
 	u8 data[];
 } __packed;
 
+#define MAX_NUM_LMAC 2
+#define TX_FIFO_INTERNAL_MAX_NUM	6
+#define TX_FIFO_MAX_NUM			15
+/**
+ * struct iwl_fw_error_dump_smem_cfg - Dump SMEM configuration
+ *	This must follow &struct iwl_fwrt_shared_mem_cfg.
+ * @num_lmacs: number of lmacs
+ * @num_txfifo_entries: number of tx fifos
+ * @lmac: sizes of lmacs txfifos and rxfifo1
+ * @rxfifo2_size: size of rxfifo2
+ * @internal_txfifo_addr: address of internal tx fifo
+ * @internal_txfifo_size: size of internal tx fifo
+ */
+struct iwl_fw_error_dump_smem_cfg {
+	__le32 num_lmacs;
+	__le32 num_txfifo_entries;
+	struct {
+		__le32 txfifo_size[TX_FIFO_MAX_NUM];
+		__le32 rxfifo1_size;
+	} lmac[MAX_NUM_LMAC];
+	__le32 rxfifo2_size;
+	__le32 internal_txfifo_addr;
+	__le32 internal_txfifo_size[TX_FIFO_INTERNAL_MAX_NUM];
+} __packed;
 /**
  * struct iwl_fw_error_dump_prph - periphery registers data
  * @prph_start: address of the first register in this chunk
@@ -300,6 +328,7 @@ iwl_fw_error_next_data(struct iwl_fw_error_dump_data *data)
  * @FW_DBG_TDLS: trigger log collection upon TDLS related events.
  * @FW_DBG_TRIGGER_TX_STATUS: trigger log collection upon tx status when
  *  the firmware sends a tx reply.
+ * @FW_DBG_TRIGGER_NO_ALIVE: trigger log collection if alive flow fails
  */
 enum iwl_fw_dbg_trigger {
 	FW_DBG_TRIGGER_INVALID = 0,
@@ -317,6 +346,7 @@ enum iwl_fw_dbg_trigger {
 	FW_DBG_TRIGGER_TX_LATENCY,
 	FW_DBG_TRIGGER_TDLS,
 	FW_DBG_TRIGGER_TX_STATUS,
+	FW_DBG_TRIGGER_NO_ALIVE,
 
 	/* must be last */
 	FW_DBG_TRIGGER_MAX,

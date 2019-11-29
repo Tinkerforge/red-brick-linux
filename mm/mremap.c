@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *	mm/mremap.c
  *
@@ -114,7 +115,7 @@ static pte_t move_soft_dirty_pte(pte_t pte)
 static void move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
 		unsigned long old_addr, unsigned long old_end,
 		struct vm_area_struct *new_vma, pmd_t *new_pmd,
-		unsigned long new_addr, bool need_rmap_locks, bool *need_flush)
+		unsigned long new_addr, bool need_rmap_locks)
 {
 	struct mm_struct *mm = vma->vm_mm;
 	pte_t *old_pte, *new_pte, pte;
@@ -162,15 +163,17 @@ static void move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
 
 		pte = ptep_get_and_clear(mm, old_addr, old_pte);
 		/*
-		 * If we are remapping a dirty PTE, make sure
+		 * If we are remapping a valid PTE, make sure
 		 * to flush TLB before we drop the PTL for the
-		 * old PTE or we may race with page_mkclean().
+		 * PTE.
 		 *
-		 * This check has to be done after we removed the
-		 * old PTE from page tables or another thread may
-		 * dirty it after the check and before the removal.
+		 * NOTE! Both old and new PTL matter: the old one
+		 * for racing with page_mkclean(), the new one to
+		 * make sure the physical page stays valid until
+		 * the TLB entry for the old mapping has been
+		 * flushed.
 		 */
-		if (pte_present(pte) && pte_dirty(pte))
+		if (pte_present(pte))
 			force_flush = true;
 		pte = move_pte(pte, new_vma->vm_page_prot, old_addr, new_addr);
 		pte = move_soft_dirty_pte(pte);
@@ -178,19 +181,15 @@ static void move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
 	}
 
 	arch_leave_lazy_mmu_mode();
+	if (force_flush)
+		flush_tlb_range(vma, old_end - len, old_end);
 	if (new_ptl != old_ptl)
 		spin_unlock(new_ptl);
 	pte_unmap(new_pte - 1);
-	if (force_flush)
-		flush_tlb_range(vma, old_end - len, old_end);
-	else
-		*need_flush = true;
 	pte_unmap_unlock(old_pte - 1, old_ptl);
 	if (need_rmap_locks)
 		drop_rmap_locks(vma);
 }
-
-#define LATENCY_LIMIT	(64 * PAGE_SIZE)
 
 unsigned long move_page_tables(struct vm_area_struct *vma,
 		unsigned long old_addr, struct vm_area_struct *new_vma,
@@ -199,7 +198,6 @@ unsigned long move_page_tables(struct vm_area_struct *vma,
 {
 	unsigned long extent, next, old_end;
 	pmd_t *old_pmd, *new_pmd;
-	bool need_flush = false;
 	unsigned long mmun_start;	/* For mmu_notifiers */
 	unsigned long mmun_end;		/* For mmu_notifiers */
 
@@ -223,15 +221,14 @@ unsigned long move_page_tables(struct vm_area_struct *vma,
 		new_pmd = alloc_new_pmd(vma->vm_mm, vma, new_addr);
 		if (!new_pmd)
 			break;
-		if (pmd_trans_huge(*old_pmd)) {
+		if (is_swap_pmd(*old_pmd) || pmd_trans_huge(*old_pmd)) {
 			if (extent == HPAGE_PMD_SIZE) {
 				bool moved;
 				/* See comment in move_ptes() */
 				if (need_rmap_locks)
 					take_rmap_locks(vma);
 				moved = move_huge_pmd(vma, old_addr, new_addr,
-						    old_end, old_pmd, new_pmd,
-						    &need_flush);
+						    old_end, old_pmd, new_pmd);
 				if (need_rmap_locks)
 					drop_rmap_locks(vma);
 				if (moved)
@@ -246,13 +243,9 @@ unsigned long move_page_tables(struct vm_area_struct *vma,
 		next = (new_addr + PMD_SIZE) & PMD_MASK;
 		if (extent > next - new_addr)
 			extent = next - new_addr;
-		if (extent > LATENCY_LIMIT)
-			extent = LATENCY_LIMIT;
 		move_ptes(vma, old_pmd, old_addr, old_addr + extent, new_vma,
-			  new_pmd, new_addr, need_rmap_locks, &need_flush);
+			  new_pmd, new_addr, need_rmap_locks);
 	}
-	if (need_flush)
-		flush_tlb_range(vma, old_end-len, old_addr);
 
 	mmu_notifier_invalidate_range_end(vma->vm_mm, mmun_start, mmun_end);
 
@@ -383,6 +376,19 @@ static struct vm_area_struct *vma_to_resize(unsigned long addr,
 
 	if (!vma || vma->vm_start > addr)
 		return ERR_PTR(-EFAULT);
+
+	/*
+	 * !old_len is a special case where an attempt is made to 'duplicate'
+	 * a mapping.  This makes no sense for private mappings as it will
+	 * instead create a fresh/new mapping unrelated to the original.  This
+	 * is contrary to the basic idea of mremap which creates new mappings
+	 * based on the original.  There are no known use cases for this
+	 * behavior.  As a result, fail such attempts.
+	 */
+	if (!old_len && !(vma->vm_flags & (VM_SHARED | VM_MAYSHARE))) {
+		pr_warn_once("%s (%d): attempted to duplicate a private mapping with mremap.  This is not supported.\n", current->comm, current->pid);
+		return ERR_PTR(-EINVAL);
+	}
 
 	if (is_vm_hugetlb_page(vma))
 		return ERR_PTR(-EINVAL);
@@ -515,6 +521,7 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 	unsigned long ret = -EINVAL;
 	unsigned long charged = 0;
 	bool locked = false;
+	bool downgraded = false;
 	struct vm_userfaultfd_ctx uf = NULL_VM_UFFD_CTX;
 	LIST_HEAD(uf_unmap_early);
 	LIST_HEAD(uf_unmap);
@@ -551,12 +558,20 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 	/*
 	 * Always allow a shrinking remap: that just unmaps
 	 * the unnecessary pages..
-	 * do_munmap does all the needed commit accounting
+	 * __do_munmap does all the needed commit accounting, and
+	 * downgrades mmap_sem to read if so directed.
 	 */
 	if (old_len >= new_len) {
-		ret = do_munmap(mm, addr+new_len, old_len - new_len, &uf_unmap);
-		if (ret && old_len != new_len)
+		int retval;
+
+		retval = __do_munmap(mm, addr+new_len, old_len - new_len,
+				  &uf_unmap, true);
+		if (retval < 0 && old_len != new_len) {
+			ret = retval;
 			goto out;
+		/* Returning 1 indicates mmap_sem is downgraded to read. */
+		} else if (retval == 1)
+			downgraded = true;
 		ret = addr;
 		goto out;
 	}
@@ -621,7 +636,10 @@ out:
 		vm_unacct_memory(charged);
 		locked = 0;
 	}
-	up_write(&current->mm->mmap_sem);
+	if (downgraded)
+		up_read(&current->mm->mmap_sem);
+	else
+		up_write(&current->mm->mmap_sem);
 	if (locked && new_len > old_len)
 		mm_populate(new_addr + old_len, new_len - old_len);
 	userfaultfd_unmap_complete(mm, &uf_unmap_early);

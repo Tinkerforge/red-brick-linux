@@ -564,17 +564,7 @@ static int au1000_mii_probe(struct net_device *dev)
 		return PTR_ERR(phydev);
 	}
 
-	/* mask with MAC supported features */
-	phydev->supported &= (SUPPORTED_10baseT_Half
-			      | SUPPORTED_10baseT_Full
-			      | SUPPORTED_100baseT_Half
-			      | SUPPORTED_100baseT_Full
-			      | SUPPORTED_Autoneg
-			      /* | SUPPORTED_Pause | SUPPORTED_Asym_Pause */
-			      | SUPPORTED_MII
-			      | SUPPORTED_TP);
-
-	phydev->advertising = phydev->supported;
+	phy_set_max_speed(phydev, SPEED_100);
 
 	aup->old_link = 0;
 	aup->old_speed = 0;
@@ -1180,9 +1170,10 @@ static int au1000_probe(struct platform_device *pdev)
 	/* Allocate the data buffers
 	 * Snooping works fine with eth on all au1xxx
 	 */
-	aup->vaddr = (u32)dma_alloc_noncoherent(NULL, MAX_BUF_SIZE *
-						(NUM_TX_BUFFS + NUM_RX_BUFFS),
-						&aup->dma_addr,	0);
+	aup->vaddr = (u32)dma_alloc_attrs(NULL, MAX_BUF_SIZE *
+					  (NUM_TX_BUFFS + NUM_RX_BUFFS),
+					  &aup->dma_addr, 0,
+					  DMA_ATTR_NON_CONSISTENT);
 	if (!aup->vaddr) {
 		dev_err(&pdev->dev, "failed to allocate data buffers\n");
 		err = -ENOMEM;
@@ -1361,8 +1352,9 @@ err_remap3:
 err_remap2:
 	iounmap(aup->mac);
 err_remap1:
-	dma_free_noncoherent(NULL, MAX_BUF_SIZE * (NUM_TX_BUFFS + NUM_RX_BUFFS),
-			     (void *)aup->vaddr, aup->dma_addr);
+	dma_free_attrs(NULL, MAX_BUF_SIZE * (NUM_TX_BUFFS + NUM_RX_BUFFS),
+			(void *)aup->vaddr, aup->dma_addr,
+			DMA_ATTR_NON_CONSISTENT);
 err_vaddr:
 	free_netdev(dev);
 err_alloc:
@@ -1394,9 +1386,9 @@ static int au1000_remove(struct platform_device *pdev)
 		if (aup->tx_db_inuse[i])
 			au1000_ReleaseDB(aup, aup->tx_db_inuse[i]);
 
-	dma_free_noncoherent(NULL, MAX_BUF_SIZE *
-			(NUM_TX_BUFFS + NUM_RX_BUFFS),
-			(void *)aup->vaddr, aup->dma_addr);
+	dma_free_attrs(NULL, MAX_BUF_SIZE * (NUM_TX_BUFFS + NUM_RX_BUFFS),
+			(void *)aup->vaddr, aup->dma_addr,
+			DMA_ATTR_NON_CONSISTENT);
 
 	iounmap(aup->macdma);
 	iounmap(aup->mac);

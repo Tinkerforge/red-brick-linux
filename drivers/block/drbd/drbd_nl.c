@@ -344,7 +344,7 @@ int drbd_khelper(struct drbd_device *device, char *cmd)
 			 (char[60]) { }, /* address */
 			NULL };
 	char mb[14];
-	char *argv[] = {usermode_helper, cmd, mb, NULL };
+	char *argv[] = {drbd_usermode_helper, cmd, mb, NULL };
 	struct drbd_connection *connection = first_peer_device(device)->connection;
 	struct sib_info sib;
 	int ret;
@@ -359,19 +359,19 @@ int drbd_khelper(struct drbd_device *device, char *cmd)
 	 * write out any unsynced meta data changes now */
 	drbd_md_sync(device);
 
-	drbd_info(device, "helper command: %s %s %s\n", usermode_helper, cmd, mb);
+	drbd_info(device, "helper command: %s %s %s\n", drbd_usermode_helper, cmd, mb);
 	sib.sib_reason = SIB_HELPER_PRE;
 	sib.helper_name = cmd;
 	drbd_bcast_event(device, &sib);
 	notify_helper(NOTIFY_CALL, device, connection, cmd, 0);
-	ret = call_usermodehelper(usermode_helper, argv, envp, UMH_WAIT_PROC);
+	ret = call_usermodehelper(drbd_usermode_helper, argv, envp, UMH_WAIT_PROC);
 	if (ret)
 		drbd_warn(device, "helper command: %s %s %s exit code %u (0x%x)\n",
-				usermode_helper, cmd, mb,
+				drbd_usermode_helper, cmd, mb,
 				(ret >> 8) & 0xff, ret);
 	else
 		drbd_info(device, "helper command: %s %s %s exit code %u (0x%x)\n",
-				usermode_helper, cmd, mb,
+				drbd_usermode_helper, cmd, mb,
 				(ret >> 8) & 0xff, ret);
 	sib.sib_reason = SIB_HELPER_POST;
 	sib.helper_exit_code = ret;
@@ -396,24 +396,24 @@ enum drbd_peer_state conn_khelper(struct drbd_connection *connection, char *cmd)
 			 (char[60]) { }, /* address */
 			NULL };
 	char *resource_name = connection->resource->name;
-	char *argv[] = {usermode_helper, cmd, resource_name, NULL };
+	char *argv[] = {drbd_usermode_helper, cmd, resource_name, NULL };
 	int ret;
 
 	setup_khelper_env(connection, envp);
 	conn_md_sync(connection);
 
-	drbd_info(connection, "helper command: %s %s %s\n", usermode_helper, cmd, resource_name);
+	drbd_info(connection, "helper command: %s %s %s\n", drbd_usermode_helper, cmd, resource_name);
 	/* TODO: conn_bcast_event() ?? */
 	notify_helper(NOTIFY_CALL, NULL, connection, cmd, 0);
 
-	ret = call_usermodehelper(usermode_helper, argv, envp, UMH_WAIT_PROC);
+	ret = call_usermodehelper(drbd_usermode_helper, argv, envp, UMH_WAIT_PROC);
 	if (ret)
 		drbd_warn(connection, "helper command: %s %s %s exit code %u (0x%x)\n",
-			  usermode_helper, cmd, resource_name,
+			  drbd_usermode_helper, cmd, resource_name,
 			  (ret >> 8) & 0xff, ret);
 	else
 		drbd_info(connection, "helper command: %s %s %s exit code %u (0x%x)\n",
-			  usermode_helper, cmd, resource_name,
+			  drbd_usermode_helper, cmd, resource_name,
 			  (ret >> 8) & 0xff, ret);
 	/* TODO: conn_bcast_event() ?? */
 	notify_helper(NOTIFY_RESPONSE, NULL, connection, cmd, ret);
@@ -1212,10 +1212,10 @@ static void decide_on_discard_support(struct drbd_device *device,
 		 * topology on all peers. */
 		blk_queue_discard_granularity(q, 512);
 		q->limits.max_discard_sectors = drbd_max_discard_sectors(connection);
-		queue_flag_set_unlocked(QUEUE_FLAG_DISCARD, q);
+		blk_queue_flag_set(QUEUE_FLAG_DISCARD, q);
 		q->limits.max_write_zeroes_sectors = drbd_max_discard_sectors(connection);
 	} else {
-		queue_flag_clear_unlocked(QUEUE_FLAG_DISCARD, q);
+		blk_queue_flag_clear(QUEUE_FLAG_DISCARD, q);
 		blk_queue_discard_granularity(q, 0);
 		q->limits.max_discard_sectors = 0;
 		q->limits.max_write_zeroes_sectors = 0;
@@ -1236,11 +1236,17 @@ static void fixup_discard_if_not_supported(struct request_queue *q)
 
 static void decide_on_write_same_support(struct drbd_device *device,
 			struct request_queue *q,
-			struct request_queue *b, struct o_qlim *o)
+			struct request_queue *b, struct o_qlim *o,
+			bool disable_write_same)
 {
 	struct drbd_peer_device *peer_device = first_peer_device(device);
 	struct drbd_connection *connection = peer_device->connection;
 	bool can_do = b ? b->limits.max_write_same_sectors : true;
+
+	if (can_do && disable_write_same) {
+		can_do = false;
+		drbd_info(peer_device, "WRITE_SAME disabled by config\n");
+	}
 
 	if (can_do && connection->cstate >= C_CONNECTED && !(connection->agreed_features & DRBD_FF_WSAME)) {
 		can_do = false;
@@ -1302,6 +1308,7 @@ static void drbd_setup_queue_param(struct drbd_device *device, struct drbd_backi
 	struct request_queue *b = NULL;
 	struct disk_conf *dc;
 	bool discard_zeroes_if_aligned = true;
+	bool disable_write_same = false;
 
 	if (bdev) {
 		b = bdev->backing_bdev->bd_disk->queue;
@@ -1311,6 +1318,7 @@ static void drbd_setup_queue_param(struct drbd_device *device, struct drbd_backi
 		dc = rcu_dereference(device->ldev->disk_conf);
 		max_segments = dc->max_bio_bvecs;
 		discard_zeroes_if_aligned = dc->discard_zeroes_if_aligned;
+		disable_write_same = dc->disable_write_same;
 		rcu_read_unlock();
 
 		blk_set_stacking_limits(&q->limits);
@@ -1321,7 +1329,7 @@ static void drbd_setup_queue_param(struct drbd_device *device, struct drbd_backi
 	blk_queue_max_segments(q, max_segments ? max_segments : BLK_MAX_SEGMENTS);
 	blk_queue_segment_boundary(q, PAGE_SIZE-1);
 	decide_on_discard_support(device, q, b, discard_zeroes_if_aligned);
-	decide_on_write_same_support(device, q, b, o);
+	decide_on_write_same_support(device, q, b, o, disable_write_same);
 
 	if (b) {
 		blk_queue_stack_limits(q, b);
@@ -1612,7 +1620,8 @@ int drbd_adm_disk_opts(struct sk_buff *skb, struct genl_info *info)
 	if (write_ordering_changed(old_disk_conf, new_disk_conf))
 		drbd_bump_write_ordering(device->resource, NULL, WO_BDEV_FLUSH);
 
-	if (old_disk_conf->discard_zeroes_if_aligned != new_disk_conf->discard_zeroes_if_aligned)
+	if (old_disk_conf->discard_zeroes_if_aligned != new_disk_conf->discard_zeroes_if_aligned
+	||  old_disk_conf->disable_write_same != new_disk_conf->disable_write_same)
 		drbd_reconsider_queue_parameters(device, device->ldev, NULL);
 
 	drbd_md_sync(device);
@@ -2140,34 +2149,13 @@ int drbd_adm_attach(struct sk_buff *skb, struct genl_info *info)
 
 static int adm_detach(struct drbd_device *device, int force)
 {
-	enum drbd_state_rv retcode;
-	void *buffer;
-	int ret;
-
 	if (force) {
 		set_bit(FORCE_DETACH, &device->flags);
 		drbd_force_state(device, NS(disk, D_FAILED));
-		retcode = SS_SUCCESS;
-		goto out;
+		return SS_SUCCESS;
 	}
 
-	drbd_suspend_io(device); /* so no-one is stuck in drbd_al_begin_io */
-	buffer = drbd_md_get_buffer(device, __func__); /* make sure there is no in-flight meta-data IO */
-	if (buffer) {
-		retcode = drbd_request_state(device, NS(disk, D_FAILED));
-		drbd_md_put_buffer(device);
-	} else /* already <= D_FAILED */
-		retcode = SS_NOTHING_TO_DO;
-	/* D_FAILED will transition to DISKLESS. */
-	drbd_resume_io(device);
-	ret = wait_event_interruptible(device->misc_wait,
-			device->state.disk != D_FAILED);
-	if ((int)retcode == (int)SS_IS_DISKLESS)
-		retcode = SS_NOTHING_TO_DO;
-	if (ret)
-		retcode = ERR_INTR;
-out:
-	return retcode;
+	return drbd_request_detach_interruptible(device);
 }
 
 /* Detaching the disk is a process in multiple stages.  First we need to lock
@@ -2315,10 +2303,10 @@ check_net_options(struct drbd_connection *connection, struct net_conf *new_net_c
 }
 
 struct crypto {
-	struct crypto_ahash *verify_tfm;
-	struct crypto_ahash *csums_tfm;
+	struct crypto_shash *verify_tfm;
+	struct crypto_shash *csums_tfm;
 	struct crypto_shash *cram_hmac_tfm;
-	struct crypto_ahash *integrity_tfm;
+	struct crypto_shash *integrity_tfm;
 };
 
 static int
@@ -2336,36 +2324,21 @@ alloc_shash(struct crypto_shash **tfm, char *tfm_name, int err_alg)
 	return NO_ERROR;
 }
 
-static int
-alloc_ahash(struct crypto_ahash **tfm, char *tfm_name, int err_alg)
-{
-	if (!tfm_name[0])
-		return NO_ERROR;
-
-	*tfm = crypto_alloc_ahash(tfm_name, 0, CRYPTO_ALG_ASYNC);
-	if (IS_ERR(*tfm)) {
-		*tfm = NULL;
-		return err_alg;
-	}
-
-	return NO_ERROR;
-}
-
 static enum drbd_ret_code
 alloc_crypto(struct crypto *crypto, struct net_conf *new_net_conf)
 {
 	char hmac_name[CRYPTO_MAX_ALG_NAME];
 	enum drbd_ret_code rv;
 
-	rv = alloc_ahash(&crypto->csums_tfm, new_net_conf->csums_alg,
+	rv = alloc_shash(&crypto->csums_tfm, new_net_conf->csums_alg,
 			 ERR_CSUMS_ALG);
 	if (rv != NO_ERROR)
 		return rv;
-	rv = alloc_ahash(&crypto->verify_tfm, new_net_conf->verify_alg,
+	rv = alloc_shash(&crypto->verify_tfm, new_net_conf->verify_alg,
 			 ERR_VERIFY_ALG);
 	if (rv != NO_ERROR)
 		return rv;
-	rv = alloc_ahash(&crypto->integrity_tfm, new_net_conf->integrity_alg,
+	rv = alloc_shash(&crypto->integrity_tfm, new_net_conf->integrity_alg,
 			 ERR_INTEGRITY_ALG);
 	if (rv != NO_ERROR)
 		return rv;
@@ -2383,9 +2356,9 @@ alloc_crypto(struct crypto *crypto, struct net_conf *new_net_conf)
 static void free_crypto(struct crypto *crypto)
 {
 	crypto_free_shash(crypto->cram_hmac_tfm);
-	crypto_free_ahash(crypto->integrity_tfm);
-	crypto_free_ahash(crypto->csums_tfm);
-	crypto_free_ahash(crypto->verify_tfm);
+	crypto_free_shash(crypto->integrity_tfm);
+	crypto_free_shash(crypto->csums_tfm);
+	crypto_free_shash(crypto->verify_tfm);
 }
 
 int drbd_adm_net_opts(struct sk_buff *skb, struct genl_info *info)
@@ -2462,17 +2435,17 @@ int drbd_adm_net_opts(struct sk_buff *skb, struct genl_info *info)
 	rcu_assign_pointer(connection->net_conf, new_net_conf);
 
 	if (!rsr) {
-		crypto_free_ahash(connection->csums_tfm);
+		crypto_free_shash(connection->csums_tfm);
 		connection->csums_tfm = crypto.csums_tfm;
 		crypto.csums_tfm = NULL;
 	}
 	if (!ovr) {
-		crypto_free_ahash(connection->verify_tfm);
+		crypto_free_shash(connection->verify_tfm);
 		connection->verify_tfm = crypto.verify_tfm;
 		crypto.verify_tfm = NULL;
 	}
 
-	crypto_free_ahash(connection->integrity_tfm);
+	crypto_free_shash(connection->integrity_tfm);
 	connection->integrity_tfm = crypto.integrity_tfm;
 	if (connection->cstate >= C_WF_REPORT_PARAMS && connection->agreed_pro_version >= 100)
 		/* Do this without trying to take connection->data.mutex again.  */

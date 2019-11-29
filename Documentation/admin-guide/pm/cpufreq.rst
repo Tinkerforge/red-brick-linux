@@ -150,7 +150,7 @@ data structures necessary to handle the given policy and, possibly, to add
 a governor ``sysfs`` interface to it.  Next, the governor is started by
 invoking its ``->start()`` callback.
 
-That callback it expected to register per-CPU utilization update callbacks for
+That callback is expected to register per-CPU utilization update callbacks for
 all of the online CPUs belonging to the given policy with the CPU scheduler.
 The utilization update callbacks will be invoked by the CPU scheduler on
 important events, like task enqueue and dequeue, on every iteration of the
@@ -478,14 +478,6 @@ This governor exposes the following tunables:
 	represented by it to be 750 times as high as the transition latency::
 
 	# echo `$(($(cat cpuinfo_transition_latency) * 750 / 1000)) > ondemand/sampling_rate
-
-
-``min_sampling_rate``
-	The minimum value of ``sampling_rate``.
-
-	Equal to 10000 (10 ms) if :c:macro:`CONFIG_NO_HZ_COMMON` and
-	:c:data:`tick_nohz_active` are both set or to 20 times the value of
-	:c:data:`jiffies` in microseconds otherwise.
 
 ``up_threshold``
 	If the estimated CPU load is above this value (in percent), the governor

@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2017 Intel Corporation.
+ * Copyright(c) 2017 - 2018 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -198,11 +198,16 @@ int hfi1_vnic_send_dma(struct hfi1_devdata *dd, u8 q_idx,
 		goto free_desc;
 	tx->retry_count = 0;
 
-	ret = sdma_send_txreq(sde, &vnic_sdma->wait, &tx->txreq);
+	ret = sdma_send_txreq(sde, iowait_get_ib_work(&vnic_sdma->wait),
+			      &tx->txreq, vnic_sdma->pkts_sent);
 	/* When -ECOMM, sdma callback will be called with ABORT status */
 	if (unlikely(ret && unlikely(ret != -ECOMM)))
 		goto free_desc;
 
+	if (!ret) {
+		vnic_sdma->pkts_sent = true;
+		iowait_starve_clear(vnic_sdma->pkts_sent, &vnic_sdma->wait);
+	}
 	return ret;
 
 free_desc:
@@ -211,6 +216,8 @@ free_desc:
 tx_err:
 	if (ret != -EBUSY)
 		dev_kfree_skb_any(skb);
+	else
+		vnic_sdma->pkts_sent = false;
 	return ret;
 }
 
@@ -223,12 +230,13 @@ tx_err:
  * become available.
  */
 static int hfi1_vnic_sdma_sleep(struct sdma_engine *sde,
-				struct iowait *wait,
+				struct iowait_work *wait,
 				struct sdma_txreq *txreq,
-				unsigned int seq)
+				uint seq,
+				bool pkts_sent)
 {
 	struct hfi1_vnic_sdma *vnic_sdma =
-		container_of(wait, struct hfi1_vnic_sdma, wait);
+		container_of(wait->iow, struct hfi1_vnic_sdma, wait);
 	struct hfi1_ibdev *dev = &vnic_sdma->dd->verbs_dev;
 	struct vnic_txreq *tx = container_of(txreq, struct vnic_txreq, txreq);
 
@@ -239,7 +247,7 @@ static int hfi1_vnic_sdma_sleep(struct sdma_engine *sde,
 	vnic_sdma->state = HFI1_VNIC_SDMA_Q_DEFERRED;
 	write_seqlock(&dev->iowait_lock);
 	if (list_empty(&vnic_sdma->wait.list))
-		list_add_tail(&vnic_sdma->wait.list, &sde->dmawait);
+		iowait_queue(pkts_sent, wait->iow, &sde->dmawait);
 	write_sequnlock(&dev->iowait_lock);
 	return -EBUSY;
 }
@@ -277,7 +285,8 @@ void hfi1_vnic_sdma_init(struct hfi1_vnic_vport_info *vinfo)
 	for (i = 0; i < vinfo->num_tx_q; i++) {
 		struct hfi1_vnic_sdma *vnic_sdma = &vinfo->sdma[i];
 
-		iowait_init(&vnic_sdma->wait, 0, NULL, hfi1_vnic_sdma_sleep,
+		iowait_init(&vnic_sdma->wait, 0, NULL, NULL,
+			    hfi1_vnic_sdma_sleep,
 			    hfi1_vnic_sdma_wakeup, NULL);
 		vnic_sdma->sde = &vinfo->dd->per_sdma[i];
 		vnic_sdma->dd = vinfo->dd;
@@ -287,19 +296,14 @@ void hfi1_vnic_sdma_init(struct hfi1_vnic_vport_info *vinfo)
 
 		/* Add a free descriptor watermark for wakeups */
 		if (vnic_sdma->sde->descq_cnt > HFI1_VNIC_SDMA_DESC_WTRMRK) {
+			struct iowait_work *work;
+
 			INIT_LIST_HEAD(&vnic_sdma->stx.list);
 			vnic_sdma->stx.num_desc = HFI1_VNIC_SDMA_DESC_WTRMRK;
-			list_add_tail(&vnic_sdma->stx.list,
-				      &vnic_sdma->wait.tx_head);
+			work = iowait_get_ib_work(&vnic_sdma->wait);
+			list_add_tail(&vnic_sdma->stx.list, &work->tx_head);
 		}
 	}
-}
-
-static void hfi1_vnic_txreq_kmem_cache_ctor(void *obj)
-{
-	struct vnic_txreq *tx = (struct vnic_txreq *)obj;
-
-	memset(tx, 0, sizeof(*tx));
 }
 
 int hfi1_vnic_txreq_init(struct hfi1_devdata *dd)
@@ -308,9 +312,9 @@ int hfi1_vnic_txreq_init(struct hfi1_devdata *dd)
 
 	snprintf(buf, sizeof(buf), "hfi1_%u_vnic_txreq_cache", dd->unit);
 	dd->vnic.txreq_cache = kmem_cache_create(buf,
-					  sizeof(struct vnic_txreq),
-					  0, SLAB_HWCACHE_ALIGN,
-					  hfi1_vnic_txreq_kmem_cache_ctor);
+						 sizeof(struct vnic_txreq),
+						 0, SLAB_HWCACHE_ALIGN,
+						 NULL);
 	if (!dd->vnic.txreq_cache)
 		return -ENOMEM;
 	return 0;

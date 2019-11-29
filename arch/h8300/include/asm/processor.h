@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * include/asm-h8300/processor.h
  *
@@ -10,12 +11,6 @@
 
 #ifndef __ASM_H8300_PROCESSOR_H
 #define __ASM_H8300_PROCESSOR_H
-
-/*
- * Default implementation of macro that returns current
- * instruction pointer ("program counter").
- */
-#define current_text_addr() ({ __label__ _l; _l: &&_l; })
 
 #include <linux/compiler.h>
 #include <asm/segment.h>

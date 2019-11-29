@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_JUMP_LABEL_H
 #define _LINUX_JUMP_LABEL_H
 
@@ -81,9 +82,9 @@
 
 extern bool static_key_initialized;
 
-#define STATIC_KEY_CHECK_USE() WARN(!static_key_initialized,		      \
-				    "%s used before call to jump_label_init", \
-				    __func__)
+#define STATIC_KEY_CHECK_USE(key) WARN(!static_key_initialized,		      \
+				    "%s(): static key '%pS' used before call to jump_label_init()", \
+				    __func__, (key))
 
 #ifdef HAVE_JUMP_LABEL
 
@@ -118,6 +119,68 @@ struct static_key {
 
 #ifdef HAVE_JUMP_LABEL
 #include <asm/jump_label.h>
+
+#ifndef __ASSEMBLY__
+#ifdef CONFIG_HAVE_ARCH_JUMP_LABEL_RELATIVE
+
+struct jump_entry {
+	s32 code;
+	s32 target;
+	long key;	// key may be far away from the core kernel under KASLR
+};
+
+static inline unsigned long jump_entry_code(const struct jump_entry *entry)
+{
+	return (unsigned long)&entry->code + entry->code;
+}
+
+static inline unsigned long jump_entry_target(const struct jump_entry *entry)
+{
+	return (unsigned long)&entry->target + entry->target;
+}
+
+static inline struct static_key *jump_entry_key(const struct jump_entry *entry)
+{
+	long offset = entry->key & ~3L;
+
+	return (struct static_key *)((unsigned long)&entry->key + offset);
+}
+
+#else
+
+static inline unsigned long jump_entry_code(const struct jump_entry *entry)
+{
+	return entry->code;
+}
+
+static inline unsigned long jump_entry_target(const struct jump_entry *entry)
+{
+	return entry->target;
+}
+
+static inline struct static_key *jump_entry_key(const struct jump_entry *entry)
+{
+	return (struct static_key *)((unsigned long)entry->key & ~3UL);
+}
+
+#endif
+
+static inline bool jump_entry_is_branch(const struct jump_entry *entry)
+{
+	return (unsigned long)entry->key & 1UL;
+}
+
+static inline bool jump_entry_is_init(const struct jump_entry *entry)
+{
+	return (unsigned long)entry->key & 2UL;
+}
+
+static inline void jump_entry_set_init(struct jump_entry *entry)
+{
+	entry->key |= 2;
+}
+
+#endif
 #endif
 
 #ifndef __ASSEMBLY__
@@ -159,10 +222,14 @@ extern void arch_jump_label_transform_static(struct jump_entry *entry,
 extern int jump_label_text_reserved(void *start, void *end);
 extern void static_key_slow_inc(struct static_key *key);
 extern void static_key_slow_dec(struct static_key *key);
+extern void static_key_slow_inc_cpuslocked(struct static_key *key);
+extern void static_key_slow_dec_cpuslocked(struct static_key *key);
 extern void jump_label_apply_nops(struct module *mod);
 extern int static_key_count(struct static_key *key);
 extern void static_key_enable(struct static_key *key);
 extern void static_key_disable(struct static_key *key);
+extern void static_key_enable_cpuslocked(struct static_key *key);
+extern void static_key_disable_cpuslocked(struct static_key *key);
 
 /*
  * We should be using ATOMIC_INIT() for initializing .enabled, but
@@ -209,15 +276,18 @@ static __always_inline bool static_key_true(struct static_key *key)
 
 static inline void static_key_slow_inc(struct static_key *key)
 {
-	STATIC_KEY_CHECK_USE();
+	STATIC_KEY_CHECK_USE(key);
 	atomic_inc(&key->enabled);
 }
 
 static inline void static_key_slow_dec(struct static_key *key)
 {
-	STATIC_KEY_CHECK_USE();
+	STATIC_KEY_CHECK_USE(key);
 	atomic_dec(&key->enabled);
 }
+
+#define static_key_slow_inc_cpuslocked(key) static_key_slow_inc(key)
+#define static_key_slow_dec_cpuslocked(key) static_key_slow_dec(key)
 
 static inline int jump_label_text_reserved(void *start, void *end)
 {
@@ -234,23 +304,28 @@ static inline int jump_label_apply_nops(struct module *mod)
 
 static inline void static_key_enable(struct static_key *key)
 {
-	int count = static_key_count(key);
+	STATIC_KEY_CHECK_USE(key);
 
-	WARN_ON_ONCE(count < 0 || count > 1);
-
-	if (!count)
-		static_key_slow_inc(key);
+	if (atomic_read(&key->enabled) != 0) {
+		WARN_ON_ONCE(atomic_read(&key->enabled) != 1);
+		return;
+	}
+	atomic_set(&key->enabled, 1);
 }
 
 static inline void static_key_disable(struct static_key *key)
 {
-	int count = static_key_count(key);
+	STATIC_KEY_CHECK_USE(key);
 
-	WARN_ON_ONCE(count < 0 || count > 1);
-
-	if (count)
-		static_key_slow_dec(key);
+	if (atomic_read(&key->enabled) != 1) {
+		WARN_ON_ONCE(atomic_read(&key->enabled) != 0);
+		return;
+	}
+	atomic_set(&key->enabled, 0);
 }
+
+#define static_key_enable_cpuslocked(k)		static_key_enable((k))
+#define static_key_disable_cpuslocked(k)	static_key_disable((k))
 
 #define STATIC_KEY_INIT_TRUE	{ .enabled = ATOMIC_INIT(1) }
 #define STATIC_KEY_INIT_FALSE	{ .enabled = ATOMIC_INIT(0) }
@@ -283,11 +358,17 @@ struct static_key_false {
 #define DEFINE_STATIC_KEY_TRUE(name)	\
 	struct static_key_true name = STATIC_KEY_TRUE_INIT
 
+#define DEFINE_STATIC_KEY_TRUE_RO(name)	\
+	struct static_key_true name __ro_after_init = STATIC_KEY_TRUE_INIT
+
 #define DECLARE_STATIC_KEY_TRUE(name)	\
 	extern struct static_key_true name
 
 #define DEFINE_STATIC_KEY_FALSE(name)	\
 	struct static_key_false name = STATIC_KEY_FALSE_INIT
+
+#define DEFINE_STATIC_KEY_FALSE_RO(name)	\
+	struct static_key_false name __ro_after_init = STATIC_KEY_FALSE_INIT
 
 #define DECLARE_STATIC_KEY_FALSE(name)	\
 	extern struct static_key_false name
@@ -380,7 +461,7 @@ extern bool ____wrong_branch_error(void);
 		branch = !arch_static_branch_jump(&(x)->key, true);		\
 	else									\
 		branch = ____wrong_branch_error();				\
-	branch;									\
+	likely(branch);								\
 })
 
 #define static_branch_unlikely(x)						\
@@ -392,7 +473,7 @@ extern bool ____wrong_branch_error(void);
 		branch = arch_static_branch(&(x)->key, false);			\
 	else									\
 		branch = ____wrong_branch_error();				\
-	branch;									\
+	unlikely(branch);							\
 })
 
 #else /* !HAVE_JUMP_LABEL */
@@ -408,13 +489,17 @@ extern bool ____wrong_branch_error(void);
 
 #define static_branch_inc(x)		static_key_slow_inc(&(x)->key)
 #define static_branch_dec(x)		static_key_slow_dec(&(x)->key)
+#define static_branch_inc_cpuslocked(x)	static_key_slow_inc_cpuslocked(&(x)->key)
+#define static_branch_dec_cpuslocked(x)	static_key_slow_dec_cpuslocked(&(x)->key)
 
 /*
  * Normal usage; boolean enable/disable.
  */
 
-#define static_branch_enable(x)		static_key_enable(&(x)->key)
-#define static_branch_disable(x)	static_key_disable(&(x)->key)
+#define static_branch_enable(x)			static_key_enable(&(x)->key)
+#define static_branch_disable(x)		static_key_disable(&(x)->key)
+#define static_branch_enable_cpuslocked(x)	static_key_enable_cpuslocked(&(x)->key)
+#define static_branch_disable_cpuslocked(x)	static_key_disable_cpuslocked(&(x)->key)
 
 #endif /* __ASSEMBLY__ */
 

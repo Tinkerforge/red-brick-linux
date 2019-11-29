@@ -34,7 +34,9 @@
 #include <asm/machdep.h>
 #include <asm/vdso_datapage.h>
 #include <asm/xics.h>
+#include <asm/xive.h>
 #include <asm/plpar_wrappers.h>
+#include <asm/topology.h>
 
 #include "pseries.h"
 #include "offline_states.h"
@@ -109,7 +111,10 @@ static void pseries_mach_cpu_die(void)
 
 	local_irq_disable();
 	idle_task_exit();
-	xics_teardown_cpu();
+	if (xive_enabled())
+		xive_teardown_cpu();
+	else
+		xics_teardown_cpu();
 
 	if (get_preferred_offline_state(cpu) == CPU_STATE_INACTIVE) {
 		set_cpu_current_state(cpu, CPU_STATE_INACTIVE);
@@ -174,7 +179,10 @@ static int pseries_cpu_disable(void)
 		boot_cpuid = cpumask_any(cpu_online_mask);
 
 	/* FIXME: abstract this to not be platform specific later on */
-	xics_migrate_irqs_away();
+	if (xive_enabled())
+		xive_smp_disable_cpu();
+	else
+		xics_migrate_irqs_away();
 	return 0;
 }
 
@@ -226,7 +234,7 @@ static void pseries_cpu_die(unsigned int cpu)
 	 * done here.  Change isolate state to Isolate and
 	 * change allocation-state to Unusable.
 	 */
-	paca[cpu].cpu_start = 0;
+	paca_ptrs[cpu]->cpu_start = 0;
 }
 
 /*
@@ -264,8 +272,8 @@ static int pseries_add_processor(struct device_node *np)
 		/* If we get here, it most likely means that NR_CPUS is
 		 * less than the partition's max processors setting.
 		 */
-		printk(KERN_ERR "Cannot add cpu %s; this system configuration"
-		       " supports %d logical cpus.\n", np->full_name,
+		printk(KERN_ERR "Cannot add cpu %pOF; this system configuration"
+		       " supports %d logical cpus.\n", np,
 		       num_possible_cpus());
 		goto out_unlock;
 	}
@@ -279,7 +287,7 @@ static int pseries_add_processor(struct device_node *np)
 
 	if (cpumask_empty(tmp)) {
 		printk(KERN_ERR "Unable to find space in cpu_present_mask for"
-		       " processor %s with %d thread(s)\n", np->name,
+		       " processor %pOFn with %d thread(s)\n", np,
 		       nthreads);
 		goto out_unlock;
 	}
@@ -324,6 +332,7 @@ static void pseries_remove_processor(struct device_node *np)
 			BUG_ON(cpu_online(cpu));
 			set_cpu_present(cpu, false);
 			set_hard_smp_processor_id(cpu, -1);
+			update_numa_cpu_lookup_table(cpu, -1);
 			break;
 		}
 		if (cpu >= nr_cpu_ids)
@@ -356,6 +365,8 @@ static int dlpar_online_cpu(struct device_node *dn)
 			BUG_ON(get_cpu_current_state(cpu)
 					!= CPU_STATE_OFFLINE);
 			cpu_maps_update_done();
+			timed_topology_update(1);
+			find_and_online_cpu_nid(cpu);
 			rc = device_online(get_cpu_device(cpu));
 			if (rc)
 				goto out;
@@ -455,19 +466,23 @@ static ssize_t dlpar_cpu_add(u32 drc_index)
 	}
 
 	dn = dlpar_configure_connector(cpu_to_be32(drc_index), parent);
-	of_node_put(parent);
 	if (!dn) {
 		pr_warn("Failed call to configure-connector, drc index: %x\n",
 			drc_index);
 		dlpar_release_drc(drc_index);
+		of_node_put(parent);
 		return -EINVAL;
 	}
 
-	rc = dlpar_attach_node(dn);
+	rc = dlpar_attach_node(dn, parent);
+
+	/* Regardless we are done with parent now */
+	of_node_put(parent);
+
 	if (rc) {
 		saved_rc = rc;
-		pr_warn("Failed to attach node %s, rc: %d, drc index: %x\n",
-			dn->name, rc, drc_index);
+		pr_warn("Failed to attach node %pOFn, rc: %d, drc index: %x\n",
+			dn, rc, drc_index);
 
 		rc = dlpar_release_drc(drc_index);
 		if (!rc)
@@ -479,8 +494,8 @@ static ssize_t dlpar_cpu_add(u32 drc_index)
 	rc = dlpar_online_cpu(dn);
 	if (rc) {
 		saved_rc = rc;
-		pr_warn("Failed to online cpu %s, rc: %d, drc index: %x\n",
-			dn->name, rc, drc_index);
+		pr_warn("Failed to online cpu %pOFn, rc: %d, drc index: %x\n",
+			dn, rc, drc_index);
 
 		rc = dlpar_detach_node(dn);
 		if (!rc)
@@ -489,7 +504,7 @@ static ssize_t dlpar_cpu_add(u32 drc_index)
 		return saved_rc;
 	}
 
-	pr_debug("Successfully added CPU %s, drc index: %x\n", dn->name,
+	pr_debug("Successfully added CPU %pOFn, drc index: %x\n", dn,
 		 drc_index);
 	return rc;
 }
@@ -522,6 +537,7 @@ static int dlpar_offline_cpu(struct device_node *dn)
 				set_preferred_offline_state(cpu,
 							    CPU_STATE_OFFLINE);
 				cpu_maps_update_done();
+				timed_topology_update(1);
 				rc = device_offline(get_cpu_device(cpu));
 				if (rc)
 					goto out;
@@ -554,19 +570,19 @@ static ssize_t dlpar_cpu_remove(struct device_node *dn, u32 drc_index)
 {
 	int rc;
 
-	pr_debug("Attempting to remove CPU %s, drc index: %x\n",
-		 dn->name, drc_index);
+	pr_debug("Attempting to remove CPU %pOFn, drc index: %x\n",
+		 dn, drc_index);
 
 	rc = dlpar_offline_cpu(dn);
 	if (rc) {
-		pr_warn("Failed to offline CPU %s, rc: %d\n", dn->name, rc);
+		pr_warn("Failed to offline CPU %pOFn, rc: %d\n", dn, rc);
 		return -EINVAL;
 	}
 
 	rc = dlpar_release_drc(drc_index);
 	if (rc) {
-		pr_warn("Failed to release drc (%x) for CPU %s, rc: %d\n",
-			drc_index, dn->name, rc);
+		pr_warn("Failed to release drc (%x) for CPU %pOFn, rc: %d\n",
+			drc_index, dn, rc);
 		dlpar_online_cpu(dn);
 		return rc;
 	}
@@ -575,7 +591,7 @@ static ssize_t dlpar_cpu_remove(struct device_node *dn, u32 drc_index)
 	if (rc) {
 		int saved_rc = rc;
 
-		pr_warn("Failed to detach CPU %s, rc: %d", dn->name, rc);
+		pr_warn("Failed to detach CPU %pOFn, rc: %d", dn, rc);
 
 		rc = dlpar_acquire_drc(drc_index);
 		if (!rc)
@@ -646,8 +662,8 @@ static int find_dlpar_cpus_to_remove(u32 *cpu_drcs, int cpus_to_remove)
 		rc = of_property_read_u32(dn, "ibm,my-drc-index",
 					  &cpu_drcs[cpus_found - 1]);
 		if (rc) {
-			pr_warn("Error occurred getting drc-index for %s\n",
-				dn->name);
+			pr_warn("Error occurred getting drc-index for %pOFn\n",
+				dn);
 			of_node_put(dn);
 			return -1;
 		}

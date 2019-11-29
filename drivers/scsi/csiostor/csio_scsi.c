@@ -2349,8 +2349,8 @@ csio_scsi_alloc_ddp_bufs(struct csio_scsim *scm, struct csio_hw *hw,
 		}
 
 		/* Allocate Dma buffers for DDP */
-		ddp_desc->vaddr = pci_alloc_consistent(hw->pdev, unit_size,
-							&ddp_desc->paddr);
+		ddp_desc->vaddr = dma_alloc_coherent(&hw->pdev->dev, unit_size,
+				&ddp_desc->paddr, GFP_KERNEL);
 		if (!ddp_desc->vaddr) {
 			csio_err(hw,
 				 "SCSI response DMA buffer (ddp) allocation"
@@ -2372,8 +2372,8 @@ no_mem:
 	list_for_each(tmp, &scm->ddp_freelist) {
 		ddp_desc = (struct csio_dma_buf *) tmp;
 		tmp = csio_list_prev(tmp);
-		pci_free_consistent(hw->pdev, ddp_desc->len, ddp_desc->vaddr,
-				    ddp_desc->paddr);
+		dma_free_coherent(&hw->pdev->dev, ddp_desc->len,
+				  ddp_desc->vaddr, ddp_desc->paddr);
 		list_del_init(&ddp_desc->list);
 		kfree(ddp_desc);
 	}
@@ -2399,8 +2399,8 @@ csio_scsi_free_ddp_bufs(struct csio_scsim *scm, struct csio_hw *hw)
 	list_for_each(tmp, &scm->ddp_freelist) {
 		ddp_desc = (struct csio_dma_buf *) tmp;
 		tmp = csio_list_prev(tmp);
-		pci_free_consistent(hw->pdev, ddp_desc->len, ddp_desc->vaddr,
-				    ddp_desc->paddr);
+		dma_free_coherent(&hw->pdev->dev, ddp_desc->len,
+				  ddp_desc->vaddr, ddp_desc->paddr);
 		list_del_init(&ddp_desc->list);
 		kfree(ddp_desc);
 	}
@@ -2445,7 +2445,7 @@ csio_scsim_init(struct csio_scsim *scm, struct csio_hw *hw)
 
 		/* Allocate Dma buffers for Response Payload */
 		dma_buf = &ioreq->dma_buf;
-		dma_buf->vaddr = pci_pool_alloc(hw->scsi_pci_pool, GFP_KERNEL,
+		dma_buf->vaddr = dma_pool_alloc(hw->scsi_dma_pool, GFP_KERNEL,
 						&dma_buf->paddr);
 		if (!dma_buf->vaddr) {
 			csio_err(hw,
@@ -2485,7 +2485,7 @@ free_ioreq:
 		ioreq = (struct csio_ioreq *)tmp;
 
 		dma_buf = &ioreq->dma_buf;
-		pci_pool_free(hw->scsi_pci_pool, dma_buf->vaddr,
+		dma_pool_free(hw->scsi_dma_pool, dma_buf->vaddr,
 			      dma_buf->paddr);
 
 		kfree(ioreq);
@@ -2516,7 +2516,7 @@ csio_scsim_exit(struct csio_scsim *scm)
 		ioreq = (struct csio_ioreq *)tmp;
 
 		dma_buf = &ioreq->dma_buf;
-		pci_pool_free(scm->hw->scsi_pci_pool, dma_buf->vaddr,
+		dma_pool_free(scm->hw->scsi_dma_pool, dma_buf->vaddr,
 			      dma_buf->paddr);
 
 		kfree(ioreq);

@@ -1318,7 +1318,7 @@ imsttfb_ioctl(struct fb_info *info, u_int cmd, u_long arg)
 	}
 }
 
-static struct pci_device_id imsttfb_pci_tbl[] = {
+static const struct pci_device_id imsttfb_pci_tbl[] = {
 	{ PCI_VENDOR_ID_IMS, PCI_DEVICE_ID_IMS_TT128,
 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, IBM },
 	{ PCI_VENDOR_ID_IMS, PCI_DEVICE_ID_IMS_TT3D,
@@ -1473,7 +1473,7 @@ static int imsttfb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	
 	dp = pci_device_to_OF_node(pdev);
 	if(dp)
-		printk(KERN_INFO "%s: OF name %s\n",__func__, dp->name);
+		printk(KERN_INFO "%s: OF name %pOFn\n",__func__, dp);
 	else if (IS_ENABLED(CONFIG_OF))
 		printk(KERN_ERR "imsttfb: no OF node for pci device\n");
 

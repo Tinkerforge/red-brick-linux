@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Platform data for the chipidea USB dual role controller
  */
@@ -58,6 +59,7 @@ struct ci_hdrc_platform_data {
 #define CI_HDRC_OVERRIDE_TX_BURST	BIT(10)
 #define CI_HDRC_OVERRIDE_RX_BURST	BIT(11)
 #define CI_HDRC_OVERRIDE_PHY_CONTROL	BIT(12) /* Glue layer manages phy */
+#define CI_HDRC_REQUIRES_ALIGNED_DMA	BIT(13)
 	enum usb_dr_mode	dr_mode;
 #define CI_HDRC_CONTROLLER_RESET_EVENT		0
 #define CI_HDRC_CONTROLLER_STOPPED_EVENT	1
@@ -75,6 +77,12 @@ struct ci_hdrc_platform_data {
 	struct ci_hdrc_cable		vbus_extcon;
 	struct ci_hdrc_cable		id_extcon;
 	u32			phy_clkgate_delay_us;
+
+	/* pins */
+	struct pinctrl *pctl;
+	struct pinctrl_state *pins_default;
+	struct pinctrl_state *pins_host;
+	struct pinctrl_state *pins_device;
 };
 
 /* Default offset of capability registers */

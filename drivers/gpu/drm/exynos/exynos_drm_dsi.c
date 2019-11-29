@@ -14,6 +14,7 @@
 
 #include <drm/drmP.h>
 #include <drm/drm_crtc_helper.h>
+#include <drm/drm_fb_helper.h>
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_panel.h>
 #include <drm/drm_atomic_helper.h>
@@ -254,8 +255,8 @@ struct exynos_dsi {
 	struct drm_encoder encoder;
 	struct mipi_dsi_host dsi_host;
 	struct drm_connector connector;
-	struct device_node *panel_node;
 	struct drm_panel *panel;
+	struct drm_bridge *out_bridge;
 	struct device *dev;
 
 	void __iomem *reg_base;
@@ -271,7 +272,6 @@ struct exynos_dsi {
 	u32 lanes;
 	u32 mode_flags;
 	u32 format;
-	struct videomode vm;
 
 	int state;
 	struct drm_property *brightness;
@@ -281,7 +281,7 @@ struct exynos_dsi {
 	struct list_head transfer_list;
 
 	const struct exynos_dsi_driver_data *driver_data;
-	struct device_node *bridge_node;
+	struct device_node *in_bridge_node;
 };
 
 #define host_to_dsi(host) container_of(host, struct exynos_dsi, dsi_host)
@@ -882,30 +882,30 @@ static int exynos_dsi_init_link(struct exynos_dsi *dsi)
 
 static void exynos_dsi_set_display_mode(struct exynos_dsi *dsi)
 {
-	struct videomode *vm = &dsi->vm;
+	struct drm_display_mode *m = &dsi->encoder.crtc->state->adjusted_mode;
 	unsigned int num_bits_resol = dsi->driver_data->num_bits_resol;
 	u32 reg;
 
 	if (dsi->mode_flags & MIPI_DSI_MODE_VIDEO) {
 		reg = DSIM_CMD_ALLOW(0xf)
-			| DSIM_STABLE_VFP(vm->vfront_porch)
-			| DSIM_MAIN_VBP(vm->vback_porch);
+			| DSIM_STABLE_VFP(m->vsync_start - m->vdisplay)
+			| DSIM_MAIN_VBP(m->vtotal - m->vsync_end);
 		exynos_dsi_write(dsi, DSIM_MVPORCH_REG, reg);
 
-		reg = DSIM_MAIN_HFP(vm->hfront_porch)
-			| DSIM_MAIN_HBP(vm->hback_porch);
+		reg = DSIM_MAIN_HFP(m->hsync_start - m->hdisplay)
+			| DSIM_MAIN_HBP(m->htotal - m->hsync_end);
 		exynos_dsi_write(dsi, DSIM_MHPORCH_REG, reg);
 
-		reg = DSIM_MAIN_VSA(vm->vsync_len)
-			| DSIM_MAIN_HSA(vm->hsync_len);
+		reg = DSIM_MAIN_VSA(m->vsync_end - m->vsync_start)
+			| DSIM_MAIN_HSA(m->hsync_end - m->hsync_start);
 		exynos_dsi_write(dsi, DSIM_MSYNC_REG, reg);
 	}
-	reg =  DSIM_MAIN_HRESOL(vm->hactive, num_bits_resol) |
-		DSIM_MAIN_VRESOL(vm->vactive, num_bits_resol);
+	reg =  DSIM_MAIN_HRESOL(m->hdisplay, num_bits_resol) |
+		DSIM_MAIN_VRESOL(m->vdisplay, num_bits_resol);
 
 	exynos_dsi_write(dsi, DSIM_MDRESOL_REG, reg);
 
-	dev_dbg(dsi->dev, "LCD size = %dx%d\n", vm->hactive, vm->vactive);
+	dev_dbg(dsi->dev, "LCD size = %dx%d\n", m->hdisplay, m->vdisplay);
 }
 
 static void exynos_dsi_set_display_enable(struct exynos_dsi *dsi, bool enable)
@@ -1266,15 +1266,15 @@ static irqreturn_t exynos_dsi_irq(int irq, void *dev_id)
 
 	if (status & DSIM_INT_SW_RST_RELEASE) {
 		u32 mask = ~(DSIM_INT_RX_DONE | DSIM_INT_SFR_FIFO_EMPTY |
-			DSIM_INT_SFR_HDR_FIFO_EMPTY | DSIM_INT_FRAME_DONE |
-			DSIM_INT_RX_ECC_ERR | DSIM_INT_SW_RST_RELEASE);
+			DSIM_INT_SFR_HDR_FIFO_EMPTY | DSIM_INT_RX_ECC_ERR |
+			DSIM_INT_SW_RST_RELEASE);
 		exynos_dsi_write(dsi, DSIM_INTMSK_REG, mask);
 		complete(&dsi->completed);
 		return IRQ_HANDLED;
 	}
 
 	if (!(status & (DSIM_INT_RX_DONE | DSIM_INT_SFR_FIFO_EMPTY |
-			DSIM_INT_FRAME_DONE | DSIM_INT_PLL_STABLE)))
+			DSIM_INT_PLL_STABLE)))
 		return IRQ_HANDLED;
 
 	if (exynos_dsi_transfer_finish(dsi))
@@ -1329,12 +1329,13 @@ static int exynos_dsi_init(struct exynos_dsi *dsi)
 	return 0;
 }
 
-static int exynos_dsi_register_te_irq(struct exynos_dsi *dsi)
+static int exynos_dsi_register_te_irq(struct exynos_dsi *dsi,
+				      struct device *panel)
 {
 	int ret;
 	int te_gpio_irq;
 
-	dsi->te_gpio = of_get_named_gpio(dsi->panel_node, "te-gpios", 0);
+	dsi->te_gpio = of_get_named_gpio(panel->of_node, "te-gpios", 0);
 	if (dsi->te_gpio == -ENOENT)
 		return 0;
 
@@ -1374,15 +1375,171 @@ static void exynos_dsi_unregister_te_irq(struct exynos_dsi *dsi)
 	}
 }
 
+static void exynos_dsi_enable(struct drm_encoder *encoder)
+{
+	struct exynos_dsi *dsi = encoder_to_dsi(encoder);
+	int ret;
+
+	if (dsi->state & DSIM_STATE_ENABLED)
+		return;
+
+	pm_runtime_get_sync(dsi->dev);
+	dsi->state |= DSIM_STATE_ENABLED;
+
+	if (dsi->panel) {
+		ret = drm_panel_prepare(dsi->panel);
+		if (ret < 0)
+			goto err_put_sync;
+	} else {
+		drm_bridge_pre_enable(dsi->out_bridge);
+	}
+
+	exynos_dsi_set_display_mode(dsi);
+	exynos_dsi_set_display_enable(dsi, true);
+
+	if (dsi->panel) {
+		ret = drm_panel_enable(dsi->panel);
+		if (ret < 0)
+			goto err_display_disable;
+	} else {
+		drm_bridge_enable(dsi->out_bridge);
+	}
+
+	dsi->state |= DSIM_STATE_VIDOUT_AVAILABLE;
+	return;
+
+err_display_disable:
+	exynos_dsi_set_display_enable(dsi, false);
+	drm_panel_unprepare(dsi->panel);
+
+err_put_sync:
+	dsi->state &= ~DSIM_STATE_ENABLED;
+	pm_runtime_put(dsi->dev);
+}
+
+static void exynos_dsi_disable(struct drm_encoder *encoder)
+{
+	struct exynos_dsi *dsi = encoder_to_dsi(encoder);
+
+	if (!(dsi->state & DSIM_STATE_ENABLED))
+		return;
+
+	dsi->state &= ~DSIM_STATE_VIDOUT_AVAILABLE;
+
+	drm_panel_disable(dsi->panel);
+	drm_bridge_disable(dsi->out_bridge);
+	exynos_dsi_set_display_enable(dsi, false);
+	drm_panel_unprepare(dsi->panel);
+	drm_bridge_post_disable(dsi->out_bridge);
+	dsi->state &= ~DSIM_STATE_ENABLED;
+	pm_runtime_put_sync(dsi->dev);
+}
+
+static enum drm_connector_status
+exynos_dsi_detect(struct drm_connector *connector, bool force)
+{
+	return connector->status;
+}
+
+static void exynos_dsi_connector_destroy(struct drm_connector *connector)
+{
+	drm_connector_unregister(connector);
+	drm_connector_cleanup(connector);
+	connector->dev = NULL;
+}
+
+static const struct drm_connector_funcs exynos_dsi_connector_funcs = {
+	.detect = exynos_dsi_detect,
+	.fill_modes = drm_helper_probe_single_connector_modes,
+	.destroy = exynos_dsi_connector_destroy,
+	.reset = drm_atomic_helper_connector_reset,
+	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
+	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
+};
+
+static int exynos_dsi_get_modes(struct drm_connector *connector)
+{
+	struct exynos_dsi *dsi = connector_to_dsi(connector);
+
+	if (dsi->panel)
+		return dsi->panel->funcs->get_modes(dsi->panel);
+
+	return 0;
+}
+
+static const struct drm_connector_helper_funcs exynos_dsi_connector_helper_funcs = {
+	.get_modes = exynos_dsi_get_modes,
+};
+
+static int exynos_dsi_create_connector(struct drm_encoder *encoder)
+{
+	struct exynos_dsi *dsi = encoder_to_dsi(encoder);
+	struct drm_connector *connector = &dsi->connector;
+	struct drm_device *drm = encoder->dev;
+	int ret;
+
+	connector->polled = DRM_CONNECTOR_POLL_HPD;
+
+	ret = drm_connector_init(drm, connector, &exynos_dsi_connector_funcs,
+				 DRM_MODE_CONNECTOR_DSI);
+	if (ret) {
+		DRM_ERROR("Failed to initialize connector with drm\n");
+		return ret;
+	}
+
+	connector->status = connector_status_disconnected;
+	drm_connector_helper_add(connector, &exynos_dsi_connector_helper_funcs);
+	drm_connector_attach_encoder(connector, encoder);
+	if (!drm->registered)
+		return 0;
+
+	connector->funcs->reset(connector);
+	drm_fb_helper_add_one_connector(drm->fb_helper, connector);
+	drm_connector_register(connector);
+	return 0;
+}
+
+static const struct drm_encoder_helper_funcs exynos_dsi_encoder_helper_funcs = {
+	.enable = exynos_dsi_enable,
+	.disable = exynos_dsi_disable,
+};
+
+static const struct drm_encoder_funcs exynos_dsi_encoder_funcs = {
+	.destroy = drm_encoder_cleanup,
+};
+
+MODULE_DEVICE_TABLE(of, exynos_dsi_of_match);
+
 static int exynos_dsi_host_attach(struct mipi_dsi_host *host,
 				  struct mipi_dsi_device *device)
 {
 	struct exynos_dsi *dsi = host_to_dsi(host);
+	struct drm_encoder *encoder = &dsi->encoder;
+	struct drm_device *drm = encoder->dev;
+	struct drm_bridge *out_bridge;
 
-	dsi->lanes = device->lanes;
-	dsi->format = device->format;
-	dsi->mode_flags = device->mode_flags;
-	dsi->panel_node = device->dev.of_node;
+	out_bridge  = of_drm_find_bridge(device->dev.of_node);
+	if (out_bridge) {
+		drm_bridge_attach(encoder, out_bridge, NULL);
+		dsi->out_bridge = out_bridge;
+		encoder->bridge = NULL;
+	} else {
+		int ret = exynos_dsi_create_connector(encoder);
+
+		if (ret) {
+			DRM_ERROR("failed to create connector ret = %d\n", ret);
+			drm_encoder_cleanup(encoder);
+			return ret;
+		}
+
+		dsi->panel = of_drm_find_panel(device->dev.of_node);
+		if (IS_ERR(dsi->panel)) {
+			dsi->panel = NULL;
+		} else {
+			drm_panel_attach(dsi->panel, &dsi->connector);
+			dsi->connector.status = connector_status_connected;
+		}
+	}
 
 	/*
 	 * This is a temporary solution and should be made by more generic way.
@@ -1390,15 +1547,24 @@ static int exynos_dsi_host_attach(struct mipi_dsi_host *host,
 	 * If attached panel device is for command mode one, dsi should register
 	 * TE interrupt handler.
 	 */
-	if (!(dsi->mode_flags & MIPI_DSI_MODE_VIDEO)) {
-		int ret = exynos_dsi_register_te_irq(dsi);
-
+	if (!(device->mode_flags & MIPI_DSI_MODE_VIDEO)) {
+		int ret = exynos_dsi_register_te_irq(dsi, &device->dev);
 		if (ret)
 			return ret;
 	}
 
-	if (dsi->connector.dev)
-		drm_helper_hpd_irq_event(dsi->connector.dev);
+	mutex_lock(&drm->mode_config.mutex);
+
+	dsi->lanes = device->lanes;
+	dsi->format = device->format;
+	dsi->mode_flags = device->mode_flags;
+	exynos_drm_crtc_get_by_type(drm, EXYNOS_DISPLAY_TYPE_LCD)->i80_mode =
+			!(dsi->mode_flags & MIPI_DSI_MODE_VIDEO);
+
+	mutex_unlock(&drm->mode_config.mutex);
+
+	if (drm->mode_config.poll_enabled)
+		drm_kms_helper_hotplug_event(drm);
 
 	return 0;
 }
@@ -1407,19 +1573,31 @@ static int exynos_dsi_host_detach(struct mipi_dsi_host *host,
 				  struct mipi_dsi_device *device)
 {
 	struct exynos_dsi *dsi = host_to_dsi(host);
+	struct drm_device *drm = dsi->encoder.dev;
+
+	if (dsi->panel) {
+		mutex_lock(&drm->mode_config.mutex);
+		exynos_dsi_disable(&dsi->encoder);
+		drm_panel_detach(dsi->panel);
+		dsi->panel = NULL;
+		dsi->connector.status = connector_status_disconnected;
+		mutex_unlock(&drm->mode_config.mutex);
+	} else {
+		if (dsi->out_bridge->funcs->detach)
+			dsi->out_bridge->funcs->detach(dsi->out_bridge);
+		dsi->out_bridge = NULL;
+	}
+
+	if (drm->mode_config.poll_enabled)
+		drm_kms_helper_hotplug_event(drm);
 
 	exynos_dsi_unregister_te_irq(dsi);
-
-	dsi->panel_node = NULL;
-
-	if (dsi->connector.dev)
-		drm_helper_hpd_irq_event(dsi->connector.dev);
 
 	return 0;
 }
 
 static ssize_t exynos_dsi_host_transfer(struct mipi_dsi_host *host,
-				        const struct mipi_dsi_msg *msg)
+					 const struct mipi_dsi_msg *msg)
 {
 	struct exynos_dsi *dsi = host_to_dsi(host);
 	struct exynos_dsi_transfer xfer;
@@ -1453,173 +1631,13 @@ static const struct mipi_dsi_host_ops exynos_dsi_ops = {
 	.transfer = exynos_dsi_host_transfer,
 };
 
-static void exynos_dsi_enable(struct drm_encoder *encoder)
-{
-	struct exynos_dsi *dsi = encoder_to_dsi(encoder);
-	int ret;
-
-	if (dsi->state & DSIM_STATE_ENABLED)
-		return;
-
-	pm_runtime_get_sync(dsi->dev);
-
-	dsi->state |= DSIM_STATE_ENABLED;
-
-	ret = drm_panel_prepare(dsi->panel);
-	if (ret < 0) {
-		dsi->state &= ~DSIM_STATE_ENABLED;
-		pm_runtime_put_sync(dsi->dev);
-		return;
-	}
-
-	exynos_dsi_set_display_mode(dsi);
-	exynos_dsi_set_display_enable(dsi, true);
-
-	ret = drm_panel_enable(dsi->panel);
-	if (ret < 0) {
-		dsi->state &= ~DSIM_STATE_ENABLED;
-		exynos_dsi_set_display_enable(dsi, false);
-		drm_panel_unprepare(dsi->panel);
-		pm_runtime_put_sync(dsi->dev);
-		return;
-	}
-
-	dsi->state |= DSIM_STATE_VIDOUT_AVAILABLE;
-}
-
-static void exynos_dsi_disable(struct drm_encoder *encoder)
-{
-	struct exynos_dsi *dsi = encoder_to_dsi(encoder);
-
-	if (!(dsi->state & DSIM_STATE_ENABLED))
-		return;
-
-	dsi->state &= ~DSIM_STATE_VIDOUT_AVAILABLE;
-
-	drm_panel_disable(dsi->panel);
-	exynos_dsi_set_display_enable(dsi, false);
-	drm_panel_unprepare(dsi->panel);
-
-	dsi->state &= ~DSIM_STATE_ENABLED;
-
-	pm_runtime_put_sync(dsi->dev);
-}
-
-static enum drm_connector_status
-exynos_dsi_detect(struct drm_connector *connector, bool force)
-{
-	struct exynos_dsi *dsi = connector_to_dsi(connector);
-
-	if (!dsi->panel) {
-		dsi->panel = of_drm_find_panel(dsi->panel_node);
-		if (dsi->panel)
-			drm_panel_attach(dsi->panel, &dsi->connector);
-	} else if (!dsi->panel_node) {
-		struct drm_encoder *encoder;
-
-		encoder = platform_get_drvdata(to_platform_device(dsi->dev));
-		exynos_dsi_disable(encoder);
-		drm_panel_detach(dsi->panel);
-		dsi->panel = NULL;
-	}
-
-	if (dsi->panel)
-		return connector_status_connected;
-
-	return connector_status_disconnected;
-}
-
-static void exynos_dsi_connector_destroy(struct drm_connector *connector)
-{
-	drm_connector_unregister(connector);
-	drm_connector_cleanup(connector);
-	connector->dev = NULL;
-}
-
-static const struct drm_connector_funcs exynos_dsi_connector_funcs = {
-	.dpms = drm_atomic_helper_connector_dpms,
-	.detect = exynos_dsi_detect,
-	.fill_modes = drm_helper_probe_single_connector_modes,
-	.destroy = exynos_dsi_connector_destroy,
-	.reset = drm_atomic_helper_connector_reset,
-	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
-	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
-};
-
-static int exynos_dsi_get_modes(struct drm_connector *connector)
-{
-	struct exynos_dsi *dsi = connector_to_dsi(connector);
-
-	if (dsi->panel)
-		return dsi->panel->funcs->get_modes(dsi->panel);
-
-	return 0;
-}
-
-static const struct drm_connector_helper_funcs exynos_dsi_connector_helper_funcs = {
-	.get_modes = exynos_dsi_get_modes,
-};
-
-static int exynos_dsi_create_connector(struct drm_encoder *encoder)
-{
-	struct exynos_dsi *dsi = encoder_to_dsi(encoder);
-	struct drm_connector *connector = &dsi->connector;
-	int ret;
-
-	connector->polled = DRM_CONNECTOR_POLL_HPD;
-
-	ret = drm_connector_init(encoder->dev, connector,
-				 &exynos_dsi_connector_funcs,
-				 DRM_MODE_CONNECTOR_DSI);
-	if (ret) {
-		DRM_ERROR("Failed to initialize connector with drm\n");
-		return ret;
-	}
-
-	drm_connector_helper_add(connector, &exynos_dsi_connector_helper_funcs);
-	drm_mode_connector_attach_encoder(connector, encoder);
-
-	return 0;
-}
-
-static void exynos_dsi_mode_set(struct drm_encoder *encoder,
-				struct drm_display_mode *mode,
-				struct drm_display_mode *adjusted_mode)
-{
-	struct exynos_dsi *dsi = encoder_to_dsi(encoder);
-	struct videomode *vm = &dsi->vm;
-	struct drm_display_mode *m = adjusted_mode;
-
-	vm->hactive = m->hdisplay;
-	vm->vactive = m->vdisplay;
-	vm->vfront_porch = m->vsync_start - m->vdisplay;
-	vm->vback_porch = m->vtotal - m->vsync_end;
-	vm->vsync_len = m->vsync_end - m->vsync_start;
-	vm->hfront_porch = m->hsync_start - m->hdisplay;
-	vm->hback_porch = m->htotal - m->hsync_end;
-	vm->hsync_len = m->hsync_end - m->hsync_start;
-}
-
-static const struct drm_encoder_helper_funcs exynos_dsi_encoder_helper_funcs = {
-	.mode_set = exynos_dsi_mode_set,
-	.enable = exynos_dsi_enable,
-	.disable = exynos_dsi_disable,
-};
-
-static const struct drm_encoder_funcs exynos_dsi_encoder_funcs = {
-	.destroy = drm_encoder_cleanup,
-};
-
-MODULE_DEVICE_TABLE(of, exynos_dsi_of_match);
-
 static int exynos_dsi_of_read_u32(const struct device_node *np,
 				  const char *propname, u32 *out_value)
 {
 	int ret = of_property_read_u32(np, propname, out_value);
 
 	if (ret < 0)
-		pr_err("%s: failed to get '%s' property\n", np->full_name,
-		       propname);
+		pr_err("%pOF: failed to get '%s' property\n", np, propname);
 
 	return ret;
 }
@@ -1650,7 +1668,7 @@ static int exynos_dsi_parse_dt(struct exynos_dsi *dsi)
 	if (ret < 0)
 		return ret;
 
-	dsi->bridge_node = of_graph_get_remote_node(node, DSI_PORT_IN, 0);
+	dsi->in_bridge_node = of_graph_get_remote_node(node, DSI_PORT_IN, 0);
 
 	return 0;
 }
@@ -1661,34 +1679,22 @@ static int exynos_dsi_bind(struct device *dev, struct device *master,
 	struct drm_encoder *encoder = dev_get_drvdata(dev);
 	struct exynos_dsi *dsi = encoder_to_dsi(encoder);
 	struct drm_device *drm_dev = data;
-	struct drm_bridge *bridge;
+	struct drm_bridge *in_bridge;
 	int ret;
-
-	ret = exynos_drm_crtc_get_pipe_from_type(drm_dev,
-						  EXYNOS_DISPLAY_TYPE_LCD);
-	if (ret < 0)
-		return ret;
-
-	encoder->possible_crtcs = 1 << ret;
-
-	DRM_DEBUG_KMS("possible_crtcs = 0x%x\n", encoder->possible_crtcs);
 
 	drm_encoder_init(drm_dev, encoder, &exynos_dsi_encoder_funcs,
 			 DRM_MODE_ENCODER_TMDS, NULL);
 
 	drm_encoder_helper_add(encoder, &exynos_dsi_encoder_helper_funcs);
 
-	ret = exynos_dsi_create_connector(encoder);
-	if (ret) {
-		DRM_ERROR("failed to create connector ret = %d\n", ret);
-		drm_encoder_cleanup(encoder);
+	ret = exynos_drm_set_possible_crtcs(encoder, EXYNOS_DISPLAY_TYPE_LCD);
+	if (ret < 0)
 		return ret;
-	}
 
-	if (dsi->bridge_node) {
-		bridge = of_drm_find_bridge(dsi->bridge_node);
-		if (bridge)
-			drm_bridge_attach(encoder, bridge, NULL);
+	if (dsi->in_bridge_node) {
+		in_bridge = of_drm_find_bridge(dsi->in_bridge_node);
+		if (in_bridge)
+			drm_bridge_attach(encoder, in_bridge, NULL);
 	}
 
 	return mipi_dsi_host_register(&dsi->dsi_host);
@@ -1747,8 +1753,8 @@ static int exynos_dsi_probe(struct platform_device *pdev)
 		return -EPROBE_DEFER;
 	}
 
-	dsi->clks = devm_kzalloc(dev,
-			sizeof(*dsi->clks) * dsi->driver_data->num_clks,
+	dsi->clks = devm_kcalloc(dev,
+			dsi->driver_data->num_clks, sizeof(*dsi->clks),
 			GFP_KERNEL);
 	if (!dsi->clks)
 		return -ENOMEM;
@@ -1807,7 +1813,7 @@ static int exynos_dsi_remove(struct platform_device *pdev)
 {
 	struct exynos_dsi *dsi = platform_get_drvdata(pdev);
 
-	of_node_put(dsi->bridge_node);
+	of_node_put(dsi->in_bridge_node);
 
 	pm_runtime_disable(&pdev->dev);
 
@@ -1884,6 +1890,8 @@ err_clk:
 
 static const struct dev_pm_ops exynos_dsi_pm_ops = {
 	SET_RUNTIME_PM_OPS(exynos_dsi_suspend, exynos_dsi_resume, NULL)
+	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
+				pm_runtime_force_resume)
 };
 
 struct platform_driver dsi_driver = {

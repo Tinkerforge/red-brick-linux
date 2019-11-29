@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * sleep.c - x86-specific ACPI sleep support.
  *
@@ -6,7 +7,6 @@
  */
 
 #include <linux/acpi.h>
-#include <linux/bootmem.h>
 #include <linux/memblock.h>
 #include <linux/dmi.h>
 #include <linux/cpumask.h>
@@ -137,6 +137,8 @@ static int __init acpi_sleep_setup(char *str)
 			acpi_nvs_nosave_s3();
 		if (strncmp(str, "old_ordering", 12) == 0)
 			acpi_old_suspend_ordering();
+		if (strncmp(str, "nobl", 4) == 0)
+			acpi_sleep_no_blacklist();
 		str = strchr(str, ',');
 		if (str != NULL)
 			str += strspn(str, ", \t");

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Power button driver for Intel MID platforms.
  *
@@ -5,18 +6,8 @@
  *
  * Author: Hong Liu <hong.liu@intel.com>
  * Author: Andy Shevchenko <andriy.shevchenko@linux.intel.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
  */
 
-#include <linux/init.h>
 #include <linux/input.h>
 #include <linux/interrupt.h>
 #include <linux/mfd/intel_msic.h>
@@ -108,25 +99,22 @@ static irqreturn_t mid_pb_isr(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static struct mid_pb_ddata mfld_ddata = {
+static const struct mid_pb_ddata mfld_ddata = {
 	.mirqlvl1_addr	= INTEL_MSIC_IRQLVL1MSK,
 	.pbstat_addr	= INTEL_MSIC_PBSTATUS,
 	.pbstat_mask	= MSIC_PB_LEVEL,
 };
 
-static struct mid_pb_ddata mrfld_ddata = {
+static const struct mid_pb_ddata mrfld_ddata = {
 	.mirqlvl1_addr	= BCOVE_IRQLVL1MSK,
 	.pbstat_addr	= BCOVE_PBSTATUS,
 	.pbstat_mask	= BCOVE_PB_LEVEL,
 	.setup	= mrfld_setup,
 };
 
-#define ICPU(model, ddata)	\
-	{ X86_VENDOR_INTEL, 6, model, X86_FEATURE_ANY, (kernel_ulong_t)&ddata }
-
 static const struct x86_cpu_id mid_pb_cpu_ids[] = {
-	ICPU(INTEL_FAM6_ATOM_PENWELL,		mfld_ddata),
-	ICPU(INTEL_FAM6_ATOM_MERRIFIELD,	mrfld_ddata),
+	INTEL_CPU_FAM6(ATOM_SALTWELL_MID,	mfld_ddata),
+	INTEL_CPU_FAM6(ATOM_SILVERMONT_MID,	mrfld_ddata),
 	{}
 };
 
@@ -142,8 +130,10 @@ static int mid_pb_probe(struct platform_device *pdev)
 	if (!id)
 		return -ENODEV;
 
-	if (irq < 0)
-		return -EINVAL;
+	if (irq < 0) {
+		dev_err(&pdev->dev, "Failed to get IRQ: %d\n", irq);
+		return irq;
+	}
 
 	input = devm_input_allocate_device(&pdev->dev);
 	if (!input)

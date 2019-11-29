@@ -314,12 +314,13 @@ static int snd_rme32_capture_copy_kernel(struct snd_pcm_substream *substream,
 /*
  * SPDIF I/O capabilities (half-duplex mode)
  */
-static struct snd_pcm_hardware snd_rme32_spdif_info = {
+static const struct snd_pcm_hardware snd_rme32_spdif_info = {
 	.info =		(SNDRV_PCM_INFO_MMAP_IOMEM |
 			 SNDRV_PCM_INFO_MMAP_VALID |
 			 SNDRV_PCM_INFO_INTERLEAVED | 
 			 SNDRV_PCM_INFO_PAUSE |
-			 SNDRV_PCM_INFO_SYNC_START),
+			 SNDRV_PCM_INFO_SYNC_START |
+			 SNDRV_PCM_INFO_SYNC_APPLPTR),
 	.formats =	(SNDRV_PCM_FMTBIT_S16_LE | 
 			 SNDRV_PCM_FMTBIT_S32_LE),
 	.rates =	(SNDRV_PCM_RATE_32000 |
@@ -340,13 +341,14 @@ static struct snd_pcm_hardware snd_rme32_spdif_info = {
 /*
  * ADAT I/O capabilities (half-duplex mode)
  */
-static struct snd_pcm_hardware snd_rme32_adat_info =
+static const struct snd_pcm_hardware snd_rme32_adat_info =
 {
 	.info =		     (SNDRV_PCM_INFO_MMAP_IOMEM |
 			      SNDRV_PCM_INFO_MMAP_VALID |
 			      SNDRV_PCM_INFO_INTERLEAVED |
 			      SNDRV_PCM_INFO_PAUSE |
-			      SNDRV_PCM_INFO_SYNC_START),
+			      SNDRV_PCM_INFO_SYNC_START |
+			      SNDRV_PCM_INFO_SYNC_APPLPTR),
 	.formats=            SNDRV_PCM_FMTBIT_S16_LE,
 	.rates =             (SNDRV_PCM_RATE_44100 | 
 			      SNDRV_PCM_RATE_48000),
@@ -365,12 +367,13 @@ static struct snd_pcm_hardware snd_rme32_adat_info =
 /*
  * SPDIF I/O capabilities (full-duplex mode)
  */
-static struct snd_pcm_hardware snd_rme32_spdif_fd_info = {
+static const struct snd_pcm_hardware snd_rme32_spdif_fd_info = {
 	.info =		(SNDRV_PCM_INFO_MMAP |
 			 SNDRV_PCM_INFO_MMAP_VALID |
 			 SNDRV_PCM_INFO_INTERLEAVED | 
 			 SNDRV_PCM_INFO_PAUSE |
-			 SNDRV_PCM_INFO_SYNC_START),
+			 SNDRV_PCM_INFO_SYNC_START |
+			 SNDRV_PCM_INFO_SYNC_APPLPTR),
 	.formats =	(SNDRV_PCM_FMTBIT_S16_LE | 
 			 SNDRV_PCM_FMTBIT_S32_LE),
 	.rates =	(SNDRV_PCM_RATE_32000 |
@@ -391,13 +394,14 @@ static struct snd_pcm_hardware snd_rme32_spdif_fd_info = {
 /*
  * ADAT I/O capabilities (full-duplex mode)
  */
-static struct snd_pcm_hardware snd_rme32_adat_fd_info =
+static const struct snd_pcm_hardware snd_rme32_adat_fd_info =
 {
 	.info =		     (SNDRV_PCM_INFO_MMAP |
 			      SNDRV_PCM_INFO_MMAP_VALID |
 			      SNDRV_PCM_INFO_INTERLEAVED |
 			      SNDRV_PCM_INFO_PAUSE |
-			      SNDRV_PCM_INFO_SYNC_START),
+			      SNDRV_PCM_INFO_SYNC_START |
+			      SNDRV_PCM_INFO_SYNC_APPLPTR),
 	.formats=            SNDRV_PCM_FMTBIT_S16_LE,
 	.rates =             (SNDRV_PCM_RATE_44100 | 
 			      SNDRV_PCM_RATE_48000),
@@ -1104,16 +1108,6 @@ snd_rme32_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 		snd_pcm_trigger_done(s, substream);
 	}
 	
-	/* prefill playback buffer */
-	if (cmd == SNDRV_PCM_TRIGGER_START && rme32->fullduplex_mode) {
-		snd_pcm_group_for_each_entry(s, substream) {
-			if (s == rme32->playback_substream) {
-				s->ops->ack(s);
-				break;
-			}
-		}
-	}
-
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 		if (rme32->running && ! RME32_ISWORKING(rme32))

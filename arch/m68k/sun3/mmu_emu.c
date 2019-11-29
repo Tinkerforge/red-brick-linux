@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
 ** Tablewalk MMU emulator
 **
@@ -12,7 +13,7 @@
 #include <linux/kernel.h>
 #include <linux/ptrace.h>
 #include <linux/delay.h>
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/bitops.h>
 #include <linux/module.h>
 #include <linux/sched/mm.h>

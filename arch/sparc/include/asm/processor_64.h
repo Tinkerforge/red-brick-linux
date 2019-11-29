@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * include/asm/processor.h
  *
@@ -6,12 +7,6 @@
 
 #ifndef __ASM_SPARC64_PROCESSOR_H
 #define __ASM_SPARC64_PROCESSOR_H
-
-/*
- * Sparc64 implementation of macro that returns current
- * instruction pointer ("program counter").
- */
-#define current_text_addr() ({ void *pc; __asm__("rd %%pc, %0" : "=r" (pc)); pc; })
 
 #include <asm/asi.h>
 #include <asm/pstate.h>
@@ -199,6 +194,13 @@ unsigned long get_wchan(struct task_struct *task);
  * To make a long story short, we are trying to yield the current cpu
  * strand during busy loops.
  */
+#ifdef	BUILD_VDSO
+#define	cpu_relax()	asm volatile("\n99:\n\t"			\
+				     "rd	%%ccr, %%g0\n\t"	\
+				     "rd	%%ccr, %%g0\n\t"	\
+				     "rd	%%ccr, %%g0\n\t"	\
+				     ::: "memory")
+#else /* ! BUILD_VDSO */
 #define cpu_relax()	asm volatile("\n99:\n\t"			\
 				     "rd	%%ccr, %%g0\n\t"	\
 				     "rd	%%ccr, %%g0\n\t"	\
@@ -210,6 +212,7 @@ unsigned long get_wchan(struct task_struct *task);
 				     "nop\n\t"				\
 				     ".previous"			\
 				     ::: "memory")
+#endif
 
 /* Prefetch support.  This is tuned for UltraSPARC-III and later.
  * UltraSPARC-I will treat these as nops, and UltraSPARC-II has

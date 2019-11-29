@@ -27,6 +27,13 @@ struct arc_fpu {
 };
 #endif
 
+#ifdef CONFIG_ARC_PLAT_EZNPS
+struct eznps_dp {
+	unsigned int eflags;
+	unsigned int gpa1;
+};
+#endif
+
 /* Arch specific stuff which needs to be saved per task.
  * However these items are not so important so as to earn a place in
  * struct thread_info
@@ -37,6 +44,9 @@ struct thread_struct {
 	unsigned long fault_address;	/* dbls as brkpt holder as well */
 #ifdef CONFIG_ARC_FPU_SAVE_RESTORE
 	struct arc_fpu fpu;
+#endif
+#ifdef CONFIG_ARC_PLAT_EZNPS
+	struct eznps_dp dp;
 #endif
 };
 
@@ -68,9 +78,6 @@ struct task_struct;
 
 #endif
 
-#define copy_segments(tsk, mm)      do { } while (0)
-#define release_segments(mm)        do { } while (0)
-
 #define KSTK_EIP(tsk)   (task_pt_regs(tsk)->ret)
 #define KSTK_ESP(tsk)   (task_pt_regs(tsk)->sp)
 
@@ -90,14 +97,6 @@ extern void start_thread(struct pt_regs * regs, unsigned long pc,
 			 unsigned long usp);
 
 extern unsigned int get_wchan(struct task_struct *p);
-
-/*
- * Default implementation of macro that returns current
- * instruction pointer ("program counter").
- * Should the PC register be read instead ? This macro does not seem to
- * be used in many places so this wont be all that bad.
- */
-#define current_text_addr() ({ __label__ _l; _l: &&_l; })
 
 #endif /* !__ASSEMBLY__ */
 

@@ -404,7 +404,8 @@ static const struct regmap_config ltc3589_regmap_config = {
 	.max_register = LTC3589_L2DTV2,
 	.reg_defaults = ltc3589_reg_defaults,
 	.num_reg_defaults = ARRAY_SIZE(ltc3589_reg_defaults),
-	.use_single_rw = true,
+	.use_single_read = true,
+	.use_single_write = true,
 	.cache_type = REGCACHE_RBTREE,
 };
 
@@ -539,7 +540,7 @@ static int ltc3589_probe(struct i2c_client *client,
 	return 0;
 }
 
-static struct i2c_device_id ltc3589_i2c_id[] = {
+static const struct i2c_device_id ltc3589_i2c_id[] = {
 	{ "ltc3589",   LTC3589   },
 	{ "ltc3589-1", LTC3589_1 },
 	{ "ltc3589-2", LTC3589_2 },

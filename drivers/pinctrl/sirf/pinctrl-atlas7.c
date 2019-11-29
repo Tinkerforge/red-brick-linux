@@ -19,14 +19,13 @@
 #include <linux/of_device.h>
 #include <linux/of_platform.h>
 #include <linux/of_irq.h>
-#include <linux/of_gpio.h>
 #include <linux/pinctrl/machine.h>
 #include <linux/pinctrl/pinconf.h>
 #include <linux/pinctrl/pinctrl.h>
 #include <linux/pinctrl/pinmux.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/pinctrl/pinconf-generic.h>
-#include <linux/gpio.h>
+#include <linux/gpio/driver.h>
 
 /* Definition of Pad&Mux Properties */
 #define N 0
@@ -549,7 +548,7 @@ static const struct pinctrl_pin_desc atlas7_ioc_pads[] = {
 	PINCTRL_PIN(163, "jtag_trstn"),
 };
 
-struct atlas7_pad_config atlas7_ioc_pad_confs[] = {
+static struct atlas7_pad_config atlas7_ioc_pad_confs[] = {
 	/* The Configuration of IOC_RTC Pads */
 	PADCONF(0, 3, 0x0, 0x100, 0x200, -1, 0, 0, 0, 0),
 	PADCONF(1, 3, 0x0, 0x100, 0x200, -1, 4, 2, 2, 0),
@@ -1002,7 +1001,7 @@ static const unsigned int vi_vip1_high8bit_pins[] = { 82, 83, 84, 103, 104,
 		105, 106, 107, 102, 97, 98, };
 
 /* definition of pin group table */
-struct atlas7_pin_group altas7_pin_groups[] = {
+static struct atlas7_pin_group altas7_pin_groups[] = {
 	GROUP("gnss_gpio_grp", gnss_gpio_pins),
 	GROUP("lcd_vip_gpio_grp", lcd_vip_gpio_pins),
 	GROUP("sdio_i2s_gpio_grp", sdio_i2s_gpio_pins),
@@ -4764,7 +4763,7 @@ static struct atlas7_pmx_func atlas7_pmx_functions[] = {
 			&vi_vip1_high8bit_grp_mux),
 };
 
-struct atlas7_pinctrl_data atlas7_ioc_data = {
+static struct atlas7_pinctrl_data atlas7_ioc_data = {
 	.pads = (struct pinctrl_pin_desc *)atlas7_ioc_pads,
 	.pads_cnt = ARRAY_SIZE(atlas7_ioc_pads),
 	.grps = (struct atlas7_pin_group *)altas7_pin_groups,
@@ -5261,7 +5260,7 @@ static int atlas7_pmx_gpio_request_enable(struct pinctrl_dev *pctldev,
 	return 0;
 }
 
-static struct pinmux_ops atlas7_pinmux_ops = {
+static const struct pinmux_ops atlas7_pinmux_ops = {
 	.get_functions_count = atlas7_pmx_get_funcs_count,
 	.get_function_name = atlas7_pmx_get_func_name,
 	.get_function_groups = atlas7_pmx_get_func_groups,
@@ -5540,14 +5539,10 @@ static int atlas7_pinmux_resume_noirq(struct device *dev)
 {
 	struct atlas7_pmx *pmx = dev_get_drvdata(dev);
 	struct atlas7_pad_status *status;
-	struct atlas7_pad_config *conf;
 	int idx;
-	u32 bank;
 
 	for (idx = 0; idx < pmx->pctl_desc.npins; idx++) {
 		/* Get this Pad's descriptor from PINCTRL */
-		conf = &pmx->pctl_data->confs[idx];
-		bank = atlas7_pin_to_bank(idx);
 		status = &pmx->sleep_data[idx];
 
 		/* Restore Function selector */
@@ -5820,7 +5815,7 @@ static void atlas7_gpio_handle_irq(struct irq_desc *desc)
 				__func__, gc->label,
 				bank->gpio_offset + pin_in_bank);
 			generic_handle_irq(
-				irq_find_mapping(gc->irqdomain,
+				irq_find_mapping(gc->irq.domain,
 					bank->gpio_offset + pin_in_bank));
 		}
 
@@ -5860,7 +5855,7 @@ static int atlas7_gpio_request(struct gpio_chip *chip,
 	if (ret < 0)
 		return ret;
 
-	if (pinctrl_request_gpio(chip->base + gpio))
+	if (pinctrl_gpio_request(chip->base + gpio))
 		return -ENODEV;
 
 	raw_spin_lock_irqsave(&a7gc->lock, flags);
@@ -5890,7 +5885,7 @@ static void atlas7_gpio_free(struct gpio_chip *chip,
 
 	raw_spin_unlock_irqrestore(&a7gc->lock, flags);
 
-	pinctrl_free_gpio(chip->base + gpio);
+	pinctrl_gpio_free(chip->base + gpio);
 }
 
 static int atlas7_gpio_direction_input(struct gpio_chip *chip,
@@ -6058,8 +6053,8 @@ static int atlas7_gpio_probe(struct platform_device *pdev)
 	ret = gpiochip_add_data(chip, a7gc);
 	if (ret) {
 		dev_err(&pdev->dev,
-			"%s: error in probe function with status %d\n",
-			np->name, ret);
+			"%pOF: error in probe function with status %d\n",
+			np, ret);
 		goto failed;
 	}
 
@@ -6078,12 +6073,15 @@ static int atlas7_gpio_probe(struct platform_device *pdev)
 		bank = &a7gc->banks[idx];
 		/* Set ctrl registers' base of this bank */
 		bank->base = ATLAS7_GPIO_BASE(a7gc, idx);
+		bank->gpio_offset = idx * NGPIO_OF_BANK;
 
 		/* Get interrupt number from DTS */
 		ret = of_irq_get(np, idx);
-		if (ret == -EPROBE_DEFER) {
+		if (ret <= 0) {
 			dev_err(&pdev->dev,
 				"Unable to find IRQ number. ret=%d\n", ret);
+			if (!ret)
+				ret = -ENXIO;
 			goto failed;
 		}
 		bank->irq = ret;

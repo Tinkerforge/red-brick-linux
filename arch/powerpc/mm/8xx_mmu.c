@@ -13,6 +13,7 @@
  */
 
 #include <linux/memblock.h>
+#include <linux/mmu_context.h>
 #include <asm/fixmap.h>
 #include <asm/code-patching.h>
 
@@ -22,8 +23,11 @@
 
 extern int __map_without_ltlbs;
 
+static unsigned long block_mapped_ram;
+
 /*
- * Return PA for this VA if it is in IMMR area, or 0
+ * Return PA for this VA if it is in an area mapped with LTLBs.
+ * Otherwise, returns 0
  */
 phys_addr_t v_block_mapped(unsigned long va)
 {
@@ -33,11 +37,13 @@ phys_addr_t v_block_mapped(unsigned long va)
 		return 0;
 	if (va >= VIRT_IMMR_BASE && va < VIRT_IMMR_BASE + IMMR_SIZE)
 		return p + va - VIRT_IMMR_BASE;
+	if (va >= PAGE_OFFSET && va < PAGE_OFFSET + block_mapped_ram)
+		return __pa(va);
 	return 0;
 }
 
 /*
- * Return VA for a given PA or 0 if not mapped
+ * Return VA for a given PA mapped with LTLBs or 0 if not mapped
  */
 unsigned long p_block_mapped(phys_addr_t pa)
 {
@@ -47,6 +53,8 @@ unsigned long p_block_mapped(phys_addr_t pa)
 		return 0;
 	if (pa >= p && pa < p + IMMR_SIZE)
 		return VIRT_IMMR_BASE + pa - p;
+	if (pa < block_mapped_ram)
+		return (unsigned long)__va(pa);
 	return 0;
 }
 
@@ -58,9 +66,9 @@ unsigned long p_block_mapped(phys_addr_t pa)
 void __init MMU_init_hw(void)
 {
 	/* PIN up to the 3 first 8Mb after IMMR in DTLB table */
-#ifdef CONFIG_PIN_TLB
+#ifdef CONFIG_PIN_TLB_DATA
 	unsigned long ctr = mfspr(SPRN_MD_CTR) & 0xfe000000;
-	unsigned long flags = 0xf0 | MD_SPS16K | _PAGE_SHARED | _PAGE_DIRTY;
+	unsigned long flags = 0xf0 | MD_SPS16K | _PAGE_SH | _PAGE_DIRTY;
 #ifdef CONFIG_PIN_TLB_IMMR
 	int i = 29;
 #else
@@ -80,30 +88,23 @@ void __init MMU_init_hw(void)
 #endif
 }
 
-static void mmu_mapin_immr(void)
+static void __init mmu_mapin_immr(void)
 {
 	unsigned long p = PHYS_IMMR_BASE;
 	unsigned long v = VIRT_IMMR_BASE;
-	unsigned long f = pgprot_val(PAGE_KERNEL_NCG);
 	int offset;
 
 	for (offset = 0; offset < IMMR_SIZE; offset += PAGE_SIZE)
-		map_kernel_page(v + offset, p + offset, f);
+		map_kernel_page(v + offset, p + offset, PAGE_KERNEL_NCG);
 }
 
-/* Address of instructions to patch */
-#ifndef CONFIG_PIN_TLB_IMMR
-extern unsigned int DTLBMiss_jmp;
-#endif
-extern unsigned int DTLBMiss_cmp, FixupDAR_cmp;
-
-void mmu_patch_cmp_limit(unsigned int *addr, unsigned long mapped)
+static void __init mmu_patch_cmp_limit(s32 *site, unsigned long mapped)
 {
-	unsigned int instr = *addr;
+	unsigned int instr = *(unsigned int *)patch_site_addr(site);
 
 	instr &= 0xffff0000;
 	instr |= (unsigned long)__va(mapped) >> 16;
-	patch_instruction(addr, instr);
+	patch_instruction_site(site, instr);
 }
 
 unsigned long __init mmu_mapin_ram(unsigned long top)
@@ -114,14 +115,17 @@ unsigned long __init mmu_mapin_ram(unsigned long top)
 		mapped = 0;
 		mmu_mapin_immr();
 #ifndef CONFIG_PIN_TLB_IMMR
-		patch_instruction(&DTLBMiss_jmp, PPC_INST_NOP);
+		patch_instruction_site(&patch__dtlbmiss_immr_jmp, PPC_INST_NOP);
+#endif
+#ifndef CONFIG_PIN_TLB_TEXT
+		mmu_patch_cmp_limit(&patch__itlbmiss_linmem_top, 0);
 #endif
 	} else {
 		mapped = top & ~(LARGE_PAGE_SIZE_8M - 1);
 	}
 
-	mmu_patch_cmp_limit(&DTLBMiss_cmp, mapped);
-	mmu_patch_cmp_limit(&FixupDAR_cmp, mapped);
+	mmu_patch_cmp_limit(&patch__dtlbmiss_linmem_top, mapped);
+	mmu_patch_cmp_limit(&patch__fixupdar_linmem_top, mapped);
 
 	/* If the size of RAM is not an exact power of two, we may not
 	 * have covered RAM in its entirety with 8 MiB
@@ -133,11 +137,13 @@ unsigned long __init mmu_mapin_ram(unsigned long top)
 	if (mapped)
 		memblock_set_current_limit(mapped);
 
+	block_mapped_ram = mapped;
+
 	return mapped;
 }
 
-void setup_initial_memory_limit(phys_addr_t first_memblock_base,
-				phys_addr_t first_memblock_size)
+void __init setup_initial_memory_limit(phys_addr_t first_memblock_base,
+				       phys_addr_t first_memblock_size)
 {
 	/* We don't currently support the first MEMBLOCK not mapping 0
 	 * physical on those processors
@@ -177,7 +183,7 @@ void set_context(unsigned long id, pgd_t *pgd)
 	mtspr(SPRN_M_TW, __pa(pgd) - offset);
 
 	/* Update context */
-	mtspr(SPRN_M_CASID, id);
+	mtspr(SPRN_M_CASID, id - 1);
 	/* sync */
 	mb();
 }

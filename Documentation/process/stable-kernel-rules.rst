@@ -37,7 +37,7 @@ Procedure for submitting patches to the -stable tree
 
  - If the patch covers files in net/ or drivers/net please follow netdev stable
    submission guidelines as described in
-   Documentation/networking/netdev-FAQ.txt
+   :ref:`Documentation/networking/netdev-FAQ.rst <netdev-FAQ>`
  - Security patches should not be handled (solely) by the -stable review
    process but should follow the procedures in
    :ref:`Documentation/admin-guide/security-bugs.rst <securitybugs>`.
@@ -166,12 +166,12 @@ Trees
  - The queues of patches, for both completed versions and in progress
    versions can be found at:
 
-	http://git.kernel.org/?p=linux/kernel/git/stable/stable-queue.git
+	https://git.kernel.org/pub/scm/linux/kernel/git/stable/stable-queue.git
 
  - The finalized and tagged releases of all stable kernels can be found
    in separate branches per version at:
 
-	http://git.kernel.org/?p=linux/kernel/git/stable/linux-stable.git
+	https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git
 
 
 Review committee

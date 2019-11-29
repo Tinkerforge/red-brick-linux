@@ -687,7 +687,7 @@ static int rtl2831u_frontend_attach(struct dvb_usb_adapter *adap)
 
 	/* attach demodulator */
 	memset(&board_info, 0, sizeof(board_info));
-	strlcpy(board_info.type, "rtl2830", I2C_NAME_SIZE);
+	strscpy(board_info.type, "rtl2830", I2C_NAME_SIZE);
 	board_info.addr = 0x10;
 	board_info.platform_data = pdata;
 	request_module("%s", board_info.type);
@@ -908,7 +908,7 @@ static int rtl2832u_frontend_attach(struct dvb_usb_adapter *adap)
 
 	/* attach demodulator */
 	memset(&board_info, 0, sizeof(board_info));
-	strlcpy(board_info.type, "rtl2832", I2C_NAME_SIZE);
+	strscpy(board_info.type, "rtl2832", I2C_NAME_SIZE);
 	board_info.addr = 0x10;
 	board_info.platform_data = pdata;
 	request_module("%s", board_info.type);
@@ -947,7 +947,7 @@ static int rtl2832u_frontend_attach(struct dvb_usb_adapter *adap)
 
 			mn88472_config.fe = &adap->fe[1];
 			mn88472_config.i2c_wr_max = 22,
-			strlcpy(info.type, "mn88472", I2C_NAME_SIZE);
+			strscpy(info.type, "mn88472", I2C_NAME_SIZE);
 			mn88472_config.xtal = 20500000;
 			mn88472_config.ts_mode = SERIAL_TS_MODE;
 			mn88472_config.ts_clock = VARIABLE_TS_CLOCK;
@@ -972,7 +972,7 @@ static int rtl2832u_frontend_attach(struct dvb_usb_adapter *adap)
 
 			mn88473_config.fe = &adap->fe[1];
 			mn88473_config.i2c_wr_max = 22,
-			strlcpy(info.type, "mn88473", I2C_NAME_SIZE);
+			strscpy(info.type, "mn88473", I2C_NAME_SIZE);
 			info.addr = 0x18;
 			info.platform_data = &mn88473_config;
 			request_module(info.type);
@@ -998,7 +998,7 @@ static int rtl2832u_frontend_attach(struct dvb_usb_adapter *adap)
 			si2168_config.ts_mode = SI2168_TS_SERIAL;
 			si2168_config.ts_clock_inv = false;
 			si2168_config.ts_clock_gapped = true;
-			strlcpy(info.type, "si2168", I2C_NAME_SIZE);
+			strscpy(info.type, "si2168", I2C_NAME_SIZE);
 			info.addr = 0x64;
 			info.platform_data = &si2168_config;
 			request_module(info.type);
@@ -1189,7 +1189,7 @@ static int rtl2832u_tuner_attach(struct dvb_usb_adapter *adap)
 				.clock = 28800000,
 			};
 
-			strlcpy(info.type, "e4000", I2C_NAME_SIZE);
+			strscpy(info.type, "e4000", I2C_NAME_SIZE);
 			info.addr = 0x64;
 			info.platform_data = &e4000_config;
 
@@ -1213,7 +1213,7 @@ static int rtl2832u_tuner_attach(struct dvb_usb_adapter *adap)
 			};
 			struct i2c_board_info board_info = {};
 
-			strlcpy(board_info.type, "fc2580", I2C_NAME_SIZE);
+			strscpy(board_info.type, "fc2580", I2C_NAME_SIZE);
 			board_info.addr = 0x56;
 			board_info.platform_data = &fc2580_pdata;
 			request_module("fc2580");
@@ -1244,7 +1244,7 @@ static int rtl2832u_tuner_attach(struct dvb_usb_adapter *adap)
 		if (ret)
 			goto err;
 
-		strlcpy(board_info.type, "tua9001", I2C_NAME_SIZE);
+		strscpy(board_info.type, "tua9001", I2C_NAME_SIZE);
 		board_info.addr = 0x60;
 		board_info.platform_data = &tua9001_pdata;
 		request_module("tua9001");
@@ -1289,7 +1289,7 @@ static int rtl2832u_tuner_attach(struct dvb_usb_adapter *adap)
 				.inversion = false,
 			};
 
-			strlcpy(info.type, "si2157", I2C_NAME_SIZE);
+			strscpy(info.type, "si2157", I2C_NAME_SIZE);
 			info.addr = 0x60;
 			info.platform_data = &si2157_config;
 			request_module(info.type);
@@ -1598,7 +1598,7 @@ static int rtl2831u_rc_query(struct dvb_usb_device *d)
 	struct rtl28xxu_dev *dev = d->priv;
 	u8 buf[5];
 	u32 rc_code;
-	struct rtl28xxu_reg_val rc_nec_tab[] = {
+	static const struct rtl28xxu_reg_val rc_nec_tab[] = {
 		{ 0x3033, 0x80 },
 		{ 0x3020, 0x43 },
 		{ 0x3021, 0x16 },
@@ -1631,24 +1631,24 @@ static int rtl2831u_rc_query(struct dvb_usb_device *d)
 		goto err;
 
 	if (buf[4] & 0x01) {
-		enum rc_type proto;
+		enum rc_proto proto;
 
 		if (buf[2] == (u8) ~buf[3]) {
 			if (buf[0] == (u8) ~buf[1]) {
 				/* NEC standard (16 bit) */
 				rc_code = RC_SCANCODE_NEC(buf[0], buf[2]);
-				proto = RC_TYPE_NEC;
+				proto = RC_PROTO_NEC;
 			} else {
 				/* NEC extended (24 bit) */
 				rc_code = RC_SCANCODE_NECX(buf[0] << 8 | buf[1],
 							   buf[2]);
-				proto = RC_TYPE_NECX;
+				proto = RC_PROTO_NECX;
 			}
 		} else {
 			/* NEC full (32 bit) */
 			rc_code = RC_SCANCODE_NEC32(buf[0] << 24 | buf[1] << 16 |
 						    buf[2] << 8  | buf[3]);
-			proto = RC_TYPE_NEC32;
+			proto = RC_PROTO_NEC32;
 		}
 
 		rc_keydown(d->rc_dev, proto, rc_code, 0);
@@ -1673,7 +1673,8 @@ static int rtl2831u_get_rc_config(struct dvb_usb_device *d,
 		struct dvb_usb_rc *rc)
 {
 	rc->map_name = RC_MAP_EMPTY;
-	rc->allowed_protos = RC_BIT_NEC | RC_BIT_NECX | RC_BIT_NEC32;
+	rc->allowed_protos = RC_PROTO_BIT_NEC | RC_PROTO_BIT_NECX |
+							RC_PROTO_BIT_NEC32;
 	rc->query = rtl2831u_rc_query;
 	rc->interval = 400;
 
@@ -1684,7 +1685,7 @@ static int rtl2832u_rc_query(struct dvb_usb_device *d)
 {
 	int ret, i, len;
 	struct rtl28xxu_dev *dev = d->priv;
-	struct ir_raw_event ev;
+	struct ir_raw_event ev = {};
 	u8 buf[128];
 	static const struct rtl28xxu_reg_val_mask refresh_tab[] = {
 		{IR_RX_IF,               0x03, 0xff},
@@ -1731,7 +1732,7 @@ static int rtl2832u_rc_query(struct dvb_usb_device *d)
 		goto exit;
 
 	ret = rtl28xxu_rd_reg(d, IR_RX_BC, &buf[0]);
-	if (ret)
+	if (ret || buf[0] > sizeof(buf))
 		goto err;
 
 	len = buf[0];
@@ -1750,8 +1751,6 @@ static int rtl2832u_rc_query(struct dvb_usb_device *d)
 	}
 
 	/* pass data to Kernel IR decoder */
-	init_ir_raw_event(&ev);
-
 	for (i = 0; i < len; i++) {
 		ev.pulse = buf[i] >> 7;
 		ev.duration = 50800 * (buf[i] & 0x7f);
@@ -1778,7 +1777,7 @@ static int rtl2832u_get_rc_config(struct dvb_usb_device *d,
 	/* load empty to enable rc */
 	if (!rc->map_name)
 		rc->map_name = RC_MAP_EMPTY;
-	rc->allowed_protos = RC_BIT_ALL_IR_DECODER;
+	rc->allowed_protos = RC_PROTO_BIT_ALL_IR_DECODER;
 	rc->driver_type = RC_DRIVER_IR_RAW;
 	rc->query = rtl2832u_rc_query;
 	rc->interval = 200;

@@ -32,6 +32,8 @@ Arguments
     File descriptor returned by :ref:`open() <func-open>`.
 
 ``argp``
+    Pointer to struct :c:type:`v4l2_queryctl`, :c:type:`v4l2_query_ext_ctrl`
+    or :c:type`v4l2_querymenu` (depending on the ioctl).
 
 
 Description
@@ -274,7 +276,7 @@ See also the examples in :ref:`control`.
 
 
 
-.. tabularcolumns:: |p{1.2cm}|p{0.6cm}|p{1.6cm}|p{13.5cm}|
+.. tabularcolumns:: |p{1.2cm}|p{1.0cm}|p{1.7cm}|p{13.0cm}|
 
 .. _v4l2-querymenu:
 
@@ -422,8 +424,18 @@ See also the examples in :ref:`control`.
       - any
       - An unsigned 32-bit valued control ranging from minimum to maximum
 	inclusive. The step value indicates the increment between values.
-
-
+    * - ``V4L2_CTRL_TYPE_MPEG2_SLICE_PARAMS``
+      - n/a
+      - n/a
+      - n/a
+      - A struct :c:type:`v4l2_ctrl_mpeg2_slice_params`, containing MPEG-2
+	slice parameters for stateless video decoders.
+    * - ``V4L2_CTRL_TYPE_MPEG2_QUANTIZATION``
+      - n/a
+      - n/a
+      - n/a
+      - A struct :c:type:`v4l2_ctrl_mpeg2_quantization`, containing MPEG-2
+	quantization matrices for stateless video decoders.
 
 .. tabularcolumns:: |p{6.6cm}|p{2.2cm}|p{8.7cm}|
 

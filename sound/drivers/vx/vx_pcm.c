@@ -500,7 +500,7 @@ static int vx_stop_stream(struct vx_core *chip, struct vx_pipe *pipe)
  * playback hw information
  */
 
-static struct snd_pcm_hardware vx_pcm_playback_hw = {
+static const struct snd_pcm_hardware vx_pcm_playback_hw = {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_PAUSE | SNDRV_PCM_INFO_MMAP_VALID /*|*/
 				 /*SNDRV_PCM_INFO_RESUME*/),
@@ -883,7 +883,6 @@ static const struct snd_pcm_ops vx_pcm_playback_ops = {
 	.trigger =	vx_pcm_trigger,
 	.pointer =	vx_pcm_playback_pointer,
 	.page =		snd_pcm_lib_get_vmalloc_page,
-	.mmap =		snd_pcm_lib_mmap_vmalloc,
 };
 
 
@@ -891,7 +890,7 @@ static const struct snd_pcm_ops vx_pcm_playback_ops = {
  * playback hw information
  */
 
-static struct snd_pcm_hardware vx_pcm_capture_hw = {
+static const struct snd_pcm_hardware vx_pcm_capture_hw = {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_PAUSE | SNDRV_PCM_INFO_MMAP_VALID /*|*/
 				 /*SNDRV_PCM_INFO_RESUME*/),
@@ -1105,7 +1104,6 @@ static const struct snd_pcm_ops vx_pcm_capture_ops = {
 	.trigger =	vx_pcm_trigger,
 	.pointer =	vx_pcm_capture_pointer,
 	.page =		snd_pcm_lib_get_vmalloc_page,
-	.mmap =		snd_pcm_lib_mmap_vmalloc,
 };
 
 

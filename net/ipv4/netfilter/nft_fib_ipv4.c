@@ -32,9 +32,10 @@ void nft_fib4_eval_type(const struct nft_expr *expr, struct nft_regs *regs,
 			const struct nft_pktinfo *pkt)
 {
 	const struct nft_fib *priv = nft_expr_priv(expr);
+	int noff = skb_network_offset(pkt->skb);
 	u32 *dst = &regs->data[priv->dreg];
 	const struct net_device *dev = NULL;
-	const struct iphdr *iph;
+	struct iphdr *iph, _iph;
 	__be32 addr;
 
 	if (priv->flags & NFTA_FIB_F_IIF)
@@ -42,7 +43,12 @@ void nft_fib4_eval_type(const struct nft_expr *expr, struct nft_regs *regs,
 	else if (priv->flags & NFTA_FIB_F_OIF)
 		dev = nft_out(pkt);
 
-	iph = ip_hdr(pkt->skb);
+	iph = skb_header_pointer(pkt->skb, noff, sizeof(_iph), &_iph);
+	if (!iph) {
+		regs->verdict.code = NFT_BREAK;
+		return;
+	}
+
 	if (priv->flags & NFTA_FIB_F_DADDR)
 		addr = iph->daddr;
 	else
@@ -61,18 +67,16 @@ void nft_fib4_eval(const struct nft_expr *expr, struct nft_regs *regs,
 		   const struct nft_pktinfo *pkt)
 {
 	const struct nft_fib *priv = nft_expr_priv(expr);
+	int noff = skb_network_offset(pkt->skb);
 	u32 *dest = &regs->data[priv->dreg];
-	const struct iphdr *iph;
+	struct iphdr *iph, _iph;
 	struct fib_result res;
 	struct flowi4 fl4 = {
 		.flowi4_scope = RT_SCOPE_UNIVERSE,
 		.flowi4_iif = LOOPBACK_IFINDEX,
 	};
 	const struct net_device *oif;
-	struct net_device *found;
-#ifdef CONFIG_IP_ROUTE_MULTIPATH
-	int i;
-#endif
+	const struct net_device *found;
 
 	/*
 	 * Do not set flowi4_oif, it restricts results (for example, asking
@@ -95,7 +99,12 @@ void nft_fib4_eval(const struct nft_expr *expr, struct nft_regs *regs,
 		return;
 	}
 
-	iph = ip_hdr(pkt->skb);
+	iph = skb_header_pointer(pkt->skb, noff, sizeof(_iph), &_iph);
+	if (!iph) {
+		regs->verdict.code = NFT_BREAK;
+		return;
+	}
+
 	if (ipv4_is_zeronet(iph->saddr)) {
 		if (ipv4_is_lbcast(iph->daddr) ||
 		    ipv4_is_local_multicast(iph->daddr)) {
@@ -134,25 +143,13 @@ void nft_fib4_eval(const struct nft_expr *expr, struct nft_regs *regs,
 
        if (!oif) {
                found = FIB_RES_DEV(res);
-               goto ok;
-       }
+	} else {
+		if (!fib_info_nh_uses_dev(res.fi, oif))
+			return;
 
-#ifdef CONFIG_IP_ROUTE_MULTIPATH
-	for (i = 0; i < res.fi->fib_nhs; i++) {
-		struct fib_nh *nh = &res.fi->fib_nh[i];
-
-		if (nh->nh_dev == oif) {
-			found = nh->nh_dev;
-			goto ok;
-		}
+		found = oif;
 	}
-	return;
-#else
-	found = FIB_RES_DEV(res);
-	if (found != oif)
-		return;
-#endif
-ok:
+
 	switch (priv->result) {
 	case NFT_FIB_RESULT_OIF:
 		*dest = found->ifindex;

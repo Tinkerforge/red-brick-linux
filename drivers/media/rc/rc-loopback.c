@@ -103,7 +103,7 @@ static int loop_tx_ir(struct rc_dev *dev, unsigned *txbuf, unsigned count)
 	struct loopback_dev *lodev = dev->priv;
 	u32 rxmask;
 	unsigned i;
-	DEFINE_IR_RAW_EVENT(rawir);
+	struct ir_raw_event rawir = {};
 
 	if (lodev->txcarrier < lodev->rxcarriermin ||
 	    lodev->txcarrier > lodev->rxcarriermax) {
@@ -219,15 +219,15 @@ static int __init loop_init(void)
 		return -ENOMEM;
 	}
 
-	rc->input_name		= "rc-core loopback device";
+	rc->device_name		= "rc-core loopback device";
 	rc->input_phys		= "rc-core/virtual";
 	rc->input_id.bustype	= BUS_VIRTUAL;
 	rc->input_id.version	= 1;
 	rc->driver_name		= DRIVER_NAME;
 	rc->map_name		= RC_MAP_EMPTY;
 	rc->priv		= &loopdev;
-	rc->allowed_protocols	= RC_BIT_ALL_IR_DECODER;
-	rc->allowed_wakeup_protocols = RC_BIT_ALL_IR_ENCODER;
+	rc->allowed_protocols	= RC_PROTO_BIT_ALL_IR_DECODER;
+	rc->allowed_wakeup_protocols = RC_PROTO_BIT_ALL_IR_ENCODER;
 	rc->encode_wakeup	= true;
 	rc->timeout		= 100 * 1000 * 1000; /* 100 ms */
 	rc->min_timeout		= 1;

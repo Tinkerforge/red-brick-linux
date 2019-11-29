@@ -56,11 +56,6 @@ to_ds2780_device_info(struct power_supply *psy)
 	return power_supply_get_drvdata(psy);
 }
 
-static inline struct power_supply *to_power_supply(struct device *dev)
-{
-	return dev_get_drvdata(dev);
-}
-
 static inline int ds2780_battery_io(struct ds2780_device_info *dev_info,
 	char *buf, int addr, size_t count, int io)
 {
@@ -663,7 +658,7 @@ static ssize_t ds2780_write_param_eeprom_bin(struct file *filp,
 	return count;
 }
 
-static struct bin_attribute ds2780_param_eeprom_bin_attr = {
+static const struct bin_attribute ds2780_param_eeprom_bin_attr = {
 	.attr = {
 		.name = "param_eeprom",
 		.mode = S_IRUGO | S_IWUSR,
@@ -708,7 +703,7 @@ static ssize_t ds2780_write_user_eeprom_bin(struct file *filp,
 	return count;
 }
 
-static struct bin_attribute ds2780_user_eeprom_bin_attr = {
+static const struct bin_attribute ds2780_user_eeprom_bin_attr = {
 	.attr = {
 		.name = "user_eeprom",
 		.mode = S_IRUGO | S_IWUSR,
@@ -834,5 +829,5 @@ module_platform_driver(ds2780_battery_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Clifton Barnes <cabarnes@indesign-llc.com>");
-MODULE_DESCRIPTION("Maxim/Dallas DS2780 Stand-Alone Fuel Gauage IC driver");
+MODULE_DESCRIPTION("Maxim/Dallas DS2780 Stand-Alone Fuel Gauge IC driver");
 MODULE_ALIAS("platform:ds2780-battery");

@@ -532,7 +532,7 @@ static irqreturn_t snd_sgio2audio_error_isr(int irq, void *dev_id)
 
 /* PCM part */
 /* PCM hardware definition */
-static struct snd_pcm_hardware snd_sgio2audio_pcm_hw = {
+static const struct snd_pcm_hardware snd_sgio2audio_pcm_hw = {
 	.info = (SNDRV_PCM_INFO_MMAP |
 		 SNDRV_PCM_INFO_MMAP_VALID |
 		 SNDRV_PCM_INFO_INTERLEAVED |
@@ -675,7 +675,7 @@ snd_sgio2audio_pcm_pointer(struct snd_pcm_substream *substream)
 }
 
 /* operators */
-static struct snd_pcm_ops snd_sgio2audio_playback1_ops = {
+static const struct snd_pcm_ops snd_sgio2audio_playback1_ops = {
 	.open =        snd_sgio2audio_playback1_open,
 	.close =       snd_sgio2audio_pcm_close,
 	.ioctl =       snd_pcm_lib_ioctl,
@@ -685,10 +685,9 @@ static struct snd_pcm_ops snd_sgio2audio_playback1_ops = {
 	.trigger =     snd_sgio2audio_pcm_trigger,
 	.pointer =     snd_sgio2audio_pcm_pointer,
 	.page =        snd_pcm_lib_get_vmalloc_page,
-	.mmap =        snd_pcm_lib_mmap_vmalloc,
 };
 
-static struct snd_pcm_ops snd_sgio2audio_playback2_ops = {
+static const struct snd_pcm_ops snd_sgio2audio_playback2_ops = {
 	.open =        snd_sgio2audio_playback2_open,
 	.close =       snd_sgio2audio_pcm_close,
 	.ioctl =       snd_pcm_lib_ioctl,
@@ -698,10 +697,9 @@ static struct snd_pcm_ops snd_sgio2audio_playback2_ops = {
 	.trigger =     snd_sgio2audio_pcm_trigger,
 	.pointer =     snd_sgio2audio_pcm_pointer,
 	.page =        snd_pcm_lib_get_vmalloc_page,
-	.mmap =        snd_pcm_lib_mmap_vmalloc,
 };
 
-static struct snd_pcm_ops snd_sgio2audio_capture_ops = {
+static const struct snd_pcm_ops snd_sgio2audio_capture_ops = {
 	.open =        snd_sgio2audio_capture_open,
 	.close =       snd_sgio2audio_pcm_close,
 	.ioctl =       snd_pcm_lib_ioctl,
@@ -711,7 +709,6 @@ static struct snd_pcm_ops snd_sgio2audio_capture_ops = {
 	.trigger =     snd_sgio2audio_pcm_trigger,
 	.pointer =     snd_sgio2audio_pcm_pointer,
 	.page =        snd_pcm_lib_get_vmalloc_page,
-	.mmap =        snd_pcm_lib_mmap_vmalloc,
 };
 
 /*
@@ -840,7 +837,7 @@ static int snd_sgio2audio_create(struct snd_card *card,
 	if (!(readq(&mace->perif.audio.control) & AUDIO_CONTROL_CODEC_PRESENT))
 		return -ENOENT;
 
-	chip = kzalloc(sizeof(struct snd_sgio2audio), GFP_KERNEL);
+	chip = kzalloc(sizeof(*chip), GFP_KERNEL);
 	if (chip == NULL)
 		return -ENOMEM;
 

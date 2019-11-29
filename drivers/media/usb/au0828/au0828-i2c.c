@@ -329,20 +329,20 @@ static u32 au0828_functionality(struct i2c_adapter *adap)
 	return I2C_FUNC_SMBUS_EMUL | I2C_FUNC_I2C;
 }
 
-static struct i2c_algorithm au0828_i2c_algo_template = {
+static const struct i2c_algorithm au0828_i2c_algo_template = {
 	.master_xfer	= i2c_xfer,
 	.functionality	= au0828_functionality,
 };
 
 /* ----------------------------------------------------------------------- */
 
-static struct i2c_adapter au0828_i2c_adap_template = {
+static const struct i2c_adapter au0828_i2c_adap_template = {
 	.name              = KBUILD_MODNAME,
 	.owner             = THIS_MODULE,
 	.algo              = &au0828_i2c_algo_template,
 };
 
-static struct i2c_client au0828_i2c_client_template = {
+static const struct i2c_client au0828_i2c_client_template = {
 	.name	= "au0828 internal",
 };
 
@@ -378,7 +378,7 @@ int au0828_i2c_register(struct au0828_dev *dev)
 
 	dev->i2c_adap.dev.parent = &dev->usbdev->dev;
 
-	strlcpy(dev->i2c_adap.name, KBUILD_MODNAME,
+	strscpy(dev->i2c_adap.name, KBUILD_MODNAME,
 		sizeof(dev->i2c_adap.name));
 
 	dev->i2c_adap.algo = &dev->i2c_algo;

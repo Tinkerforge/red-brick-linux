@@ -25,6 +25,8 @@
 #include <linux/sched.h>
 #include <linux/kthread.h>
 #include <linux/freezer.h>
+#include <linux/hwmon.h>
+#include <linux/of.h>
 
 #include <linux/atomic.h>
 
@@ -568,7 +570,7 @@ static struct attribute *w1_master_default_attrs[] = {
 	NULL
 };
 
-static struct attribute_group w1_master_defattr_group = {
+static const struct attribute_group w1_master_defattr_group = {
 	.attrs = w1_master_default_attrs,
 };
 
@@ -649,9 +651,24 @@ static int w1_family_notify(unsigned long action, struct w1_slave *sl)
 				return err;
 			}
 		}
-
+		if (IS_REACHABLE(CONFIG_HWMON) && fops->chip_info) {
+			struct device *hwmon
+				= hwmon_device_register_with_info(&sl->dev,
+						"w1_slave_temp", sl,
+						fops->chip_info,
+						NULL);
+			if (IS_ERR(hwmon)) {
+				dev_warn(&sl->dev,
+					 "could not create hwmon device\n");
+			} else {
+				sl->hwmon = hwmon;
+			}
+		}
 		break;
 	case BUS_NOTIFY_DEL_DEVICE:
+		if (IS_REACHABLE(CONFIG_HWMON) && fops->chip_info &&
+			    sl->hwmon)
+			hwmon_device_unregister(sl->hwmon);
 		if (fops->remove_slave)
 			sl->family->fops->remove_slave(sl);
 		if (fops->groups)
@@ -670,6 +687,8 @@ static int __w1_attach_slave_device(struct w1_slave *sl)
 	sl->dev.bus = &w1_bus_type;
 	sl->dev.release = &w1_slave_release;
 	sl->dev.groups = w1_slave_groups;
+	sl->dev.of_node = of_find_matching_node(sl->master->dev.of_node,
+						sl->family->of_match_table);
 
 	dev_set_name(&sl->dev, "%02x-%012llx",
 		 (unsigned int) sl->reg_num.family,
@@ -690,6 +709,7 @@ static int __w1_attach_slave_device(struct w1_slave *sl)
 		dev_err(&sl->dev,
 			"Device registration [%s] failed. err=%d\n",
 			dev_name(&sl->dev), err);
+		put_device(&sl->dev);
 		return err;
 	}
 	w1_family_notify(BUS_NOTIFY_ADD_DEVICE, sl);
@@ -729,10 +749,12 @@ int w1_attach_slave_device(struct w1_master *dev, struct w1_reg_num *rn)
 	atomic_set(&sl->refcnt, 1);
 	atomic_inc(&sl->master->refcnt);
 	dev->slave_count++;
+	dev_info(&dev->dev, "Attaching one wire slave %02x.%012llx crc %02x\n",
+		  rn->family, (unsigned long long)rn->id, rn->crc);
 
 	/* slave modules need to be loaded in a context with unlocked mutex */
 	mutex_unlock(&dev->mutex);
-	request_module("w1-family-0x%02x", rn->family);
+	request_module("w1-family-0x%02X", rn->family);
 	mutex_lock(&dev->mutex);
 
 	spin_lock(&w1_flock);

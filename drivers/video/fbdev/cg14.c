@@ -355,9 +355,7 @@ static int cg14_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
 static void cg14_init_fix(struct fb_info *info, int linebytes,
 			  struct device_node *dp)
 {
-	const char *name = dp->name;
-
-	strlcpy(info->fix.id, name, sizeof(info->fix.id));
+	snprintf(info->fix.id, sizeof(info->fix.id), "%pOFn", dp);
 
 	info->fix.type = FB_TYPE_PACKED_PIXELS;
 	info->fix.visual = FB_VISUAL_PSEUDOCOLOR;
@@ -553,8 +551,8 @@ static int cg14_probe(struct platform_device *op)
 
 	dev_set_drvdata(&op->dev, info);
 
-	printk(KERN_INFO "%s: cgfourteen at %lx:%lx, %dMB\n",
-	       dp->full_name,
+	printk(KERN_INFO "%pOF: cgfourteen at %lx:%lx, %dMB\n",
+	       dp,
 	       par->iospace, info->fix.smem_start,
 	       par->ramsize >> 20);
 

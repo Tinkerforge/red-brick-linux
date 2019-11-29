@@ -186,7 +186,7 @@ struct redrat3_error {
 } __packed;
 
 /* table of devices that work with this driver */
-static struct usb_device_id redrat3_dev_table[] = {
+static const struct usb_device_id redrat3_dev_table[] = {
 	/* Original version of the RedRat3 */
 	{USB_DEVICE(USB_RR3USB_VENDOR_ID, USB_RR3USB_PRODUCT_ID)},
 	/* Second Version/release of the RedRat3 - RetRat3-II */
@@ -348,7 +348,7 @@ static u32 redrat3_us_to_len(u32 microsec)
 
 static void redrat3_process_ir_data(struct redrat3_dev *rr3)
 {
-	DEFINE_IR_RAW_EVENT(rawir);
+	struct ir_raw_event rawir = {};
 	struct device *dev;
 	unsigned int i, sig_size, single_len, offset, val;
 	u32 mod_freq;
@@ -358,10 +358,10 @@ static void redrat3_process_ir_data(struct redrat3_dev *rr3)
 	mod_freq = redrat3_val_to_mod_freq(&rr3->irdata);
 	dev_dbg(dev, "Got mod_freq of %u\n", mod_freq);
 	if (mod_freq && rr3->wideband) {
-		DEFINE_IR_RAW_EVENT(ev);
-
-		ev.carrier_report = 1;
-		ev.carrier = mod_freq;
+		struct ir_raw_event ev = {
+			.carrier_report = 1,
+			.carrier = mod_freq
+		};
 
 		ir_raw_event_store(rr3->rc, &ev);
 	}
@@ -951,12 +951,12 @@ static struct rc_dev *redrat3_init_rc_dev(struct redrat3_dev *rr3)
 
 	usb_make_path(rr3->udev, rr3->phys, sizeof(rr3->phys));
 
-	rc->input_name = rr3->name;
+	rc->device_name = rr3->name;
 	rc->input_phys = rr3->phys;
 	usb_to_input_id(rr3->udev, &rc->input_id);
 	rc->dev.parent = dev;
 	rc->priv = rr3;
-	rc->allowed_protocols = RC_BIT_ALL_IR_DECODER;
+	rc->allowed_protocols = RC_PROTO_BIT_ALL_IR_DECODER;
 	rc->min_timeout = MS_TO_NS(RR3_RX_MIN_TIMEOUT);
 	rc->max_timeout = MS_TO_NS(RR3_RX_MAX_TIMEOUT);
 	rc->timeout = US_TO_NS(redrat3_get_timeout(rr3));

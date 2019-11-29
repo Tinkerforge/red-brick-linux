@@ -22,23 +22,6 @@
 #include <linux/pci-ecam.h>
 #include <linux/slab.h>
 
-/*
- * Called after each bus is probed, but before its children are examined
- */
-void pcibios_fixup_bus(struct pci_bus *bus)
-{
-	/* nothing to do, expected to be removed in the future */
-}
-
-/*
- * We don't have to worry about legacy ISA devices, so nothing to do here
- */
-resource_size_t pcibios_align_resource(void *data, const struct resource *res,
-				resource_size_t size, resource_size_t align)
-{
-	return res->start;
-}
-
 #ifdef CONFIG_ACPI
 /*
  * Try to assign the IRQ number when probing a new device
@@ -182,16 +165,15 @@ static void pci_acpi_generic_release_info(struct acpi_pci_root_info *ci)
 /* Interface called from ACPI code to setup PCI host controller */
 struct pci_bus *pci_acpi_scan_root(struct acpi_pci_root *root)
 {
-	int node = acpi_get_node(root->device->handle);
 	struct acpi_pci_generic_root_info *ri;
 	struct pci_bus *bus, *child;
 	struct acpi_pci_root_ops *root_ops;
 
-	ri = kzalloc_node(sizeof(*ri), GFP_KERNEL, node);
+	ri = kzalloc(sizeof(*ri), GFP_KERNEL);
 	if (!ri)
 		return NULL;
 
-	root_ops = kzalloc_node(sizeof(*root_ops), GFP_KERNEL, node);
+	root_ops = kzalloc(sizeof(*root_ops), GFP_KERNEL);
 	if (!root_ops) {
 		kfree(ri);
 		return NULL;

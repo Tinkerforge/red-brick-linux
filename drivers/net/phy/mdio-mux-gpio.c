@@ -26,17 +26,15 @@ static int mdio_mux_gpio_switch_fn(int current_child, int desired_child,
 				   void *data)
 {
 	struct mdio_mux_gpio_state *s = data;
-	int values[s->gpios->ndescs];
-	unsigned int n;
+	DECLARE_BITMAP(values, BITS_PER_TYPE(desired_child));
 
 	if (current_child == desired_child)
 		return 0;
 
-	for (n = 0; n < s->gpios->ndescs; n++)
-		values[n] = (desired_child >> n) & 1;
+	values[0] = desired_child;
 
 	gpiod_set_array_value_cansleep(s->gpios->ndescs, s->gpios->desc,
-				       values);
+				       s->gpios->info, values);
 
 	return 0;
 }
@@ -44,17 +42,22 @@ static int mdio_mux_gpio_switch_fn(int current_child, int desired_child,
 static int mdio_mux_gpio_probe(struct platform_device *pdev)
 {
 	struct mdio_mux_gpio_state *s;
+	struct gpio_descs *gpios;
 	int r;
 
+	gpios = gpiod_get_array(&pdev->dev, NULL, GPIOD_OUT_LOW);
+	if (IS_ERR(gpios))
+		return PTR_ERR(gpios);
+
 	s = devm_kzalloc(&pdev->dev, sizeof(*s), GFP_KERNEL);
-	if (!s)
+	if (!s) {
+		gpiod_put_array(gpios);
 		return -ENOMEM;
+	}
 
-	s->gpios = gpiod_get_array(&pdev->dev, NULL, GPIOD_OUT_LOW);
-	if (IS_ERR(s->gpios))
-		return PTR_ERR(s->gpios);
+	s->gpios = gpios;
 
-	r = mdio_mux_init(&pdev->dev,
+	r = mdio_mux_init(&pdev->dev, pdev->dev.of_node,
 			  mdio_mux_gpio_switch_fn, &s->mux_handle, s, NULL);
 
 	if (r != 0) {

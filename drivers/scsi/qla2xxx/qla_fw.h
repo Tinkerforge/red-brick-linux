@@ -753,9 +753,7 @@ struct els_entry_24xx {
 	uint8_t reserved_2;
 
 	uint8_t port_id[3];
-	uint8_t reserved_3;
-
-	uint16_t reserved_4;
+	uint8_t s_id[3];
 
 	uint16_t control_flags;		/* Control flags. */
 #define ECF_PAYLOAD_DESCR_MASK	(BIT_15|BIT_14|BIT_13)
@@ -1368,6 +1366,11 @@ struct vp_rpt_id_entry_24xx {
 			/* format 1 fabric */
 			uint8_t vpstat1_subcode; /* vp_status=1 subcode */
 			uint8_t flags;
+#define TOPO_MASK  0xE
+#define TOPO_FL    0x2
+#define TOPO_N2N   0x4
+#define TOPO_F     0x6
+
 			uint16_t fip_flags;
 			uint8_t rsv2[12];
 
@@ -1394,7 +1397,7 @@ struct vp_rpt_id_entry_24xx {
 
 		    uint8_t port_name[8];
 		    uint8_t node_name[8];
-		    uint32_t remote_nport_id;
+		    uint8_t remote_nport_id[4];
 		    uint32_t reserved_5;
 		} f2;
 	} u;
@@ -1699,6 +1702,15 @@ struct access_chip_rsp_84xx {
 #define FAC_OPT_CMD_UNLOCK_SEMAPHORE	0x04
 #define FAC_OPT_CMD_GET_SECTOR_SIZE	0x05
 
+/* enhanced features bit definitions */
+#define NEF_LR_DIST_ENABLE	BIT_0
+
+/* LR Distance bit positions */
+#define LR_DIST_NV_POS		2
+#define LR_DIST_FW_POS		12
+#define LR_DIST_FW_SHIFT	(LR_DIST_FW_POS - LR_DIST_NV_POS)
+#define LR_DIST_FW_FIELD(x)	((x) << LR_DIST_FW_SHIFT & 0xf000)
+
 struct nvram_81xx {
 	/* NVRAM header. */
 	uint8_t id[4];
@@ -1745,7 +1757,9 @@ struct nvram_81xx {
 	uint16_t reserved_6_3[14];
 
 	/* Offset 192. */
-	uint16_t reserved_7[32];
+	uint8_t min_link_speed;
+	uint8_t reserved_7_0;
+	uint16_t reserved_7[31];
 
 	/*
 	 * BIT 0  = Enable spinup delay
@@ -1839,16 +1853,13 @@ struct nvram_81xx {
 	uint8_t reserved_21[16];
 	uint16_t reserved_22[3];
 
-	/*
-	 * BIT 0 = Extended BB credits for LR
-	 * BIT 1 = Virtual Fabric Enable
-	 * BIT 2 = Enhanced Features Unused
-	 * BIT 3-7 = Enhanced Features Reserved
+	/* Offset 406 (0x196) Enhanced Features
+	 * BIT 0    = Extended BB credits for LR
+	 * BIT 1    = Virtual Fabric Enable
+	 * BIT 2-5  = Distance Support if BIT 0 is on
+	 * BIT 6-15 = Unused
 	 */
-	/* Enhanced Features */
-	uint8_t enhanced_features;
-
-	uint8_t reserved_23;
+	uint16_t enhanced_features;
 	uint16_t reserved_24[4];
 
 	/* Offset 416. */

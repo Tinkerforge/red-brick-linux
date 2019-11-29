@@ -246,7 +246,7 @@ static int cg3_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
 static void cg3_init_fix(struct fb_info *info, int linebytes,
 			 struct device_node *dp)
 {
-	strlcpy(info->fix.id, dp->name, sizeof(info->fix.id));
+	snprintf(info->fix.id, sizeof(info->fix.id), "%pOFn", dp);
 
 	info->fix.type = FB_TYPE_PACKED_PIXELS;
 	info->fix.visual = FB_VISUAL_PSEUDOCOLOR;
@@ -412,8 +412,8 @@ static int cg3_probe(struct platform_device *op)
 
 	dev_set_drvdata(&op->dev, info);
 
-	printk(KERN_INFO "%s: cg3 at %lx:%lx\n",
-	       dp->full_name, par->which_io, info->fix.smem_start);
+	printk(KERN_INFO "%pOF: cg3 at %lx:%lx\n",
+	       dp, par->which_io, info->fix.smem_start);
 
 	return 0;
 

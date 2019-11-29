@@ -1,7 +1,7 @@
 /*
  * Accelerated GHASH implementation with ARMv8 vmull.p64 instructions.
  *
- * Copyright (C) 2015 Linaro Ltd. <ard.biesheuvel@linaro.org>
+ * Copyright (C) 2015 - 2018 Linaro Ltd. <ard.biesheuvel@linaro.org>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published
@@ -22,13 +22,16 @@
 MODULE_DESCRIPTION("GHASH secure hash using ARMv8 Crypto Extensions");
 MODULE_AUTHOR("Ard Biesheuvel <ard.biesheuvel@linaro.org>");
 MODULE_LICENSE("GPL v2");
+MODULE_ALIAS_CRYPTO("ghash");
 
 #define GHASH_BLOCK_SIZE	16
 #define GHASH_DIGEST_SIZE	16
 
 struct ghash_key {
-	u64	a;
-	u64	b;
+	u64	h[2];
+	u64	h2[2];
+	u64	h3[2];
+	u64	h4[2];
 };
 
 struct ghash_desc_ctx {
@@ -41,8 +44,17 @@ struct ghash_async_ctx {
 	struct cryptd_ahash *cryptd_tfm;
 };
 
-asmlinkage void pmull_ghash_update(int blocks, u64 dg[], const char *src,
-				   struct ghash_key const *k, const char *head);
+asmlinkage void pmull_ghash_update_p64(int blocks, u64 dg[], const char *src,
+				       struct ghash_key const *k,
+				       const char *head);
+
+asmlinkage void pmull_ghash_update_p8(int blocks, u64 dg[], const char *src,
+				      struct ghash_key const *k,
+				      const char *head);
+
+static void (*pmull_ghash_update)(int blocks, u64 dg[], const char *src,
+				  struct ghash_key const *k,
+				  const char *head);
 
 static int ghash_init(struct shash_desc *desc)
 {
@@ -107,26 +119,40 @@ static int ghash_final(struct shash_desc *desc, u8 *dst)
 	return 0;
 }
 
+static void ghash_reflect(u64 h[], const be128 *k)
+{
+	u64 carry = be64_to_cpu(k->a) >> 63;
+
+	h[0] = (be64_to_cpu(k->b) << 1) | carry;
+	h[1] = (be64_to_cpu(k->a) << 1) | (be64_to_cpu(k->b) >> 63);
+
+	if (carry)
+		h[1] ^= 0xc200000000000000UL;
+}
+
 static int ghash_setkey(struct crypto_shash *tfm,
 			const u8 *inkey, unsigned int keylen)
 {
 	struct ghash_key *key = crypto_shash_ctx(tfm);
-	u64 a, b;
+	be128 h, k;
 
 	if (keylen != GHASH_BLOCK_SIZE) {
 		crypto_shash_set_flags(tfm, CRYPTO_TFM_RES_BAD_KEY_LEN);
 		return -EINVAL;
 	}
 
-	/* perform multiplication by 'x' in GF(2^128) */
-	b = get_unaligned_be64(inkey);
-	a = get_unaligned_be64(inkey + 8);
+	memcpy(&k, inkey, GHASH_BLOCK_SIZE);
+	ghash_reflect(key->h, &k);
 
-	key->a = (a << 1) | (b >> 63);
-	key->b = (b << 1) | (a >> 63);
+	h = k;
+	gf128mul_lle(&h, &k);
+	ghash_reflect(key->h2, &h);
 
-	if (b >> 63)
-		key->b ^= 0xc200000000000000UL;
+	gf128mul_lle(&h, &k);
+	ghash_reflect(key->h3, &h);
+
+	gf128mul_lle(&h, &k);
+	ghash_reflect(key->h4, &h);
 
 	return 0;
 }
@@ -142,7 +168,7 @@ static struct shash_alg ghash_alg = {
 		.cra_name	= "__ghash",
 		.cra_driver_name = "__driver-ghash-ce",
 		.cra_priority	= 0,
-		.cra_flags	= CRYPTO_ALG_TYPE_SHASH | CRYPTO_ALG_INTERNAL,
+		.cra_flags	= CRYPTO_ALG_INTERNAL,
 		.cra_blocksize	= GHASH_BLOCK_SIZE,
 		.cra_ctxsize	= sizeof(struct ghash_key),
 		.cra_module	= THIS_MODULE,
@@ -298,9 +324,8 @@ static struct ahash_alg ghash_async_alg = {
 		.cra_name	= "ghash",
 		.cra_driver_name = "ghash-ce",
 		.cra_priority	= 300,
-		.cra_flags	= CRYPTO_ALG_TYPE_AHASH | CRYPTO_ALG_ASYNC,
+		.cra_flags	= CRYPTO_ALG_ASYNC,
 		.cra_blocksize	= GHASH_BLOCK_SIZE,
-		.cra_type	= &crypto_ahash_type,
 		.cra_ctxsize	= sizeof(struct ghash_async_ctx),
 		.cra_module	= THIS_MODULE,
 		.cra_init	= ghash_async_init_tfm,
@@ -311,6 +336,14 @@ static struct ahash_alg ghash_async_alg = {
 static int __init ghash_ce_mod_init(void)
 {
 	int err;
+
+	if (!(elf_hwcap & HWCAP_NEON))
+		return -ENODEV;
+
+	if (elf_hwcap2 & HWCAP2_PMULL)
+		pmull_ghash_update = pmull_ghash_update_p64;
+	else
+		pmull_ghash_update = pmull_ghash_update_p8;
 
 	err = crypto_register_shash(&ghash_alg);
 	if (err)
@@ -332,5 +365,5 @@ static void __exit ghash_ce_mod_exit(void)
 	crypto_unregister_shash(&ghash_alg);
 }
 
-module_cpu_feature_match(PMULL, ghash_ce_mod_init);
+module_init(ghash_ce_mod_init);
 module_exit(ghash_ce_mod_exit);

@@ -72,7 +72,6 @@
 #define DRIVER_NAME "usbvision"
 #define DRIVER_ALIAS "USBVision"
 #define DRIVER_DESC "USBVision USB Video Device Driver for Linux"
-#define DRIVER_LICENSE "GPL"
 #define USBVISION_VERSION_STRING "0.9.11"
 
 #define	ENABLE_HEXDUMP	0	/* Enable if you need it */
@@ -141,7 +140,7 @@ MODULE_PARM_DESC(radio_nr, "Set radio device number (/dev/radioX).  Default: -1 
 /* Misc stuff */
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
-MODULE_LICENSE(DRIVER_LICENSE);
+MODULE_LICENSE("GPL");
 MODULE_VERSION(USBVISION_VERSION_STRING);
 MODULE_ALIAS(DRIVER_ALIAS);
 
@@ -468,8 +467,8 @@ static int vidioc_querycap(struct file *file, void  *priv,
 	struct usb_usbvision *usbvision = video_drvdata(file);
 	struct video_device *vdev = video_devdata(file);
 
-	strlcpy(vc->driver, "USBVision", sizeof(vc->driver));
-	strlcpy(vc->card,
+	strscpy(vc->driver, "USBVision", sizeof(vc->driver));
+	strscpy(vc->card,
 		usbvision_device_data[usbvision->dev_model].model_string,
 		sizeof(vc->card));
 	usb_make_path(usbvision->dev, vc->bus_info, sizeof(vc->bus_info));
@@ -505,9 +504,9 @@ static int vidioc_enum_input(struct file *file, void *priv,
 	switch (chan) {
 	case 0:
 		if (usbvision_device_data[usbvision->dev_model].video_channels == 4) {
-			strcpy(vi->name, "White Video Input");
+			strscpy(vi->name, "White Video Input", sizeof(vi->name));
 		} else {
-			strcpy(vi->name, "Television");
+			strscpy(vi->name, "Television", sizeof(vi->name));
 			vi->type = V4L2_INPUT_TYPE_TUNER;
 			vi->tuner = chan;
 			vi->std = USBVISION_NORMS;
@@ -516,22 +515,23 @@ static int vidioc_enum_input(struct file *file, void *priv,
 	case 1:
 		vi->type = V4L2_INPUT_TYPE_CAMERA;
 		if (usbvision_device_data[usbvision->dev_model].video_channels == 4)
-			strcpy(vi->name, "Green Video Input");
+			strscpy(vi->name, "Green Video Input", sizeof(vi->name));
 		else
-			strcpy(vi->name, "Composite Video Input");
+			strscpy(vi->name, "Composite Video Input",
+				sizeof(vi->name));
 		vi->std = USBVISION_NORMS;
 		break;
 	case 2:
 		vi->type = V4L2_INPUT_TYPE_CAMERA;
 		if (usbvision_device_data[usbvision->dev_model].video_channels == 4)
-			strcpy(vi->name, "Yellow Video Input");
+			strscpy(vi->name, "Yellow Video Input", sizeof(vi->name));
 		else
-			strcpy(vi->name, "S-Video Input");
+			strscpy(vi->name, "S-Video Input", sizeof(vi->name));
 		vi->std = USBVISION_NORMS;
 		break;
 	case 3:
 		vi->type = V4L2_INPUT_TYPE_CAMERA;
-		strcpy(vi->name, "Red Video Input");
+		strscpy(vi->name, "Red Video Input", sizeof(vi->name));
 		vi->std = USBVISION_NORMS;
 		break;
 	}
@@ -590,9 +590,9 @@ static int vidioc_g_tuner(struct file *file, void *priv,
 	if (vt->index)	/* Only tuner 0 */
 		return -EINVAL;
 	if (vt->type == V4L2_TUNER_RADIO)
-		strcpy(vt->name, "Radio");
+		strscpy(vt->name, "Radio", sizeof(vt->name));
 	else
-		strcpy(vt->name, "Television");
+		strscpy(vt->name, "Television", sizeof(vt->name));
 
 	/* Let clients fill in the remainder of this struct */
 	call_all(usbvision, tuner, g_tuner, vt);
@@ -815,7 +815,8 @@ static int vidioc_enum_fmt_vid_cap(struct file *file, void  *priv,
 {
 	if (vfd->index >= USBVISION_SUPPORTED_PALETTES - 1)
 		return -EINVAL;
-	strcpy(vfd->description, usbvision_v4l2_format[vfd->index].desc);
+	strscpy(vfd->description, usbvision_v4l2_format[vfd->index].desc,
+		sizeof(vfd->description));
 	vfd->pixelformat = usbvision_v4l2_format[vfd->index].format;
 	return 0;
 }
@@ -904,7 +905,7 @@ static ssize_t usbvision_read(struct file *file, char __user *buf,
 	PDEBUG(DBG_IO, "%s: %ld bytes, noblock=%d", __func__,
 	       (unsigned long)count, noblock);
 
-	if (!USBVISION_IS_OPERATIONAL(usbvision) || (buf == NULL))
+	if (!USBVISION_IS_OPERATIONAL(usbvision) || !buf)
 		return -EFAULT;
 
 	/* This entry point is compatible with the mmap routines
@@ -1234,7 +1235,7 @@ static void usbvision_vdev_init(struct usb_usbvision *usbvision,
 {
 	struct usb_device *usb_dev = usbvision->dev;
 
-	if (usb_dev == NULL) {
+	if (!usb_dev) {
 		dev_err(&usbvision->dev->dev,
 			"%s: usbvision->dev is not set\n", __func__);
 		return;
@@ -1319,8 +1320,8 @@ static struct usb_usbvision *usbvision_alloc(struct usb_device *dev,
 {
 	struct usb_usbvision *usbvision;
 
-	usbvision = kzalloc(sizeof(struct usb_usbvision), GFP_KERNEL);
-	if (usbvision == NULL)
+	usbvision = kzalloc(sizeof(*usbvision), GFP_KERNEL);
+	if (!usbvision)
 		return NULL;
 
 	usbvision->dev = dev;
@@ -1334,7 +1335,7 @@ static struct usb_usbvision *usbvision_alloc(struct usb_device *dev,
 
 	/* prepare control urb for control messages during interrupts */
 	usbvision->ctrl_urb = usb_alloc_urb(USBVISION_URB_FRAMES, GFP_KERNEL);
-	if (usbvision->ctrl_urb == NULL)
+	if (!usbvision->ctrl_urb)
 		goto err_unreg;
 
 	return usbvision;
@@ -1380,7 +1381,7 @@ static void usbvision_configure_video(struct usb_usbvision *usbvision)
 {
 	int model;
 
-	if (usbvision == NULL)
+	if (!usbvision)
 		return;
 
 	model = usbvision->dev_model;
@@ -1474,7 +1475,7 @@ static int usbvision_probe(struct usb_interface *intf,
 	}
 
 	usbvision = usbvision_alloc(dev, intf);
-	if (usbvision == NULL) {
+	if (!usbvision) {
 		dev_err(&intf->dev, "%s: couldn't allocate USBVision struct\n", __func__);
 		ret = -ENOMEM;
 		goto err_usb;
@@ -1493,9 +1494,9 @@ static int usbvision_probe(struct usb_interface *intf,
 
 	usbvision->num_alt = uif->num_altsetting;
 	PDEBUG(DBG_PROBE, "Alternate settings: %i", usbvision->num_alt);
-	usbvision->alt_max_pkt_size = kmalloc(32 * usbvision->num_alt, GFP_KERNEL);
-	if (usbvision->alt_max_pkt_size == NULL) {
-		dev_err(&intf->dev, "usbvision: out of memory!\n");
+	usbvision->alt_max_pkt_size = kmalloc_array(32, usbvision->num_alt,
+						    GFP_KERNEL);
+	if (!usbvision->alt_max_pkt_size) {
 		ret = -ENOMEM;
 		goto err_pkt;
 	}
@@ -1566,7 +1567,7 @@ static void usbvision_disconnect(struct usb_interface *intf)
 
 	PDEBUG(DBG_PROBE, "");
 
-	if (usbvision == NULL) {
+	if (!usbvision) {
 		pr_err("%s: usb_get_intfdata() failed\n", __func__);
 		return;
 	}

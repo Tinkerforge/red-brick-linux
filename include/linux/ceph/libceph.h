@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _FS_CEPH_LIBCEPH_H
 #define _FS_CEPH_LIBCEPH_H
 
@@ -80,20 +81,15 @@ struct ceph_options {
 
 #define CEPH_MSG_MAX_FRONT_LEN	(16*1024*1024)
 #define CEPH_MSG_MAX_MIDDLE_LEN	(16*1024*1024)
-#define CEPH_MSG_MAX_DATA_LEN	(16*1024*1024)
-
-#define CEPH_AUTH_NAME_DEFAULT   "guest"
 
 /*
- * Delay telling the MDS we no longer want caps, in case we reopen
- * the file.  Delay a minimum amount of time, even if we send a cap
- * message for some other reason.  Otherwise, take the oppotunity to
- * update the mds to avoid sending another message later.
+ * Handle the largest possible rbd object in one message.
+ * There is no limit on the size of cephfs objects, but it has to obey
+ * rsize and wsize mount options anyway.
  */
-#define CEPH_CAPS_WANTED_DELAY_MIN_DEFAULT      5  /* cap release delay */
-#define CEPH_CAPS_WANTED_DELAY_MAX_DEFAULT     60  /* cap release delay */
+#define CEPH_MSG_MAX_DATA_LEN	(32*1024*1024)
 
-#define CEPH_CAP_RELEASE_SAFETY_DEFAULT        (CEPH_CAPS_PER_RELEASE * 4)
+#define CEPH_AUTH_NAME_DEFAULT   "guest"
 
 /* mount state */
 enum {
@@ -272,6 +268,7 @@ extern struct kmem_cache *ceph_cap_cachep;
 extern struct kmem_cache *ceph_cap_flush_cachep;
 extern struct kmem_cache *ceph_dentry_cachep;
 extern struct kmem_cache *ceph_file_cachep;
+extern struct kmem_cache *ceph_dir_file_cachep;
 
 /* ceph_common.c */
 extern bool libceph_compatible(void *data);

@@ -24,7 +24,7 @@
 #include <linux/root_dev.h>
 #include <linux/console.h>
 #include <linux/export.h>
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 
 #include <asm/machdep.h>
 #include <asm/firmware.h>
@@ -113,6 +113,7 @@ static void ps3_panic(char *str)
 	printk("   System does not reboot automatically.\n");
 	printk("   Please press POWER button.\n");
 	printk("\n");
+	panic_flush_kmsg_end();
 
 	while(1)
 		lv1_pause(1);
@@ -125,7 +126,7 @@ static void __init prealloc(struct ps3_prealloc *p)
 	if (!p->size)
 		return;
 
-	p->address = memblock_virt_alloc(p->size, p->align);
+	p->address = memblock_alloc(p->size, p->align);
 
 	printk(KERN_INFO "%s: %lu bytes at %p\n", p->name, p->size,
 	       p->address);

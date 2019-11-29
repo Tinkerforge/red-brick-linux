@@ -16,7 +16,7 @@
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/slab.h>
-#include <linux/gpio.h>
+#include <linux/gpio/driver.h>
 
 /*
  * Memory layout:
@@ -156,7 +156,7 @@ static int zevio_gpio_to_irq(struct gpio_chip *chip, unsigned pin)
 	return -ENXIO;
 }
 
-static struct gpio_chip zevio_gpio_chip = {
+static const struct gpio_chip zevio_gpio_chip = {
 	.direction_input	= zevio_gpio_direction_input,
 	.direction_output	= zevio_gpio_direction_output,
 	.set			= zevio_gpio_set,

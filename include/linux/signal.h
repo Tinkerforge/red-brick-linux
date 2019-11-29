@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_SIGNAL_H
 #define _LINUX_SIGNAL_H
 
@@ -10,16 +11,36 @@ struct task_struct;
 /* for sysctl */
 extern int print_fatal_signals;
 
-static inline void copy_siginfo(struct siginfo *to, struct siginfo *from)
+static inline void copy_siginfo(kernel_siginfo_t *to,
+				const kernel_siginfo_t *from)
 {
-	if (from->si_code < 0)
-		memcpy(to, from, sizeof(*to));
-	else
-		/* _sigchld is currently the largest know union member */
-		memcpy(to, from, __ARCH_SI_PREAMBLE_SIZE + sizeof(from->_sifields._sigchld));
+	memcpy(to, from, sizeof(*to));
 }
 
-int copy_siginfo_to_user(struct siginfo __user *to, const struct siginfo *from);
+static inline void clear_siginfo(kernel_siginfo_t *info)
+{
+	memset(info, 0, sizeof(*info));
+}
+
+#define SI_EXPANSION_SIZE (sizeof(struct siginfo) - sizeof(struct kernel_siginfo))
+
+int copy_siginfo_to_user(siginfo_t __user *to, const kernel_siginfo_t *from);
+int copy_siginfo_from_user(kernel_siginfo_t *to, const siginfo_t __user *from);
+
+enum siginfo_layout {
+	SIL_KILL,
+	SIL_TIMER,
+	SIL_POLL,
+	SIL_FAULT,
+	SIL_FAULT_MCEERR,
+	SIL_FAULT_BNDERR,
+	SIL_FAULT_PKUERR,
+	SIL_CHLD,
+	SIL_RT,
+	SIL_SYS,
+};
+
+enum siginfo_layout siginfo_layout(unsigned sig, int si_code);
 
 /*
  * Define some primitives to manipulate sigset_t.
@@ -108,9 +129,11 @@ static inline void name(sigset_t *r, const sigset_t *a, const sigset_t *b) \
 		b3 = b->sig[3]; b2 = b->sig[2];				\
 		r->sig[3] = op(a3, b3);					\
 		r->sig[2] = op(a2, b2);					\
+		/* fall through */					\
 	case 2:								\
 		a1 = a->sig[1]; b1 = b->sig[1];				\
 		r->sig[1] = op(a1, b1);					\
+		/* fall through */					\
 	case 1:								\
 		a0 = a->sig[0]; b0 = b->sig[0];				\
 		r->sig[0] = op(a0, b0);					\
@@ -140,7 +163,9 @@ static inline void name(sigset_t *set)					\
 	switch (_NSIG_WORDS) {						\
 	case 4:	set->sig[3] = op(set->sig[3]);				\
 		set->sig[2] = op(set->sig[2]);				\
+		/* fall through */					\
 	case 2:	set->sig[1] = op(set->sig[1]);				\
+		/* fall through */					\
 	case 1:	set->sig[0] = op(set->sig[0]);				\
 		    break;						\
 	default:							\
@@ -161,6 +186,7 @@ static inline void sigemptyset(sigset_t *set)
 		memset(set, 0, sizeof(sigset_t));
 		break;
 	case 2: set->sig[1] = 0;
+		/* fall through */
 	case 1:	set->sig[0] = 0;
 		break;
 	}
@@ -173,6 +199,7 @@ static inline void sigfillset(sigset_t *set)
 		memset(set, -1, sizeof(sigset_t));
 		break;
 	case 2: set->sig[1] = -1;
+		/* fall through */
 	case 1:	set->sig[0] = -1;
 		break;
 	}
@@ -237,18 +264,20 @@ static inline int valid_signal(unsigned long sig)
 
 struct timespec;
 struct pt_regs;
+enum pid_type;
 
 extern int next_signal(struct sigpending *pending, sigset_t *mask);
-extern int do_send_sig_info(int sig, struct siginfo *info,
-				struct task_struct *p, bool group);
-extern int group_send_sig_info(int sig, struct siginfo *info, struct task_struct *p);
-extern int __group_send_sig_info(int, struct siginfo *, struct task_struct *);
+extern int do_send_sig_info(int sig, struct kernel_siginfo *info,
+				struct task_struct *p, enum pid_type type);
+extern int group_send_sig_info(int sig, struct kernel_siginfo *info,
+			       struct task_struct *p, enum pid_type type);
+extern int __group_send_sig_info(int, struct kernel_siginfo *, struct task_struct *);
 extern int sigprocmask(int, sigset_t *, sigset_t *);
 extern void set_current_blocked(sigset_t *);
 extern void __set_current_blocked(const sigset_t *);
 extern int show_unhandled_signals;
 
-extern int get_signal(struct ksignal *ksig);
+extern bool get_signal(struct ksignal *ksig);
 extern void signal_setup_done(int failed, struct ksignal *ksig, int stepping);
 extern void exit_signals(struct task_struct *tsk);
 extern void kernel_sigaction(int, __sighandler_t);
@@ -270,7 +299,7 @@ static inline void disallow_signal(int sig)
 
 extern struct kmem_cache *sighand_cachep;
 
-int unhandled_signal(struct task_struct *tsk, int sig);
+extern bool unhandled_signal(struct task_struct *tsk, int sig);
 
 /*
  * In POSIX a signal is sent either to a specific thread (Linux task)
@@ -380,10 +409,18 @@ int unhandled_signal(struct task_struct *tsk, int sig);
         rt_sigmask(SIGCONT)   |  rt_sigmask(SIGCHLD)   | \
 	rt_sigmask(SIGWINCH)  |  rt_sigmask(SIGURG)    )
 
+#define SIG_SPECIFIC_SICODES_MASK (\
+	rt_sigmask(SIGILL)    |  rt_sigmask(SIGFPE)    | \
+	rt_sigmask(SIGSEGV)   |  rt_sigmask(SIGBUS)    | \
+	rt_sigmask(SIGTRAP)   |  rt_sigmask(SIGCHLD)   | \
+	rt_sigmask(SIGPOLL)   |  rt_sigmask(SIGSYS)    | \
+	SIGEMT_MASK                                    )
+
 #define sig_kernel_only(sig)		siginmask(sig, SIG_KERNEL_ONLY_MASK)
 #define sig_kernel_coredump(sig)	siginmask(sig, SIG_KERNEL_COREDUMP_MASK)
 #define sig_kernel_ignore(sig)		siginmask(sig, SIG_KERNEL_IGNORE_MASK)
 #define sig_kernel_stop(sig)		siginmask(sig, SIG_KERNEL_STOP_MASK)
+#define sig_specific_sicodes(sig)	siginmask(sig, SIG_SPECIFIC_SICODES_MASK)
 
 #define sig_fatal(t, signr) \
 	(!siginmask(signr, SIG_KERNEL_IGNORE_MASK|SIG_KERNEL_STOP_MASK) && \

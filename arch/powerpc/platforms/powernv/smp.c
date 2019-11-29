@@ -37,6 +37,8 @@
 #include <asm/kvm_ppc.h>
 #include <asm/ppc-opcode.h>
 #include <asm/cpuidle.h>
+#include <asm/kexec.h>
+#include <asm/reg.h>
 
 #include "powernv.h"
 
@@ -49,6 +51,13 @@
 
 static void pnv_smp_setup_cpu(int cpu)
 {
+	/*
+	 * P9 workaround for CI vector load (see traps.c),
+	 * enable the corresponding HMI interrupt
+	 */
+	if (pvr_version_is(PVR_POWER9))
+		mtspr(SPRN_HMEER, mfspr(SPRN_HMEER) | PPC_BIT(17));
+
 	if (xive_enabled())
 		xive_smp_setup_cpu();
 	else if (cpu != boot_cpuid)
@@ -57,7 +66,7 @@ static void pnv_smp_setup_cpu(int cpu)
 
 static int pnv_smp_kick_cpu(int nr)
 {
-	unsigned int pcpu = get_hard_smp_processor_id(nr);
+	unsigned int pcpu;
 	unsigned long start_here =
 			__pa(ppc_function_entry(generic_secondary_smp_init));
 	long rc;
@@ -66,11 +75,12 @@ static int pnv_smp_kick_cpu(int nr)
 	if (nr < 0 || nr >= nr_cpu_ids)
 		return -EINVAL;
 
+	pcpu = get_hard_smp_processor_id(nr);
 	/*
 	 * If we already started or OPAL is not supported, we just
 	 * kick the CPU via the PACA
 	 */
-	if (paca[nr].cpu_start || !firmware_has_feature(FW_FEATURE_OPAL))
+	if (paca_ptrs[nr]->cpu_start || !firmware_has_feature(FW_FEATURE_OPAL))
 		goto kick;
 
 	/*
@@ -164,12 +174,6 @@ static void pnv_smp_cpu_kill_self(void)
 	if (cpu_has_feature(CPU_FTR_ARCH_207S))
 		wmask = SRR1_WAKEMASK_P8;
 
-	/* We don't want to take decrementer interrupts while we are offline,
-	 * so clear LPCR:PECE1. We keep PECE2 (and LPCR_PECE_HVEE on P9)
-	 * enabled as to let IPIs in.
-	 */
-	mtspr(SPRN_LPCR, mfspr(SPRN_LPCR) & ~(u64)LPCR_PECE1);
-
 	while (!generic_check_cpu_restart(cpu)) {
 		/*
 		 * Clear IPI flag, since we don't handle IPIs while
@@ -207,8 +211,31 @@ static void pnv_smp_cpu_kill_self(void)
 		} else if ((srr1 & wmask) == SRR1_WAKEHDBELL) {
 			unsigned long msg = PPC_DBELL_TYPE(PPC_DBELL_SERVER);
 			asm volatile(PPC_MSGCLR(%0) : : "r" (msg));
+		} else if ((srr1 & wmask) == SRR1_WAKERESET) {
+			irq_set_pending_from_srr1(srr1);
+			/* Does not return */
 		}
+
 		smp_mb();
+
+		/*
+		 * For kdump kernels, we process the ipi and jump to
+		 * crash_ipi_callback
+		 */
+		if (kdump_in_progress()) {
+			/*
+			 * If we got to this point, we've not used
+			 * NMI's, otherwise we would have gone
+			 * via the SRR1_WAKERESET path. We are
+			 * using regular IPI's for waking up offline
+			 * threads.
+			 */
+			struct pt_regs regs;
+
+			ppc_save_regs(&regs);
+			crash_ipi_callback(&regs);
+			/* Does not return */
+		}
 
 		if (cpu_core_split_required())
 			continue;
@@ -219,8 +246,6 @@ static void pnv_smp_cpu_kill_self(void)
 
 	}
 
-	/* Re-enable decrementer interrupts */
-	mtspr(SPRN_LPCR, mfspr(SPRN_LPCR) | LPCR_PECE1);
 	DBG("CPU%d coming online...\n", cpu);
 }
 
@@ -258,23 +283,6 @@ static void pnv_cause_ipi(int cpu)
 	ic_cause_ipi(cpu);
 }
 
-static void pnv_p9_dd1_cause_ipi(int cpu)
-{
-	int this_cpu = get_cpu();
-
-	/*
-	 * POWER9 DD1 has a global addressed msgsnd, but for now we restrict
-	 * IPIs to same core, because it requires additional synchronization
-	 * for inter-core doorbells which we do not implement.
-	 */
-	if (cpumask_test_cpu(cpu, cpu_sibling_mask(this_cpu)))
-		doorbell_global_ipi(cpu);
-	else
-		ic_cause_ipi(cpu);
-
-	put_cpu();
-}
-
 static void __init pnv_smp_probe(void)
 {
 	if (xive_enabled())
@@ -286,15 +294,74 @@ static void __init pnv_smp_probe(void)
 		ic_cause_ipi = smp_ops->cause_ipi;
 		WARN_ON(!ic_cause_ipi);
 
-		if (cpu_has_feature(CPU_FTR_ARCH_300)) {
-			if (cpu_has_feature(CPU_FTR_POWER9_DD1))
-				smp_ops->cause_ipi = pnv_p9_dd1_cause_ipi;
-			else
-				smp_ops->cause_ipi = doorbell_global_ipi;
-		} else {
+		if (cpu_has_feature(CPU_FTR_ARCH_300))
+			smp_ops->cause_ipi = doorbell_global_ipi;
+		else
 			smp_ops->cause_ipi = pnv_cause_ipi;
-		}
 	}
+}
+
+static int pnv_system_reset_exception(struct pt_regs *regs)
+{
+	if (smp_handle_nmi_ipi(regs))
+		return 1;
+	return 0;
+}
+
+static int pnv_cause_nmi_ipi(int cpu)
+{
+	int64_t rc;
+
+	if (cpu >= 0) {
+		int h = get_hard_smp_processor_id(cpu);
+
+		if (opal_check_token(OPAL_QUIESCE))
+			opal_quiesce(QUIESCE_HOLD, h);
+
+		rc = opal_signal_system_reset(h);
+
+		if (opal_check_token(OPAL_QUIESCE))
+			opal_quiesce(QUIESCE_RESUME, h);
+
+		if (rc != OPAL_SUCCESS)
+			return 0;
+		return 1;
+
+	} else if (cpu == NMI_IPI_ALL_OTHERS) {
+		bool success = true;
+		int c;
+
+		if (opal_check_token(OPAL_QUIESCE))
+			opal_quiesce(QUIESCE_HOLD, -1);
+
+		/*
+		 * We do not use broadcasts (yet), because it's not clear
+		 * exactly what semantics Linux wants or the firmware should
+		 * provide.
+		 */
+		for_each_online_cpu(c) {
+			if (c == smp_processor_id())
+				continue;
+
+			rc = opal_signal_system_reset(
+						get_hard_smp_processor_id(c));
+			if (rc != OPAL_SUCCESS)
+				success = false;
+		}
+
+		if (opal_check_token(OPAL_QUIESCE))
+			opal_quiesce(QUIESCE_RESUME, -1);
+
+		if (success)
+			return 1;
+
+		/*
+		 * Caller will fall back to doorbells, which may pick
+		 * up the remainders.
+		 */
+	}
+
+	return 0;
 }
 
 static struct smp_ops_t pnv_smp_ops = {
@@ -315,9 +382,16 @@ static struct smp_ops_t pnv_smp_ops = {
 /* This is called very early during platform setup_arch */
 void __init pnv_smp_init(void)
 {
+	if (opal_check_token(OPAL_SIGNAL_SYSTEM_RESET)) {
+		ppc_md.system_reset_exception = pnv_system_reset_exception;
+		pnv_smp_ops.cause_nmi_ipi = pnv_cause_nmi_ipi;
+	}
 	smp_ops = &pnv_smp_ops;
 
 #ifdef CONFIG_HOTPLUG_CPU
 	ppc_md.cpu_die	= pnv_smp_cpu_kill_self;
+#ifdef CONFIG_KEXEC_CORE
+	crash_wake_offline = 1;
+#endif
 #endif
 }
