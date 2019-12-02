@@ -464,10 +464,10 @@ unsigned int RBASE[MAX_SOCK_NUM];
 
 static struct net_local iinchip_local_p;
 static unsigned char txsize[MAX_SOCK_NUM] = {
-	16, 0, 0, 0, 0, 0, 0, 0
+	16, 0, 0, 0, 0, 0, 0, 0 //see iinchip_sysinit
 };
 static unsigned char rxsize[MAX_SOCK_NUM] = {
-	16, 0, 0, 0, 0, 0, 0, 0
+	16, 0, 0, 0, 0, 0, 0, 0 //see iinchip_sysinit
 };
 
 extern struct spi_device *spi_device;
@@ -1696,15 +1696,41 @@ int iinchip_disconnect(int s)
  * Startup related routines.
  *
  ***********************************************************************/
-void iinchip_sysinit(void)
+void iinchip_sysinit(int version)
 {
 	int i, j, ssum=0, rsum=0;
 
 	for (i = 0 ; i < MAX_SOCK_NUM; i++) {
-
-		/* Set Buffer Size */
-		iinchip_outb(TX_BUF_SIZE_PTR(i), txsize[i]);
-		iinchip_outb(RX_BUF_SIZE_PTR(i), rxsize[i]);
+		/*
+		 * Sometimes the W5500 chip resets its buffer configuration to the defaults after some hours.
+		 * This breaks network connectivity completely, as no packets can be sent anymore.
+		 * The kernel log is then flooded with "kernel: socket_send(84000): free_buf_size 2048"
+		 * messages as well as "----PHY RESET----":
+		 * 
+		 * The driver writes one packet to the socket buffer, then issues a send command
+		 * and waits until the free buffer size is the expected 16384 bytes. But because of
+		 * the reset, that the chip does for some reason, the buffer has now only 2048 bytes
+		 * capacity, which results in an infinite loop in iinchip_socket_send.
+		 * 
+		 * Resetting the buffer configuration or other attempts to restore the ability
+		 * to send packets (e.g. the PHY RESET) did not help.
+		 * 
+		 * As the reported MTU is hardcoded to < 1500 anyway, we can live with the standard
+		 * buffer size of 2048 bytes.
+		 * 
+		 * To keep compatability with the W5200, we only skip the buffer configuration (and
+		 * fake the 2kb per socket assignment) if the chip is a W5500.
+		 */
+		/* Set Buffer Size */       
+		if(version != W5X00_VERSION_W5500) {
+			iinchip_outb(TX_BUF_SIZE_PTR(i), txsize[i]);
+			iinchip_outb(RX_BUF_SIZE_PTR(i), rxsize[i]);
+		} else {
+			txsize[i] = 2;
+			rxsize[i] = 2;
+			printk("%s: skipping socket buffer reconfiguration.", DRV_NAME);
+		}
+		
 
 		SSIZE[i] = 0;
 		RSIZE[i] = 0;
@@ -1807,12 +1833,14 @@ int iinchip_reset(void)
 {
 	struct net_local *lp = &iinchip_local_p;
 	unsigned char addr[8];
+	int v;
 
 	/* Initialize ASIC */
 
 	iinchip_hwreset();
 
-	printk("Version : %02x\n",iinchip_inb(lp->regs.REG_VERSIONR));
+	v = iinchip_inb(lp->regs.REG_VERSIONR);    
+	printk("Version : %02x\n",v);
 	// TMODE_NOSIZECHK_RAW (0x04) is defined as "reserved" in w5500 as well as w5x00 datasheet! wtf?
 	iinchip_outb(lp->regs.REG_TMODE, TMODE_PINGBLOCK /*| TMODE_NOSIZECHK_RAW*/);
 
@@ -1822,7 +1850,7 @@ int iinchip_reset(void)
 	printk("%s: MAC [%02x:%02x:%02x:%02x:%02x:%02x]\n", DRV_NAME,
 		addr[0],addr[1],addr[2],addr[3],addr[4],addr[5] );
 
-	iinchip_sysinit();
+	iinchip_sysinit(v);
 
 	// Interrupt.
 	iinchip_outb(lp->regs.REG_INT_MASK, 0x00);
